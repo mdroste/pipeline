@@ -8,13 +8,16 @@ mod files;
 mod formats;
 mod manifest;
 mod package;
+mod pdf;
 mod print;
 mod types;
 
 pub(crate) use desktop::{cleanup_print_export, cleanup_stale_print_exports};
 pub use formats::ReportFormatExport;
 use formats::{save_report_format, ReportFormat};
-pub use types::{ExportMode, ExportPackageResult, ExportRunArtifactsResult, ExportSelection};
+pub use pdf::run_pdf_helper_if_requested;
+pub use pdf::{PdfProgress, ReportPdfRequest};
+pub use types::{ExportMode, ExportPackageResult, ExportSelection};
 
 #[cfg(test)]
 pub(super) use desktop::{record_export_path, validated_recent_export};
@@ -84,28 +87,6 @@ pub async fn save_report_annotated_pdf(
     save_report_format(app, run_id, ReportFormat::AnnotatedPdf).await
 }
 
-/// Export one durable run as a complete, self-contained directory. All files
-/// are copied into a hidden staging directory first, then atomically renamed
-/// to a new unique child of the user-selected destination.
-#[tauri::command]
-pub async fn export_run_artifacts(
-    run_id: String,
-    destination: String,
-) -> Result<ExportRunArtifactsResult, String> {
-    let result = export_run_package(
-        run_id,
-        destination,
-        ExportMode::Forensic,
-        ExportSelection::default(),
-    )
-    .await?;
-    Ok(ExportRunArtifactsResult {
-        exported_path: result.exported_path,
-        file_count: result.file_count,
-        bytes: result.bytes,
-    })
-}
-
 #[tauri::command]
 pub async fn export_run_package(
     run_id: String,
@@ -137,4 +118,14 @@ pub async fn print_report_html(
     provenance_markdown: Option<String>,
 ) -> Result<(), String> {
     desktop::print_report_html(markdown, provenance_markdown).await
+}
+
+/// Save a typeset report directly using the platform's native PDF renderer.
+#[tauri::command]
+pub async fn save_report_pdf(
+    app: AppHandle,
+    request: ReportPdfRequest,
+    on_progress: tauri::ipc::Channel<PdfProgress>,
+) -> Result<Option<String>, String> {
+    pdf::save(app, request, on_progress).await
 }

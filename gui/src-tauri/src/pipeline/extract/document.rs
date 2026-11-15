@@ -173,3 +173,15 @@ pub(super) fn extract_docx(path: &Path) -> Result<ExtractionResult, String> {
         quality_notes: Vec::new(),
     })
 }
+
+/// Read slide text without requiring PowerPoint or executing embedded content.
+pub(super) fn extract_pptx(path: &Path) -> Result<ExtractionResult, String> {
+    let text = crate::document_bundle::extract_pptx_text(path)?;
+    Ok(ExtractionResult {
+        text,
+        method: "pptx".into(),
+        source_path: path.to_string_lossy().into_owned(),
+        paper_hash: compute_hash(path)?,
+        quality_notes: vec!["PowerPoint text and speaker notes extracted in slide order. Embedded raster images are available separately. Equation structure may be flattened; verify equations against a PDF export. Layout, animations, charts, SmartArt, and master-slide content are not rendered; use a PDF export to assess their appearance.".into()],
+    })
+}

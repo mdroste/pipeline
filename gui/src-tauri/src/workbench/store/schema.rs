@@ -122,6 +122,22 @@ const MIGRATIONS: [(&str, &str); CURRENT_SCHEMA_VERSION as usize] = [
         include_str!("../migrations/020_clear_finished_job_journals.sql"),
         "Failed to apply Workbench migration 20",
     ),
+    (
+        include_str!("../migrations/021_search_invalidation.sql"),
+        "Failed to narrow research search invalidation",
+    ),
+    (
+        include_str!("../migrations/022_delivered_automation_files.sql"),
+        "Failed to add delivered automation files",
+    ),
+    (
+        include_str!("../migrations/023_conversation_index.sql"),
+        "Failed to index project conversations",
+    ),
+    (
+        include_str!("../migrations/024_chat_approvals.sql"),
+        "Failed to add saved chat approvals",
+    ),
 ];
 
 fn apply_migrations(transaction: &Transaction<'_>, from: u32, through: u32) -> WorkbenchResult<()> {
@@ -152,6 +168,28 @@ pub(in crate::workbench) fn reference_schema(through: u32) -> WorkbenchResult<Co
         .commit()
         .map_err(|error| WorkbenchError::storage("Failed to finish reference schema", error))?;
     Ok(connection)
+}
+
+/// Build an honest historical fixture, rather than relabelling a newer schema.
+#[cfg(test)]
+pub(in crate::workbench) fn historical_test_database(
+    root: &std::path::Path,
+    version: u32,
+) -> Connection {
+    std::fs::create_dir_all(root).unwrap();
+    let mut connection = Connection::open(root.join("research.sqlite3")).unwrap();
+    let transaction = connection.transaction().unwrap();
+    apply_migrations(&transaction, 0, version).unwrap();
+    transaction
+        .pragma_update(None, "user_version", version)
+        .unwrap();
+    transaction.commit().unwrap();
+    if version < 22 {
+        assert!(connection
+            .prepare("SELECT files_adopted FROM task_exchanges")
+            .is_err());
+    }
+    connection
 }
 
 pub(in crate::workbench) fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {

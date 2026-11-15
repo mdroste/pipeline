@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import { makeSettings } from "../../test/settingsFixtures";
-import type { Settings } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
 import LocalServerUrl from "./LocalServerUrl";
 
 const STORED = "__PIPELINE_STORED_SECRET__";

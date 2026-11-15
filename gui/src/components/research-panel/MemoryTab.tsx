@@ -4,10 +4,8 @@ import { NOTE_KINDS, noteKindLabel } from "../project-surface/shared";
 import { importedLabel, plainLabel } from "./format";
 import { operation } from "./useResearchPanelController";
 import type { useResearchPanelController } from "./useResearchPanelController";
-import type {
-  ConversationSnapshot,
-  ResearchNote,
-} from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
+import type { ResearchNote } from "../../lib/workbench/researchTypes";
 
 type Panel = ReturnType<typeof useResearchPanelController>;
 type Props = Pick<

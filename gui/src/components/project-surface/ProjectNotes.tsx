@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { researchClient } from "../../lib/workbench/researchClient";
 import { projectClient } from "../../lib/projectClient";
-import type { ResearchNote } from "../../lib/workbenchTypes";
+import type { ResearchNote } from "../../lib/workbench/researchTypes";
 import {
   NOTE_KINDS,
   button,

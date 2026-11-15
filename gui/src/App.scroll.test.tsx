@@ -145,6 +145,8 @@ describe("App content scroller", () => {
     content.scrollTop = 400;
 
     await user.click(screen.getByRole("button", { name: "Reviews" }));
+    expect(content.scrollTop).toBe(400);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(content.scrollTop).toBe(0);
 

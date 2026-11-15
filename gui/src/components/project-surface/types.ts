@@ -1,11 +1,11 @@
 import type { ContextItem } from "../../lib/deskClient";
 import type {
   Workspace,
-  ReviewHandoff,
   ConversationSnapshot,
   SessionSnapshot,
   WorkbenchSession,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/sessionTypes";
+import type { ReviewHandoff } from "../../lib/workbench/releaseTypes";
 import type { ProjectTab } from "./shared";
 
 export type SelectionActionKind = "ask" | "note" | "task" | "revision";

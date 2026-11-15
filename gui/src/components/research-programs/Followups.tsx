@@ -136,15 +136,11 @@ export default function Followups({
                 disabled={busy || active}
                 onClick={() =>
                   void run(async () => {
-                    const value =
-                      await programClient.queue<FollowupContextReview>(
-                        sessionId,
-                        {
-                          action: "reviewContext",
-                          id: r.id,
-                          revision: r.revision,
-                        },
-                      );
+                    const value = await programClient.queue(sessionId, {
+                      action: "reviewContext",
+                      id: r.id,
+                      revision: r.revision,
+                    });
                     if (listScope.current.sessionId === sessionId)
                       setReview(value);
                   })
@@ -177,7 +173,7 @@ export default function Followups({
               </button>
             )}
             {r.state === "queued" &&
-              ["up", "down", "cancel"].map((control) => (
+              (["up", "down", "cancel"] as const).map((control) => (
                 <button
                   className={button}
                   key={control}
@@ -395,9 +391,7 @@ export default function Followups({
               disabled={busy || active || !selected.length}
               onClick={() =>
                 void run(async () => {
-                  const result = await programClient.queue<{
-                    session: { id: string };
-                  }>(sessionId, {
+                  const result = await programClient.queue(sessionId, {
                     action: "branch",
                     title,
                     items: context.filter((_, i) => selected.includes(i)),

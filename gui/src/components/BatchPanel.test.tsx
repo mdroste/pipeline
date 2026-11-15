@@ -18,6 +18,7 @@ function setup(inputMode = "document") {
     profileConfigSnapshotId: "config-exact",
     profileSnapshotId: "runtime-exact",
     inputMode,
+    inputInterpretation: "document",
     variables: [
       { key: "tone", label: "Tone", kind: "text", default: "neutral" },
     ],

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { settingsClient } from "../../lib/settingsClient";
 
-import type { Settings, ModelCatalog } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 import { PROVIDERS } from "../../lib/providers";
 
 export function useWorkflowCatalogs() {
@@ -9,16 +10,18 @@ export function useWorkflowCatalogs() {
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
   useEffect(() => {
     let live = true;
-    invoke<{ settings: Settings; warnings: string[] }>("get_settings")
+    settingsClient
+      .load()
       .then((response) => {
         if (!live) return;
         setSettings(response.settings);
         for (const provider of PROVIDERS) {
-          invoke<ModelCatalog>("get_model_catalog", {
-            provider,
-            settings: response.settings,
-            refresh: false,
-          })
+          settingsClient
+            .modelCatalog({
+              provider,
+              settings: response.settings,
+              refresh: false,
+            })
             .then((catalog) => {
               if (live) setCatalogs((old) => ({ ...old, [provider]: catalog }));
             })

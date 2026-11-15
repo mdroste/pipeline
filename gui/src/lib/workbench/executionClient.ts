@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ExecutionProfile, ResearchExecution } from "../workbenchTypes";
+import type { ExecutionProfile, ResearchExecution } from "./executionTypes";
 import type { ToolchainReport } from "./toolchains";
 
 export const executionClient = {

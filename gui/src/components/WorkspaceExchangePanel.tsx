@@ -1,7 +1,7 @@
 import WorkspaceStorageRetention from "./WorkspaceStorageRetention";
 import { useCallback, useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { studioClient } from "../lib/studioClient";
 import { researchClient } from "../lib/workbench/researchClient";
 import { executionClient } from "../lib/workbench/executionClient";
 import { recipeClient } from "../lib/workbench/recipeClient";
@@ -17,7 +17,7 @@ import type {
   ExchangeSelection,
   ExchangeTarget,
   RecipeRun,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/releaseTypes";
 
 const button =
   "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
@@ -610,7 +610,7 @@ export default function WorkspaceExchangePanel({
                   filters: [{ name: "Pipeline review", extensions: ["json"] }],
                 });
                 if (!path) return;
-                await invoke("workbench_studio_export_file", {
+                await studioClient.exportFile({
                   path,
                   content: draft.canonicalJson,
                 });

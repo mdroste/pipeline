@@ -17,7 +17,12 @@ import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { safeExternalHref } from "../SafeMarkdownLink";
 import useDraftText from "../../hooks/useDraftText";
-import { fetchRange } from "../../lib/fileWorkspaceClient";
+import {
+  fetchRange,
+  streamUrl,
+  ExpiredStream,
+  type FileAdapter,
+} from "../../lib/fileWorkspaceClient";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./pdf.css";
 import ReportIssueLink from "../ReportIssueLink";
@@ -36,7 +41,9 @@ export interface PdfPosition {
 interface Props {
   documentKey: string;
   title: string;
-  load: () => Promise<string | Uint8Array>;
+  load?: () => Promise<string | Uint8Array>;
+  capture?: FileAdapter;
+  onDocument?: (document: PDFDocumentProxy | null) => void;
   /** Read pages on demand from a stream URL instead of calling `load`. */
   stream?: { url: string; size: number };
   initialPage?: number;
@@ -72,17 +79,22 @@ function rangeTransport(
   latestUrl: () => string,
   signal: AbortSignal,
   onError: (error: unknown) => void,
+  renew?: (url: string) => Promise<string>,
 ) {
   class StreamTransport extends PDFDataRangeTransport {
     // A touched file keeps its document but gets a new URL, and the old one
     // stops working, so each request takes the newest.
     requestDataRange(begin: number, end: number) {
-      const attempt = (url: string): void => {
+      const attempt = (url: string, canRenew = true): void => {
         fetchRange(url, begin, end, signal).then(
           (bytes) => this.onDataRange(begin, bytes),
           (error) => {
             if (signal.aborted) return;
-            if (latestUrl() !== url) attempt(latestUrl());
+            if (latestUrl() !== url) attempt(latestUrl(), canRenew);
+            else if (error instanceof ExpiredStream && renew && canRenew)
+              void renew(url).then((next) => {
+                if (!signal.aborted) attempt(next, false);
+              }, onError);
             else onError(error);
           },
         );
@@ -318,22 +330,87 @@ export default function PdfReader(props: Props) {
       else if (live) setRenderEpoch((n) => n + 1);
     });
     const stream = callbacks.current.stream;
-    const source = stream
-      ? Promise.resolve({
-          range: rangeTransport(
-            stream.size,
-            () => callbacks.current.stream?.url ?? stream.url,
-            lifetime.signal,
-            (e) => {
-              if (live) setError(String(e));
-            },
-          ),
-          disableAutoFetch: true,
-          disableStream: true,
-        })
-      : callbacks.current.load().then((loaded) => ({
-          data: pdfBytes(loaded),
-        }));
+    const capture = callbacks.current.capture;
+    const onDocument = callbacks.current.onDocument;
+    let token: string | null = null;
+    const capturedSource = async (adapter: FileAdapter) => {
+      const file = await adapter.read("");
+      token = file.streamToken ?? null;
+      if (!live) {
+        if (token) adapter.release?.(token);
+        token = null;
+        throw new Error("PDF reader closed");
+      }
+      if (!token) {
+        if (!file.base64) throw new Error("PDF unavailable");
+        return { data: pdfBytes(file.base64) };
+      }
+      const latestUrl = () => streamUrl(token!);
+      if (!file.rangeCapture) {
+        try {
+          return {
+            data: await fetchRange(latestUrl(), 0, file.bytes, lifetime.signal),
+          };
+        } finally {
+          if (token) adapter.release?.(token);
+          token = null;
+        }
+      }
+      let renewal: Promise<string> | null = null;
+      const renew = (previous: string) => {
+        if (previous !== latestUrl()) return Promise.resolve(latestUrl());
+        return (renewal ??= adapter
+          .read("")
+          .then((fresh) => {
+            if (
+              !live ||
+              fresh.hash !== file.hash ||
+              fresh.bytes !== file.bytes ||
+              !fresh.streamToken
+            ) {
+              if (fresh.streamToken) adapter.release?.(fresh.streamToken);
+              throw new Error("The captured PDF is unavailable.");
+            }
+            if (token) adapter.release?.(token);
+            token = fresh.streamToken;
+            return latestUrl();
+          })
+          .finally(() => {
+            renewal = null;
+          }));
+      };
+      return {
+        range: rangeTransport(
+          file.bytes,
+          latestUrl,
+          lifetime.signal,
+          (e) => {
+            if (live) setError(String(e));
+          },
+          renew,
+        ),
+        disableAutoFetch: true,
+        disableStream: true,
+      };
+    };
+    const source = capture
+      ? capturedSource(capture)
+      : stream
+        ? Promise.resolve({
+            range: rangeTransport(
+              stream.size,
+              () => callbacks.current.stream?.url ?? stream.url,
+              lifetime.signal,
+              (e) => {
+                if (live) setError(String(e));
+              },
+            ),
+            disableAutoFetch: true,
+            disableStream: true,
+          })
+        : callbacks.current.load!().then((loaded) => ({
+            data: pdfBytes(loaded),
+          }));
     void source
       .then(async (bytes) => {
         if (!live) return;
@@ -345,6 +422,7 @@ export default function PdfReader(props: Props) {
         });
         const document = await loading.promise;
         if (!live) return;
+        onDocument?.(document);
         if (document.numPages > 5000)
           throw new Error(
             "This PDF exceeds the interactive viewer's 5,000-page limit.",
@@ -379,6 +457,9 @@ export default function PdfReader(props: Props) {
       cancelAnimationFrame(frame);
       instance.current = null;
       lifetime.abort();
+      onDocument?.(null);
+      if (token) capture?.release?.(token);
+      token = null;
       viewer.cleanup();
       // setDocument(null) is the implemented reset API; its declaration is narrower.
       (

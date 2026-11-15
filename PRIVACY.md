@@ -93,8 +93,7 @@ Pipeline also connects to the internet to:
   and retrieved page text go back to the selected model;
 - run searches enabled on other review connections through the provider's
   search tools. Subscription conversations may also use native search;
-- read public pages or download files through enabled web tools, and contact
-  sites you open through browser interaction;
+- read public pages or download files through enabled web tools;
 - look up papers on Crossref, when you use literature search or turn on
   lookups in a reference check. Lookups send the reference text as written in
   your bibliography. If you add a Crossref contact email in the **Reading
@@ -102,18 +101,13 @@ Pipeline also connects to the internet to:
 - download data from FRED, DBnomics, or the World Bank when you ask for it;
 - download the optional PDF parser and its model files when you choose
   Install;
-- download Chromium and its browser tools when you turn on **Browser
-  interaction** or a browser tool is first used;
-- download the sandbox package when an API or local conversation first runs a
-  command, or when you open **Access & inheritance** for one;
 - fetch a workflow from a URL you import;
 - fetch from a project's Git remote when you choose **Check GitHub**, **Check
   for updates**, or **Pull**; and
 - send commits to that remote when you choose **Push** or **Publish branch**.
 
 Search queries can contain terms from your research, including when the model
-runs locally. Conversation browser profiles retain website sign-ins on this
-computer after the browser closes. Enter passwords directly in that window.
+runs locally.
 
 **Version control** uses your computer's Git sign-in, and it commits, merges,
 and pushes only when you choose those actions. Assistants, reviews, and

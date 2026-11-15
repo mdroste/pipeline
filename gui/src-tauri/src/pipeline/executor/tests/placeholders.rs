@@ -21,10 +21,10 @@ fn step_pointer_references_select_into_structured_artifacts() {
 fn substitute_replaces_known_and_marks_optional_missing() {
     let mut vars = std::collections::HashMap::new();
     vars.insert("journal".to_string(), "AER".to_string());
-    let out = substitute_placeholders(
+    let out = substitute_run_context(
         "Review for {var:journal}; persona {var:persona}.",
-        "{var:",
         &vars,
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(
@@ -37,7 +37,7 @@ fn substitute_replaces_known_and_marks_optional_missing() {
 fn substitute_no_placeholders_is_unchanged() {
     let vars = std::collections::HashMap::new();
     assert_eq!(
-        substitute_placeholders("plain prompt", "{var:", &vars).unwrap(),
+        substitute_run_context("plain prompt", &vars, &Default::default()).unwrap(),
         "plain prompt"
     );
 }
@@ -46,7 +46,7 @@ fn substitute_no_placeholders_is_unchanged() {
 fn substitute_unclosed_brace_passes_through() {
     let vars = std::collections::HashMap::new();
     assert_eq!(
-        substitute_placeholders("oops {var:x", "{var:", &vars).unwrap(),
+        substitute_run_context("oops {var:x", &vars, &Default::default()).unwrap(),
         "oops {var:x"
     );
 }

@@ -1,4 +1,4 @@
-//! Fresh document-bundle construction and orientation-enriched persistence.
+//! Document-bundle construction and persistence before review planning.
 
 pub(super) fn build_document_bundle(
     app: &crate::emit::EventBus,
@@ -7,8 +7,8 @@ pub(super) fn build_document_bundle(
     run_writer: &mut Option<crate::runs::RunWriter>,
 ) -> Option<crate::document_bundle::DocumentBundle> {
     // Build the durable, source-neutral document model after visual artifacts
-    // have been collected. It will be enriched with orientation metadata and
-    // persisted after the orientation stage below.
+    // have been collected. Persist it before model planning so routing cannot
+    // rewrite the captured source structure.
     let mut document_bundle = None;
     if let Some(w) = run_writer.as_mut() {
         match crate::commands::reuse_artifacts::build_bundle(
@@ -16,7 +16,7 @@ pub(super) fn build_document_bundle(
             Some(captured_document_path),
             w.dir(),
         ) {
-            Ok(build) => {
+            Ok(mut build) => {
                 for (rel_path, label, group) in &build.added_artifacts {
                     if let Err(error) = w.register_existing(rel_path, label, group) {
                         let _ = app.emit_event(
@@ -27,6 +27,7 @@ pub(super) fn build_document_bundle(
                         );
                     }
                 }
+                w.bind_visual_identities(&mut build.bundle);
                 document_bundle = Some(build.bundle);
             }
             Err(error) => {
@@ -45,21 +46,21 @@ pub(super) fn build_document_bundle(
     document_bundle
 }
 
-pub(super) fn persist_oriented_bundle(
+pub(super) fn persist_document_bundle(
     app: &crate::emit::EventBus,
-    document_bundle: &mut Option<crate::document_bundle::DocumentBundle>,
-    orientation: &serde_json::Value,
+    document_bundle: &Option<crate::document_bundle::DocumentBundle>,
     extraction: &crate::models::ExtractionResult,
     run_writer: &mut Option<crate::runs::RunWriter>,
 ) -> Result<(Option<String>, Option<String>), String> {
-    // Orientation supplies semantic labels and page references that are useful
-    // additions to the deterministic extraction. Persist the structured JSON
-    // and streaming JSONL views. The enriched Markdown projection remains a
-    // model-facing transient; `context/document.md` stays the exact extraction.
+    // Model annotations remain in the document overview. The bundle keeps
+    // the extraction and its observed structure independently of the plan.
     let mut bundle_json = None;
     let mut bundle_markdown = None;
-    if let Some(bundle) = document_bundle.as_mut() {
-        bundle.enrich_from_orientation(orientation);
+    if let Some(bundle) = document_bundle.as_ref() {
+        crate::commands::run_contract::save_base_bundle(
+            run_writer.as_mut().ok_or("Missing document workspace")?,
+            bundle,
+        )?;
         if let Err(error) = bundle.validate() {
             let _ = app.emit_event(
                 "pipeline:log",

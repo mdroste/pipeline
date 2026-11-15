@@ -46,6 +46,17 @@ export function absoluteLocalFilePath(href: string): string | null {
   return null;
 }
 
+/** The native viewer still needs to check that the path belongs to its scope. */
+export function absoluteLocalFileLocation(href: string): FileLocation | null {
+  const path = absoluteLocalFilePath(href);
+  if (!path) return null;
+  try {
+    return fileLocation(path, decodeURIComponent(href.split("#", 2)[1] ?? ""));
+  } catch {
+    return null;
+  }
+}
+
 function absolutePathRelativeToRoot(
   root: string | undefined,
   target: string,
@@ -121,10 +132,14 @@ export function resolveFileLink(
     })
   )
     return null;
+  return fileLocation(parts.join("/"), fragment);
+}
+
+function fileLocation(path: string, fragment: string): FileLocation {
   const line = fragment.match(/^L(\d+)(?:-L?\d+)?$/i);
   const page = fragment.match(/^page=(\d+)$/i);
   return {
-    path: parts.join("/"),
+    path,
     ...(line
       ? { line: Math.max(1, Number(line[1])) }
       : page

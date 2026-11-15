@@ -11,11 +11,14 @@ export default function usePersistentPanelWidth(
   max: number,
 ) {
   const [width, setWidthState] = useState(() => {
-    const stored = window.localStorage.getItem(storageKey);
-    const parsed = stored === null ? Number.NaN : Number(stored);
-    return Number.isFinite(parsed)
-      ? clamp(parsed, min, max)
-      : clamp(defaultWidth, min, max);
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      const parsed = stored === null ? Number.NaN : Number(stored);
+      if (Number.isFinite(parsed)) return clamp(parsed, min, max);
+    } catch {
+      // Layout remains usable when browser storage is unavailable.
+    }
+    return clamp(defaultWidth, min, max);
   });
 
   const setWidth = useCallback(
@@ -24,7 +27,11 @@ export default function usePersistentPanelWidth(
   );
 
   useEffect(() => {
-    window.localStorage.setItem(storageKey, String(width));
+    try {
+      window.localStorage.setItem(storageKey, String(width));
+    } catch {
+      // Keep the resized width in memory if it cannot be persisted.
+    }
   }, [storageKey, width]);
 
   return [width, setWidth] as const;

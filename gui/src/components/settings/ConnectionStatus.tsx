@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { appClient } from "../../lib/appClient";
-import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
+import type { DepsReport, Settings } from "../../lib/settingsTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 import { ReviewSaveState } from "./SaveState";
 import ReportIssueLink from "../ReportIssueLink";
 import { workbenchErrorMessage } from "../../lib/workbenchError";

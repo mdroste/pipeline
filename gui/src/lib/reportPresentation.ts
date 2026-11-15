@@ -1,9 +1,5 @@
-import {
-  isPaperOrientation,
-  type PipelineReport,
-  type ReportQuality,
-  type RunSummary,
-} from "./types";
+import { isPaperOrientation } from "./reviewOrientation";
+import type { PipelineReport, ReportQuality, RunSummary } from "./reviewTypes";
 
 type CanonicalReportProblem =
   | "failed-final-step"

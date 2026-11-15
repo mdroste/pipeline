@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { PipelineReport } from "./types";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import type { PipelineReport } from "./reviewTypes";
 export type ExportMode = "shareable" | "forensic" | "custom";
 
 export interface ExportSelection {
@@ -34,6 +34,11 @@ export interface ReportFormatExport {
   unanchored: number;
 }
 
+export interface PdfProgress {
+  message: string;
+  settingUp: boolean;
+}
+
 const REPORT_FORMAT_COMMANDS: Record<ReportFormat, string> = {
   html: "save_report_html",
   docx: "save_report_docx",
@@ -52,6 +57,22 @@ export const reportExportClient = {
     invoke<ReportFormatExport | null>(REPORT_FORMAT_COMMANDS[format], args),
   print: (args: { markdown: string; provenanceMarkdown: string | null }) =>
     invoke<unknown>("print_report_html", args),
+  savePdf: (
+    request: {
+      markdown: string;
+      provenanceMarkdown: string | null;
+      runId: string | null;
+      inputPath: string | null;
+    },
+    onProgress: (progress: PdfProgress) => void,
+  ) => {
+    const channel = new Channel<PdfProgress>();
+    channel.onmessage = onProgress;
+    return invoke<string | null>("save_report_pdf", {
+      request,
+      onProgress: channel,
+    });
+  },
   saveCore: (args: {
     dir: string;
     markdown: string;

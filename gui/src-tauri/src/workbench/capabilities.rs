@@ -8,7 +8,6 @@ use serde_json::{json, Map, Value};
 #[serde(rename_all = "camelCase")]
 pub struct ConversationCapabilities {
     pub command_domains: Vec<String>,
-    pub browser: bool,
     pub shell_write: bool,
     /// Commands work in the conversation's private folder, not a project.
     /// Omitted when false, so project conversations keep their fingerprints.
@@ -18,7 +17,7 @@ pub struct ConversationCapabilities {
 
 impl ConversationCapabilities {
     pub fn resolve(values: &Map<String, Value>, shell_write: bool) -> WorkbenchResult<Self> {
-        for key in ["webSearch", "commandNetwork", "browser"] {
+        for key in ["webSearch", "commandNetwork"] {
             if values
                 .get(key)
                 .is_some_and(|value| !value.is_null() && !value.is_boolean())
@@ -68,10 +67,6 @@ impl ConversationCapabilities {
         domains.sort();
         Ok(Self {
             command_domains: domains,
-            browser: values
-                .get("browser")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
             shell_write,
             private_folder: false,
         })
@@ -132,7 +127,7 @@ mod tests {
             );
         }
         let c = ConversationCapabilities::resolve(
-            json!({"commandDomains":"EXAMPLE.org, *.example.org, example.org", "browser":true})
+            json!({"commandDomains":"EXAMPLE.org, *.example.org, example.org"})
                 .as_object()
                 .unwrap(),
             true,

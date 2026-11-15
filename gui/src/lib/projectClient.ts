@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   PaperWithRevision,
-  ResearchExecution,
   ResearchLedger,
   ResearchNote,
-  WorkbenchSession,
-} from "./workbenchTypes";
+} from "./workbench/researchTypes";
+import type { ResearchExecution } from "./workbench/executionTypes";
+import type { WorkbenchSession } from "./workbench/sessionTypes";
 
 export interface ProjectRecord<T> {
   id: string;
@@ -241,6 +241,8 @@ export const projectClient = {
       workspaceId,
       path,
     }),
+  chatBrief: (workspaceId: string) =>
+    invoke<string | null>("workbench_chat_brief", { workspaceId }),
   home: (workspaceId: string) =>
     invoke<ProjectHome>("workbench_project_home", { workspaceId }),
   mutate: async <T = unknown>(

@@ -1,0 +1,54 @@
+{
+  "R08": {
+    "claim": "The least-squares slope is zero in this sample.",
+    "scope": "The three observed pairs only; no population null or causal conclusion.",
+    "observations": [
+      [
+        -1,
+        1
+      ],
+      [
+        0,
+        -2
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    "reported": 0.0,
+    "task": "Reproduce the coefficient from the frozen rows at the table’s two decimal places. State precisely what it establishes and what it does not establish."
+  },
+  "R14": {
+    "claim": "Every least-squares problem has a unique minimizer.",
+    "scope": "Finite designs, including singular matrices.",
+    "artifact": "Proposition 1. For any design X, the unique solution is (X'X)^(-1)X'y. The derivation takes the inverse without a rank assumption.",
+    "task": "Review Proposition 1 for the stated class of designs. Decide whether each step establishes the claim, and name any outstanding obligation."
+  },
+  "R27": {
+    "claim": "Identify a treatment effect from an archive without assignments or outcomes.",
+    "scope": "Only the supplied archive is available; new collection is outside the authorization.",
+    "task": "Determine whether the effect can be identified from the available archive. State what evidence or authorization any further investigation would require.",
+    "artifact": "Inventory of the complete authorized archive: site names and opening dates only. No treatment assignments, outcome measurements, or permission for new data collection."
+  },
+  "R32": {
+    "claim": "Table 1 reports the sample slope as 0.75.",
+    "scope": "The three observations in the retained sample; intercept included.",
+    "observations": [
+      [
+        -1,
+        -2
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        2
+      ]
+    ],
+    "reported": 0.75,
+    "task": "Reproduce Table 1 with an intercept from the three supplied rows. Compare the estimated coefficient at the two decimal places printed in the table."
+  }
+}

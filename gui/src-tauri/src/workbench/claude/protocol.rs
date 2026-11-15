@@ -37,6 +37,7 @@ pub(super) fn arguments(
     model: Option<&str>,
     effort: Option<&str>,
     shell_root: Option<&std::path::Path>,
+    approval_mode: Mode,
 ) -> Vec<String> {
     let native_tools = match (shell_root.is_some(), effective.web_search) {
         (true, true) => "Bash,WebSearch,WebFetch",
@@ -59,7 +60,11 @@ pub(super) fn arguments(
         "--no-chrome",
         "--strict-mcp-config",
         "--permission-mode",
-        "dontAsk",
+        match approval_mode {
+            Mode::Ask => "default",
+            Mode::Auto => "auto",
+            Mode::Sandbox => "dontAsk",
+        },
         "--allowedTools",
         if effective.web_search {
             "mcp__pipeline__*,WebSearch,WebFetch"
@@ -70,6 +75,9 @@ pub(super) fn arguments(
     .into_iter()
     .map(str::to_owned)
     .collect::<Vec<_>>();
+    if approval_mode != Mode::Sandbox {
+        args.extend(["--permission-prompt-tool".into(), "stdio".into()]);
+    }
     args.extend([
         "--mcp-config".into(),
         json!({"mcpServers":{"pipeline":{"type":"sdk","name":"pipeline"}}}).to_string(),
@@ -88,7 +96,7 @@ pub(super) fn arguments(
     } else {
         "Project tools are exposed through the pipeline MCP server. File edits require Edit access and use project_edit."
     };
-    args.extend(["--append-system-prompt".into(), format!("{}\n\n{project} {shell} Native filesystem and third-party tools are disabled; browser access, when enabled, uses Pipeline tools. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
+    args.extend(["--append-system-prompt".into(), format!("{}\n\n{project} {shell} Native filesystem and third-party tools are disabled; web access uses the enabled search and page-reading tools. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
     if let Some(model) = model.filter(|s| !s.is_empty()) {
         args.push(format!("--model={model}"));
     }

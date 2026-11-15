@@ -19,7 +19,6 @@
   "commandNetwork": false,
   "capabilities": {
     "commandDomains": [],
-    "browser": false,
     "shellWrite": true,
     "privateFolder": true
   },
@@ -32,9 +31,8 @@
   "contextPreview": "",
   "contextTruncated": false,
   "dynamicTools": [],
-  "fingerprint": "e2e876748b1400efc0bf091d84b1780bbfc8b3752c15a5aec4b0d3431d8a8d5c",
+  "fingerprint": "9280a209ff96512cb0909670a97dad7d0f015f6671529c325e946072648b87e0",
   "valueSources": {
-    "browser": "builtIn",
     "commandDomains": "builtIn",
     "commandNetwork": "builtIn",
     "contextBudgetBytes": "builtIn",

@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import type { ModelCatalog, Settings } from "../../lib/types";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
+import type { Settings } from "../../lib/settingsTypes";
 import ModelStage from "./ModelStage";
 
 it("shows a role by its name", () => {
@@ -61,7 +62,7 @@ it("names the model an unset choice runs and who picks it", () => {
 it("names what an inheriting stage follows", () => {
   render(
     <ModelStage
-      title="Input assessment"
+      title="Document bundle preparation"
       agents={["claude"]}
       inherited="Default model"
       settings={{ claude_access_mode: "subscription" } as Settings}

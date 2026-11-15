@@ -1,11 +1,16 @@
 //! Project Tauri commands.
 
 use super::*;
+use crate::workbench::store::WorkbenchSession;
 
 #[tauri::command]
 pub async fn workbench_project_index(
+    after_id: Option<String>,
 ) -> WorkbenchResult<Vec<crate::workbench::project::ProjectIndexItem>> {
-    run_store(move |store| crate::workbench::project::project_index(&store)).await
+    run_store(move |store| {
+        crate::workbench::project::project_index_page(&store, after_id.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -14,6 +19,13 @@ pub async fn workbench_project_home(
 ) -> WorkbenchResult<crate::workbench::project::ProjectHome> {
     run_store(move |store| crate::workbench::project::home(&store, &workspace_id)).await
 }
+/// The assistant-only layout needs just the brief of a project without a
+/// folder or captured paper. Leave inventory, tasks and ledgers unopened.
+#[tauri::command]
+pub async fn workbench_chat_brief(workspace_id: String) -> WorkbenchResult<Option<String>> {
+    run_store(move |store| crate::workbench::project::chat_brief(&store, &workspace_id)).await
+}
+
 /// Git runs outside the database workers: a slow repository or remote must not
 /// hold one of them.
 async fn run_git<T, F>(operation: F) -> WorkbenchResult<T>
@@ -300,6 +312,44 @@ pub async fn workbench_conversation_file_open(
 }
 
 #[tauri::command]
+pub async fn workbench_conversation_file_open_with(
+    window: tauri::WebviewWindow,
+    session_id: String,
+    path: String,
+) -> WorkbenchResult<()> {
+    use tauri_plugin_dialog::DialogExt as _;
+    let (name, bytes) = run_store(move |store| {
+        crate::workbench::project::conversation_file_bytes(&store, &session_id, &path)
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || {
+        let picker = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_title("Choose an editor or runner for the copy");
+        #[cfg(target_os = "macos")]
+        let picker = picker
+            .set_directory("/Applications")
+            .add_filter("Applications", &["app"]);
+        #[cfg(windows)]
+        let picker = picker.add_filter("Applications", &["exe"]);
+        #[cfg(target_os = "linux")]
+        let picker = picker.set_directory("/usr/bin");
+        let Some(chosen) = picker.blocking_pick_file() else {
+            return Ok(());
+        };
+        let application = chosen
+            .into_path()
+            .map_err(|error| WorkbenchError::invalid(format!("Invalid application: {error}")))?;
+        crate::file_viewer::open_copy_with(&application, std::path::Path::new(&name), &bytes)
+            .map_err(|error| WorkbenchError::storage("Could not open the artifact copy", error))
+    })
+    .await
+    .map_err(|error| WorkbenchError::worker(format!("Open with stopped: {error}"), true))?
+}
+
+#[tauri::command]
 pub async fn workbench_conversation_folder_reveal(session_id: String) -> WorkbenchResult<()> {
     run_store(move |store| {
         let effective = crate::workbench::research::resolve_harness(&store, &session_id)?;
@@ -324,6 +374,70 @@ pub async fn workbench_conversation_file_read(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn workbench_conversation_file_preview(
+    session_id: String,
+    path: String,
+) -> WorkbenchResult<crate::workbench::project::FilePreview> {
+    run_store(move |store| {
+        crate::workbench::project::preview_conversation_file(&store, &session_id, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_conversation_file_save(
+    request: crate::workbench::project::ConversationFileSave,
+) -> WorkbenchResult<String> {
+    let permit = conversation_turn_permit(turn_queue().clone())?;
+    // Keep the resolved conversation and project roots stable through the
+    // save, including when a caller drops its IPC request.
+    run_store_exclusive(move |store| {
+        let _permit = permit;
+        crate::workbench::project::save_conversation_file(&store, request)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_conversation_file_run(
+    request: crate::workbench::research::artifact_runs::ArtifactRunRequest,
+) -> WorkbenchResult<crate::workbench::research::artifact_runs::ArtifactRun> {
+    let permit = conversation_turn_permit(turn_queue().clone())?;
+    run_store_exclusive(move |store| {
+        let _permit = permit;
+        crate::workbench::research::artifact_runs::start(&store, request)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn workbench_conversation_file_run_status(
+    target: crate::workbench::research::artifact_runs::ArtifactTarget,
+) -> Option<crate::workbench::research::artifact_runs::ArtifactRun> {
+    crate::workbench::research::artifact_runs::status(&target)
+}
+
+#[tauri::command]
+pub fn workbench_conversation_file_run_stop(
+    target: crate::workbench::research::artifact_runs::ArtifactTarget,
+    run_id: String,
+) {
+    crate::workbench::research::artifact_runs::stop(&target, &run_id);
+}
+
+#[tauri::command]
+pub async fn workbench_conversation_file_list(
+    session_id: String,
+    directory: String,
+) -> WorkbenchResult<crate::workbench::project::ConversationFileListing> {
+    run_store(move |store| {
+        crate::workbench::project::list_conversation_directory(&store, &session_id, directory)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn workbench_snapshot_preview(
     workspace_id: String,
@@ -607,6 +721,17 @@ pub async fn workbench_export_earlier_records(
             &workspace_id,
             std::path::Path::new(&destination),
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_file_reveal(
+    request: crate::workbench::project::FileReadRequest,
+) -> WorkbenchResult<()> {
+    run_store(move |store| {
+        let path = crate::workbench::project::reveal_target(&store, &request)?;
+        crate::file_viewer::reveal(&path).map_err(WorkbenchError::invalid)
     })
     .await
 }

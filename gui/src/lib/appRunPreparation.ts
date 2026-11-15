@@ -1,13 +1,12 @@
+import type { DepsReport } from "./settingsTypes";
+import type { RosterEntry, RunParallelOverrides } from "./reviewModelTypes";
 import type {
-  DepsReport,
-  RosterEntry,
   InputSlot,
   PipelineConfig,
   PrimaryInputSelection,
-  RunParallelOverrides,
   VarSpec,
-  BatchJob,
-} from "./types";
+} from "./workflowTypes";
+import type { BatchJob } from "./reviewTypes";
 import type { ExecutionPlanStage } from "./pipelineHelpers";
 import type { UsageEstimate } from "./usageEstimate";
 import type { HostCheck } from "./analyzers";

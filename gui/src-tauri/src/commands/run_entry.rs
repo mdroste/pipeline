@@ -138,56 +138,6 @@ pub(super) async fn prepare_foreground_launch(
     Ok(snapshot)
 }
 
-// Tauri exposes these launch fields as separate command arguments to keep the
-// frontend IPC contract explicit and backwards-compatible.
-#[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub async fn run_pipeline(
-    app: AppHandle,
-    paper_path: String,
-    input_interpretation: Option<String>,
-    diff: bool,
-    variables: Option<std::collections::HashMap<String, String>>,
-    extra_inputs: Option<std::collections::HashMap<String, String>>,
-    expected_profile_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunModelOverrides>,
-    author_note: Option<String>,
-) -> Result<serde_json::Value, String> {
-    // Registered before preflight so a cancel click during the probes below
-    // is recorded in this run's scope and honored once the task starts.
-    let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
-    let variables = variables.unwrap_or_default();
-    let extra_inputs = extra_inputs.unwrap_or_default();
-    let snapshot = prepare_foreground_launch(
-        &paper_path,
-        input_interpretation.as_deref(),
-        diff,
-        &variables,
-        &extra_inputs,
-        expected_profile_snapshot_id.as_deref(),
-        run_parallel_overrides.as_ref(),
-        author_note.as_deref(),
-    )
-    .await?;
-    let guard = acquire_run_slot()?;
-    let bus = crate::emit::from_app(app);
-    PipelineTask::spawn(
-        run.scope().clone(),
-        guard,
-        PipelineRequest {
-            bus,
-            paper_path,
-            input_interpretation,
-            diff,
-            variables,
-            extra_inputs,
-            snapshot: Some(snapshot),
-        },
-    )
-    .join()
-    .await
-}
-
 /// Complete invocation state for a headless run. Unlike the desktop command,
 /// a CLI caller may select a profile without changing the persisted active
 /// profile. An empty `input_path` is valid only for a no-input workflow.

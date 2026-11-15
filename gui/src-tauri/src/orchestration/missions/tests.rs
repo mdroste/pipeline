@@ -1,3 +1,4 @@
+mod claim_benchmarks;
 use super::super::{
     state::Receipt,
     store::{Scope, Store},
@@ -108,6 +109,7 @@ fn plan() -> Plan {
 }
 fn challenge() -> Challenge {
     Challenge {
+        claim_assessments: serde_json::from_value(json!([{"subject":0,"kind":"theory","claim":"The proposed identity fails","scope":"Two equally weighted types","verdict":"refuted","inspections":[{"role":"assumptions","evidenceId":"r1-memo","location":"Two types","observed":"x=0 and x=2 are equally weighted."},{"role":"derivation","evidenceId":"r1-memo","location":"Variance calculation","observed":"2 differs from 1 by one."}],"objections":[]}])).unwrap(),
         summary: "The omitted variance term refutes the proposed identity".into(),
         outcome: Outcome::Refuted,
         goal_resolved: true,
@@ -152,6 +154,7 @@ fn completed(s: &Store, m: &mut Mission, output: Value) -> TaskRun {
     let chain = child_chain(m).unwrap();
     let mut child = storage::admit(s, m, chain, scope).unwrap();
     let receipt = Receipt {
+        action_kind: None,
         sequence: 1,
         address: "action".into(),
         step_id: "action".into(),
@@ -313,7 +316,7 @@ fn preparing_again_returns_the_same_mission_but_changed_inputs_fail() {
         m.id
     );
     assert!(storage::previous(&s, "prepare", "changed").is_err());
-    let rows = storage::list(&s, None, 0).unwrap();
+    let rows = storage::list(&s, None, 0, false).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].open_questions, 0);
 }
@@ -327,6 +330,7 @@ fn interruption_keeps_child_identity_and_its_reserved_budget() {
     child.progress.receipts.insert(
         "action".into(),
         Receipt {
+            action_kind: None,
             sequence: 1,
             address: "action".into(),
             step_id: "action".into(),
@@ -368,7 +372,7 @@ async fn research_cycle_retains_a_negative_result_and_updates_each_role_cursor_o
     assert_eq!(m.phase, Phase::Investigate);
     assert_eq!(m.planner_scope.session_cursor, child.scope.session_cursor);
     assert_eq!(m.scope.session_cursor, Some(String::new()));
-    let finding=Finding{summary:"For two equally weighted types x=0 and x=2, E[x]=1 and E[x²]=2, so the conjectured equality E[x²]=E[x]² fails by one.".into(),outcome:"The conjecture fails with heterogeneous types".into(),method:"Explicit analytical substitution".into(),tested_domain:"Two equally weighted types with finite moments".into(),limitations:vec!["No equilibrium application was tested".into()],sources:Vec::new(),files:Vec::new()};
+    let finding=Finding{execution_ids:vec![],summary:"For two equally weighted types x=0 and x=2, E[x]=1 and E[x²]=2, so the conjectured equality E[x²]=E[x]² fails by one.".into(),outcome:"The conjecture fails with heterogeneous types".into(),method:"Explicit analytical substitution".into(),tested_domain:"Two equally weighted types with finite moments".into(),limitations:vec!["No equilibrium application was tested".into()],sources:Vec::new(),files:Vec::new()};
     let child = completed(
         &s,
         &mut m,
@@ -559,10 +563,10 @@ fn mission_migration_preserves_existing_tasks_and_keeps_a_v1_backup() {
             false,
         )
         .unwrap();
-    s.connection().unwrap().execute_batch("DROP TABLE discovery_selections; DROP TABLE discovery_events; DROP TABLE discovery_children; DROP TABLE discovery_records; DROP TABLE discovery_runs; DROP TABLE mission_answers; DROP TABLE mission_events; DROP TABLE mission_children; DROP TABLE missions; PRAGMA user_version=1;").unwrap();
+    s.connection().unwrap().execute_batch("DROP TABLE usage_calls; DROP TABLE damaged_records; DROP TABLE discovery_selections; DROP TABLE discovery_events; DROP TABLE discovery_children; DROP TABLE discovery_records; DROP TABLE discovery_runs; DROP TABLE mission_answers; DROP TABLE mission_events; DROP TABLE mission_children; DROP TABLE missions; PRAGMA user_version=1;").unwrap();
     let migrated = Store::open(&s.root).unwrap();
     assert_eq!(migrated.get(&ordinary.id).unwrap().name, ordinary.name);
-    assert!(storage::list(&migrated, None, 0).unwrap().is_empty());
+    assert!(storage::list(&migrated, None, 0, false).unwrap().is_empty());
     let backup =
         rusqlite::Connection::open(s.root.join("tasks-before-missions-v2.sqlite3")).unwrap();
     assert_eq!(
@@ -639,7 +643,8 @@ fn failed_computation_cannot_complete_mission_with_goal_left_open() {
         .insert("r1-memo".into(), json!({"kind":"artifact"}));
     c.criteria[0].evidence_ids.push("r1-memo".into());
     apply_challenge(&mut m, c, "challenge").unwrap();
-    assert_eq!(m.state, "completed");
+    assert_eq!(m.state, "attention");
+    assert!(!m.rounds[0].claim_record.as_ref().unwrap().supported);
 }
 
 /// A round as planning leaves it, ready for its investigation.
@@ -650,6 +655,7 @@ fn apply_round(m: &mut Mission) -> Round {
 
 fn receipt(state: &str, started_at: i64, finished_at: Option<i64>) -> Receipt {
     Receipt {
+        action_kind: None,
         sequence: 1,
         address: "action".into(),
         step_id: "action".into(),
@@ -839,6 +845,7 @@ fn a_large_review_and_many_sources_leave_the_challenge_within_its_limit() {
         })
         .collect();
     round.finding = Some(Finding {
+        execution_ids: vec![],
         summary: "<s>".repeat(5000),
         outcome: "Inconclusive".into(),
         method: "Inspection".into(),
@@ -1061,4 +1068,37 @@ fn evidence_preview_shows_text_cut_inside_a_character_but_not_a_binary_file() {
 
     let binary = commands::evidence(&s, &m.id, "binary").unwrap();
     assert!(binary["text"].is_null());
+}
+
+#[test]
+fn equivalent_investigations_ignore_numbered_memos_but_keep_evidence_changes() {
+    let finding:Finding=serde_json::from_value(json!({"summary":"Confirmed","outcome":"confirmed","method":"check","testedDomain":"table","limitations":[],"sources":[],"files":[]})).unwrap();
+    let fingerprint = |number: u32, receipt: &str| {
+        investigation_fingerprint(
+            &finding,
+            number,
+            &std::collections::BTreeMap::from([
+                (
+                    format!("r{number}-memo"),
+                    json!({"hash":format!("memo-{number}")}),
+                ),
+                (format!("r{number}-execution"), json!({"result":receipt})),
+            ]),
+        )
+        .unwrap()
+    };
+    assert_eq!(fingerprint(1, "first"), fingerprint(2, "first"));
+    assert_ne!(fingerprint(1, "first"), fingerprint(2, "changed"));
+    let (_tmp, _store, mut mission) = fixture();
+    let mut legacy = apply_round(&mut mission);
+    legacy.number = 1;
+    legacy.finding = Some(finding.clone());
+    legacy.evidence = BTreeMap::from([
+        ("r1-memo".into(), json!({"hash":"memo-1"})),
+        ("r1-review".into(), json!({"reviewRunId":"separate-review"})),
+        ("r1-execution".into(), json!({"result":"first"})),
+    ]);
+    legacy.result_fingerprint = Some("old-format".into());
+    upgrade_round_fingerprints(std::slice::from_mut(&mut legacy)).unwrap();
+    assert_eq!(legacy.result_fingerprint.unwrap(), fingerprint(2, "first"));
 }

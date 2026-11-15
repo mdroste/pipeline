@@ -28,7 +28,6 @@
   "commandNetwork": true,
   "capabilities": {
     "commandDomains": [],
-    "browser": false,
     "shellWrite": true,
     "privateFolder": true
   },
@@ -526,9 +525,8 @@
       "name": "web_download"
     }
   ],
-  "fingerprint": "3c82a7345ef626533c71fc4b035bdb166d786e2b361dc1c8a35f36fc04d5e3f0",
+  "fingerprint": "b9e1dfbe8c1ffcdc07ba0b0dcee3584bf2eb7c5a972b776739a98444da815531",
   "valueSources": {
-    "browser": "builtIn",
     "commandDomains": "builtIn",
     "commandNetwork": "workspace",
     "contextBudgetBytes": "conversation",

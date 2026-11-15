@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import MemoryTab from "./MemoryTab";
-import type { ResearchNote } from "../../lib/workbenchTypes";
+import type { ResearchNote } from "../../lib/workbench/researchTypes";
 
 afterEach(cleanup);
 

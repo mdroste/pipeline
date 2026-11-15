@@ -9,7 +9,7 @@ import type {
   PipelineReport,
   RunSummary,
   StepOutput,
-} from "../../lib/types";
+} from "../../lib/reviewTypes";
 import {
   EXAMPLE_EXTRACTED_TEXT,
   EXAMPLE_PAPER,
@@ -159,7 +159,7 @@ const QUALITY: PipelineReport["quality"] = {
   manual_review_items: 0,
   limitations: [
     `Evidence requiring caution: ${partialEvidence} partially verified and ${unverifiedEvidence} unverified item(s).`,
-    `${notCheckableEvidence} evidence item(s) could not be checked automatically.`,
+    `Pipeline could not automatically check ${notCheckableEvidence} ${notCheckableEvidence === 1 ? "citation" : "citations"}.`,
   ],
   reproducibility_hash: "",
 };

@@ -63,28 +63,6 @@ export type AppRoute =
   | { page: "help"; section?: "privacy" }
   | { page: "activity" };
 
-const PAGES: readonly AppPage[] = [
-  "home",
-  "main",
-  "workspace",
-  "project-index",
-  "tasks",
-  "pipeline",
-  "settings",
-  "help",
-  "history",
-  "batch",
-  "projects",
-  "gallery",
-  "activity",
-];
-
-export function isAppPage(value: unknown): value is AppPage {
-  return (
-    typeof value === "string" && (PAGES as readonly string[]).includes(value)
-  );
-}
-
 // Hash paths use product vocabulary; internal page ids keep their older names
 // (see "Names in the app and in the code" in docs/architecture.md).
 const PAGE_TO_PATH: Record<AppPage, string> = {

@@ -7,7 +7,7 @@ covers **Paper**, **Reviews**, and **Changes**.
 
 ## Create a project
 
-Open **Projects** and choose **+ New project**. Enter a name, and optionally
+Open **Projects** and choose **New project**. Enter a name, and optionally
 choose the kind of paper, the folder that holds the paper and its code, and the
 paper itself. Then choose **Create project**.
 
@@ -17,14 +17,11 @@ documents. You can attach a folder later in
 **Project settings**. If setup stops after the project is created, choose
 **Try again** to finish the same project.
 
-**Projects** brings your projects and chats together. Projects appear under
-**Pinned** and **Recently active**. Search by project name, research brief,
-folder, or chat title. Each row shows the paper's stage, venue, and deadline
-when they're set, the latest activity, and what needs you, such as an
-interrupted edit or suggested notes. **Sort by deadline** puts the nearest
-deadline first. Choose the
-name to open the Overview, or **Resume conversation** to go back to the last
-conversation. **Pin project** keeps a project at the top on this computer.
+**Projects** lists projects under **Pinned** and **Recently active**. Search
+by project name, research brief, or folder. Choose a project row to open its
+Overview. **Pin** keeps it at the top on this computer; **Unpin** returns it
+to the recent list. When projects have deadlines, choose **Deadline** in
+**Sort projects** to put the nearest first.
 
 Inside a project, the sidebar lists its six areas and its conversations:
 
@@ -49,14 +46,23 @@ Conversations and reviews need one. See [Connections](connections.md).
 
 Start a conversation from the Overview, with **New conversation** above the conversation, or
 from **New → New conversation** in the sidebar. Outside a project, **New →
-New conversation** starts one with no project. **+ New chat** on the Projects
-page also starts a chat without a project. The **Chats** list on that page
-includes conversations across projects, with **No project** and **Archived**
-filters. Choose a chat to resume it, or its project name to open the project.
+New conversation** starts one with no project. **Browse chats** at the bottom of **Projects** opens the conversation list.
+Use **+ New chat** there to start a chat without a project. Search chats or use
+the **No project** and **Archived** filters. Choose a chat to resume it, or its project name to open the project.
 **Move to project…** adds a standalone chat to a project; **Change project…**
 lets you move it elsewhere or choose **Unfiled** to remove its project.
-The transcript stays with the chat. Recent chats and the open conversation
-appear inside the **Projects** sidebar section.
+The transcript stays with the chat. Choose **Chats** in a project to search its conversations, open **Archived**,
+or **Show older conversations**. A chat’s actions menu offers rename, move,
+archive, restore, and delete. Choose **Browse chats** above a conversation to
+return to the list. Standalone conversations use a separate list marked **No project**.
+
+The conversation’s **Outline** searches the messages loaded so far. In a long
+chat, choose **Search older messages** to include the preceding page.
+
+**Artifacts** starts collapsed. Use the folder button in the conversation
+header to browse files, or select a file link to preview it beside the chat.
+Drag the divider to resize the pane. Use **Show file list** to browse from a
+file preview.
 
 ### Work with files outside a project
 
@@ -71,12 +77,29 @@ macOS, or Linux with `bubblewrap` and `socat`. **Local / custom** models also
 need **Allow edits** or an enabled tool. See
 [API conversations](connections.md#api-conversations).
 
-Select a file the assistant names to open it, or choose **Reveal working files**
-from the conversation's actions menu. Deleting the conversation deletes its
-folder. **Move to project…** leaves the files in that folder, and the
-conversation works in the project instead. A conversation that uses an agent
-profile or recipe made for its current project can't move until you switch it
-to a built-in or shared one, or disable the recipe.
+**Artifacts** lists the files in the conversation's working folder. Deleting
+the conversation deletes its folder. **Move to project…** leaves the files in
+that folder, and the conversation works in the project instead. A conversation
+that uses an agent profile or recipe made for its current project can't move
+until you switch it to a built-in or shared one, or disable the recipe.
+
+In a conversation with a project folder, **Artifacts** lists local files linked
+by the assistant. Choose **Find files in earlier messages** to look farther back.
+Use **Source** to read Markdown with syntax highlighting, or **Preview** to read
+the rendered document. Scripts open in the source viewer. Choose **Edit**
+to change a supported text file up to 2 MB, then choose **Save**. When the
+conversation uses a review copy, saves go to that copy. For files in the
+project folder, **More file actions → Open in Files** opens the full editor.
+
+For a Python script or Stata do-file, choose **Run** and review the working
+folder before starting. Save any edits first. The script runs with your local
+file access, and its output appears in the pane. Choose **Stop** to cancel.
+Runs time out after 10 minutes. Recent output stays available while Pipeline
+is open.
+
+Choose **More file actions → Open a copy with…** to pick an editor or runner on
+your computer. The app receives a temporary copy with the original filename.
+Use **Save As** in that app to keep changes.
 
 ### Choose a model
 
@@ -90,6 +113,16 @@ The conversation remembers your choice. Switching providers keeps recent
 history available to the next provider. For ChatGPT, the picker also shows
 the signed-in account and remaining usage. See [Connections](connections.md)
 for sign-in, keys, local servers, and command setup.
+
+For **ChatGPT** and **Claude Code**, open **Tool approvals** in the same
+picker. **Ask** lets ChatGPT request approval when it needs additional access
+and asks you before Claude Code runs a shell command. **Sandbox only** runs
+commands the sandbox allows without prompting. **Auto** uses the provider's
+automatic approval review. The conversation saves your choice for future messages.
+
+When a command offers **Always allow**, that choice also approves matching
+requests in the same conversation. Use **Clear saved approvals** in the picker
+to remove those choices.
 
 ### Add sources
 
@@ -116,13 +149,13 @@ profile, which is a saved set of instructions and tools. Set
 - On **System prompt**, keep the provider's base prompt or choose
   **Replace base prompt**. **Additional instructions** are added either way.
 - On **Tools & context**, choose which Pipeline tools the profile can use.
-- On **Access & inheritance**, set file changes, web search, the browser, and
+- On **Access & inheritance**, set file changes, web search, and
   command internet access.
 
 Editing a custom profile changes every conversation that uses it, starting
 with the next message. These settings apply to every connection.
 [Conversation access](connections.md#conversation-access) explains file access,
-web search, browser interaction, and commands.
+web search and commands.
 
 Replies stream as the assistant works. Choose **Stop** to interrupt the turn
 and its tools. API billing after an interruption is explained under
@@ -254,8 +287,8 @@ commit, push, and pull.
 open it and a file to read it. Type in **Find a file**, or press Command/Ctrl+P
 from anywhere, to find a file by name. Press Enter to open the first match, or
 choose **Search inside files** to search its text. Use tabs or **Split pane** to
-see two files, and **Hide file list** for more room. A file link in a
-conversation or report opens the file at that line, heading, or PDF page.
+see two files, and **Hide file list** for more room. A file link can point to a
+line, heading, or PDF page. Conversation links open in **Artifacts**.
 
 The **+** button offers **New file**, **New folder**, and **Add files**, which
 act on the folder you selected. You can also drop files from your desktop onto
@@ -283,6 +316,11 @@ Files opens these types:
 
 Other files show their size, with **Open externally** and **Reveal in folder**.
 This includes Stata (.dta) files, which are usually too large to read here.
+A changed spreadsheet keeps its worksheet and page if both still exist. If the
+worksheet was removed, Pipeline opens the first one. **Reload table**
+retries a table that could not be read. Choose **Retry playback** if an audio
+or video file fails to play.
+
 Every open file has these in its **…** menu, along with **Reload**. Pipeline
 will not open a program or script with **Open externally** or **Open external
 editor**. On a Mac, that includes Python files. On an exFAT drive or a network

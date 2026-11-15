@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- Development-only host for synthetic fixtures in the native WKWebView.
+     The iframe has no native IPC bridge; app-full-shim owns all app commands.
+     WebDriver controls the outer native window. Never use this as a release entry. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pipeline native UI fixture</title>
+  </head>
+  <body>
+    <iframe
+      id="fixture"
+      title="Pipeline fixture"
+      src="/e2e/app-full.html?project=rich&page=home"
+      style="position: fixed; inset: 0; width: 100%; height: 100%; border: 0"
+    ></iframe>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const route = params.get("route");
+      if (route) {
+        const destination = new URLSearchParams(route.split("?")[1]);
+        const entry =
+          params.get("entry") === "app-runs" ? "app-runs" : "app-full";
+        localStorage.setItem(
+          "pipeline.desk.ws-minwage",
+          JSON.stringify({ tab: destination.get("dest") ?? "overview" }),
+        );
+        localStorage.setItem(
+          "pipeline.workspace.surface",
+          destination.get("surface") ?? "project",
+        );
+        localStorage.setItem(
+          "pipeline.ui.preferences",
+          JSON.stringify({
+            version: 1,
+            interfaceScale: 125,
+            density: "comfortable",
+          }),
+        );
+        if (params.get("largeTree") === "1") {
+          const tabs = Array.from(
+            { length: 30 },
+            (_, index) => `replication-table-${index + 1}.txt`,
+          );
+          localStorage.setItem(
+            "pipeline.files.layout.workspace:ws-minwage:working",
+            JSON.stringify({
+              tabs,
+              active: { path: tabs[29] },
+              split: null,
+              browser: true,
+            }),
+          );
+        } else {
+          localStorage.removeItem(
+            "pipeline.files.layout.workspace:ws-minwage:working",
+          );
+        }
+        params.delete("route");
+        params.delete("entry");
+        document.querySelector("#fixture").src =
+          `/e2e/${entry}.html?${params}#${route}`;
+      }
+    </script>
+  </body>
+</html>

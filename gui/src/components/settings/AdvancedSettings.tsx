@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { updateClient } from "../../lib/updateClient";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
-import type { Settings, UpdateInfo, UpdateStatus } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
+import type { UpdateInfo, UpdateStatus } from "../../lib/updateTypes";
 import {
   projectClient,
   type ProjectCapabilities,
@@ -40,7 +41,8 @@ export default function AdvancedSettings({
         if (live) setCapabilities(v);
       })
       .catch(() => {});
-    invoke<UpdateStatus>("update_status")
+    updateClient
+      .status()
       .then((v) => {
         if (live) setUpdateStatus(v ?? null);
       })
@@ -63,7 +65,7 @@ export default function AdvancedSettings({
   const installUpdate = async () => {
     setError("");
     try {
-      await invoke("update_install_start");
+      await updateClient.startInstall();
     } catch (failure) {
       setError(
         typeof failure === "string" && failure
@@ -75,9 +77,7 @@ export default function AdvancedSettings({
   const saveAutomatic = async (enabled: boolean) => {
     setError("");
     try {
-      setUpdateStatus(
-        await invoke<UpdateStatus>("update_set_automatic", { enabled }),
-      );
+      setUpdateStatus(await updateClient.setAutomatic({ enabled }));
     } catch {
       setError("Could not save the update setting. Try again.");
     }
@@ -154,7 +154,7 @@ export default function AdvancedSettings({
               setBusy(true);
               setError("");
               try {
-                setUpdate(await invoke<UpdateInfo>("check_for_update"));
+                setUpdate(await updateClient.check());
               } catch (failure) {
                 setError(
                   typeof failure === "string" && failure

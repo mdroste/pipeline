@@ -31,7 +31,7 @@ import { router } from "./lib/router";
 import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
 import { appEvents } from "./lib/appEvents";
-import type { QueuedRun } from "./lib/types";
+import type { QueuedRun } from "./lib/reviewTypes";
 import ReportIssueLink from "./components/ReportIssueLink";
 import { workbenchErrorMessage } from "./lib/workbenchError";
 
@@ -54,6 +54,11 @@ const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 
+import {
+  ReviewSetupReads,
+  createReviewSetupReads,
+} from "./components/reviewSetupReads";
+
 function AppShell() {
   useAppAppearance();
   const {
@@ -70,6 +75,7 @@ function AppShell() {
   const {
     openWorkspaceSession,
     startConversation,
+    creatingConversation,
     openActivityProject,
     openActivityTask,
     page,
@@ -176,6 +182,8 @@ function AppShell() {
     state,
     runQueue,
     selectedRun,
+    resultError,
+    retryResult,
     seenRuns,
     runningReviews,
     continueRunKey,
@@ -282,13 +290,14 @@ function AppShell() {
     );
   };
 
+  const setupReads = useMemo(createReviewSetupReads, [configVersion, page]);
   // The window itself never scrolls. Relative and clip contain visually hidden
   // elements that sit outside a page's scroller, so neither focus nor the
   // scroll wheel can move the shell and leave blank space below it.
-  return (
+  const shell = (
     <div
       data-testid="app-shell"
-      className="relative flex h-screen flex-col overflow-clip bg-gray-50 dark:bg-[#101010]"
+      className="relative flex h-screen flex-col overflow-clip bg-gray-50 dark:bg-surface"
     >
       {searchOpen && (
         <Suspense fallback={null}>
@@ -417,7 +426,6 @@ function AppShell() {
           onSearch={() => setSearchOpen(true)}
           onNewConversation={newConversation}
           onNewProject={() => void createWorkspaceProject()}
-          onOpenConversation={openConversation}
           onOpenConversations={() =>
             waitingSession
               ? openConversation(waitingSession)
@@ -533,6 +541,7 @@ function AppShell() {
                   onOpenProject={openWorkspaceProject}
                   onResumeConversation={openWorkspaceSession}
                   onNewConversation={newConversation}
+                  creatingConversation={creatingConversation}
                 />
               ) : page === "workspace" ? (
                 // A project's Reviews open saved runs (and cited sources)
@@ -662,6 +671,10 @@ function AppShell() {
                 </ErrorBoundary>
               ) : hasCurrentRun ? (
                 <ReviewRunView
+                  resultError={resultError}
+                  onRetryResult={() =>
+                    selectedRun && retryResult(selectedRun.key)
+                  }
                   run={selectedRun}
                   runs={runQueue.runs}
                   limit={runQueue.limit}
@@ -751,6 +764,11 @@ function AppShell() {
         </main>
       </div>
     </div>
+  );
+  return (
+    <ReviewSetupReads.Provider value={setupReads}>
+      {shell}
+    </ReviewSetupReads.Provider>
   );
 }
 

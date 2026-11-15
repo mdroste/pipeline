@@ -18,6 +18,7 @@ fn success_marks_only_the_last_answer_final_without_duplicate_transcript_items()
             id: "claude-turn".into(),
             binding: bound.id.clone(),
             model: None,
+            approval_root: None,
             unsaved: Default::default(),
         };
         let mut answers = super::answers::Answers::default();
@@ -65,6 +66,7 @@ fn failed_claude_result_never_promotes_partial_json_to_a_final_answer() {
         id: "claude-turn".into(),
         binding: bound.id.clone(),
         model: None,
+        approval_root: None,
         unsaved: Default::default(),
     };
     let mut answers = super::answers::Answers::default();
@@ -191,6 +193,14 @@ fn claude_recovery_keeps_history_and_interrupts_without_replay() {
     assert!(prompt.text.contains("Prior answer"));
     assert_eq!(prompt.user_text, "Next question");
     assert!(protocol::prompt(&f.store, &f.session, " ").is_err());
+    let lease = crate::workbench::submission::session_lease(&f.store, &f.session)
+        .unwrap()
+        .unwrap();
+    reconcile(f.store.clone(), f.session.clone()).unwrap();
+    assert!(f.store.conversation_snapshot(&f.session).unwrap().turns[0]
+        .terminal_at
+        .is_none());
+    drop(lease);
     reconcile(f.store.clone(), f.session.clone()).unwrap();
     reconcile(f.store.clone(), f.session.clone()).unwrap();
     let snapshot = f.store.conversation_snapshot(&f.session).unwrap();
@@ -256,7 +266,7 @@ async fn claude_subscription_handshake_probe() {
     select(&f, "inspect");
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let specs = tools::catalog(&effective);
-    let args = protocol::arguments(&effective, None, None, None);
+    let args = protocol::arguments(&effective, None, None, None, Mode::Sandbox);
     let mut process = transport::Process::start(&args, None, None).await.unwrap();
     let result = process.initialize(&specs).await;
     process.stop().await;
@@ -290,7 +300,7 @@ async fn claude_subscription_model_probe() {
         json!({"name":"pipeline_probe","description":"Return the verification marker.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
     ];
     let mut process = transport::Process::start(
-        &protocol::arguments(&effective, Some("haiku"), None, None),
+        &protocol::arguments(&effective, Some("haiku"), None, None, Mode::Sandbox),
         None,
         None,
     )
@@ -418,6 +428,7 @@ fn recorded_turn(label: &str) -> Turn {
         id,
         binding: bound.id,
         model: None,
+        approval_root: None,
         unsaved: Default::default(),
     }
 }
@@ -655,6 +666,7 @@ async fn a_tool_mistake_goes_back_to_claude_as_a_failed_result() {
             .unwrap()
             .id,
         model: None,
+        approval_root: None,
         unsaved: Default::default(),
     };
     let call = |id: u64, name: &str, arguments: Value| json!({"server_name":"pipeline","message":{"id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}});
@@ -745,10 +757,10 @@ fn turns_offer_bash_only_with_a_sandbox_root() {
             + 1]
         .clone()
     };
-    let without = protocol::arguments(&effective, None, None, None);
+    let without = protocol::arguments(&effective, None, None, None, Mode::Sandbox);
     assert_eq!(tools(&without), "");
     assert!(prompt(&without).contains("only through authorized research profiles"));
-    let with = protocol::arguments(&effective, None, None, Some(&f.root));
+    let with = protocol::arguments(&effective, None, None, Some(&f.root), Mode::Sandbox);
     assert_eq!(tools(&with), "Bash");
     assert!(prompt(&with).contains(&f.root.display().to_string()));
     // Bash is never pre-approved; only Claude Code's sandbox auto-approves it.
@@ -804,7 +816,7 @@ async fn claude_sandboxed_shell_probe() {
     std::fs::write(outside.path().join("secret.txt"), "PIPELINE_HOME_SECRET").unwrap();
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let root = f.store.runtime_root(&f.session).unwrap();
-    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
+    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
         &args,
         Some(&shell::sandbox(&root, &Default::default(), false)),
@@ -876,7 +888,7 @@ async fn claude_working_copy_network_probe() {
     effective.capabilities.command_domains = vec!["example.org".into()];
     effective.command_network = true;
     let root = f.store.runtime_root(&f.session).unwrap();
-    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
+    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
         &args,
         Some(&shell::sandbox(&root, &effective.capabilities, true)),
@@ -935,7 +947,7 @@ fn private_folder_turns_are_told_to_work_there() {
         .id;
     let effective = super::super::research::resolve_harness(&store, &session).unwrap();
     let root = store.runtime_root(&session).unwrap();
-    let args = protocol::arguments(&effective, None, None, Some(&root));
+    let args = protocol::arguments(&effective, None, None, Some(&root), Mode::Sandbox);
     let prompt = &args[args
         .iter()
         .position(|a| a == "--append-system-prompt")
@@ -971,7 +983,7 @@ async fn claude_private_folder_probe() {
         .id;
     let effective = super::super::research::resolve_harness(&store, &session).unwrap();
     let root = store.runtime_root(&session).unwrap();
-    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
+    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
         &args,
         Some(&shell::sandbox(&root, &effective.capabilities, false)),
@@ -1010,21 +1022,21 @@ fn shared_web_access_does_not_grant_shell_network_or_main_project_writes() {
         super::super::research::SaveWorkspaceConfigRequest {
             workspace_id: None,
             expected_revision: Some(0),
-            body: json!({"webSearch":true,"browser":true}),
+            body: json!({"webSearch":true}),
             operation_id: "web-access".into(),
         },
     )
     .unwrap();
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
-    assert!(effective.web_search && effective.capabilities.browser);
+    assert!(effective.web_search);
     assert!(!effective.command_network && !effective.capabilities.shell_write);
-    for name in ["project_create", "web_fetch", "web_download", "browser"] {
+    for name in ["project_create", "web_search", "web_fetch", "web_download"] {
         assert!(effective
             .dynamic_tools
             .iter()
             .any(|spec| spec["name"] == name));
     }
-    let args = protocol::arguments(&effective, None, None, Some(&f.root));
+    let args = protocol::arguments(&effective, None, None, Some(&f.root), Mode::Sandbox);
     assert_eq!(
         args[args.iter().position(|v| v == "--tools").unwrap() + 1],
         "Bash,WebSearch,WebFetch"

@@ -171,6 +171,97 @@ fn conversation_file_links_stay_inside_the_session_runtime_root() {
 }
 
 #[test]
+fn conversation_artifacts_browse_private_files_and_open_scoped_previews() {
+    let f = fixture();
+    let session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Artifacts".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    let root = f.store.runtime_root(&session.id).unwrap();
+    fs::create_dir(root.join("results")).unwrap();
+    let script = root.join("results/estimate.do");
+    fs::write(&script, "summarize outcome\n").unwrap();
+    let listing = list_conversation_directory(&f.store, &session.id, "results".into())
+        .unwrap()
+        .listing
+        .unwrap();
+    assert_eq!(listing.entries[0].path, "results/estimate.do");
+
+    let preview =
+        preview_conversation_file(&f.store, &session.id, script.to_str().unwrap()).unwrap();
+    assert_eq!(preview.text.as_deref(), Some("summarize outcome\n"));
+    assert_eq!(preview.path, "results/estimate.do");
+    assert!(preview.editable);
+    assert!(preview.external_path.is_none());
+    let edit = ConversationFileSave {
+        session_id: session.id.clone(),
+        path: preview.path,
+        scope_root: preview.scope_root.unwrap(),
+        expected_hash: preview.hash,
+        content: "describe outcome\n".into(),
+    };
+    let retry = ConversationFileSave {
+        content: "stale edit\n".into(),
+        ..edit.clone()
+    };
+    assert_eq!(
+        save_conversation_file(&f.store, edit).unwrap(),
+        hash(b"describe outcome\n")
+    );
+    assert_eq!(
+        save_conversation_file(&f.store, retry).unwrap_err().code,
+        "storage_conflict"
+    );
+    assert_eq!(fs::read_to_string(&script).unwrap(), "describe outcome\n");
+
+    fs::write(root.join("output.pdf"), b"%PDF-1.7\n").unwrap();
+    let preview = preview_conversation_file(&f.store, &session.id, "output.pdf").unwrap();
+    assert_eq!(preview.kind, "pdf");
+    assert!(!preview.editable);
+    assert!(preview.base64.is_none());
+    crate::file_stream::revoke(&preview.stream_token.unwrap());
+    assert!(preview_conversation_file(&f.store, &session.id, "../output.pdf").is_err());
+
+    let project_session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: Some(f.ws.clone()),
+            title: "Project artifacts".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    assert!(
+        list_conversation_directory(&f.store, &project_session.id, String::new())
+            .unwrap()
+            .listing
+            .is_none()
+    );
+    fs::write(f.root.join("notes.md"), "First draft\n").unwrap();
+    let preview = preview_conversation_file(&f.store, &project_session.id, "notes.md").unwrap();
+    save_conversation_file(
+        &f.store,
+        ConversationFileSave {
+            session_id: project_session.id,
+            path: preview.path,
+            scope_root: preview.scope_root.unwrap(),
+            expected_hash: preview.hash,
+            content: "Revised draft\n".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(f.root.join("notes.md")).unwrap(),
+        "Revised draft\n"
+    );
+}
+
+#[test]
 fn the_external_editor_refuses_a_program_and_opens_a_source_file() {
     use std::os::unix::fs::PermissionsExt as _;
     let f = fixture();

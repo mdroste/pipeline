@@ -1,4 +1,4 @@
-//! Stateless conversation shell policy shared by independent runtime owners.
+//! Stateless subscription command policy for the Workspace Claude Code adapter.
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -40,8 +40,8 @@ fn denied_reads() -> Vec<String> {
 
 /// Settings for one turn. Starting fails rather than running unconfined, and
 /// the model cannot ask to leave the sandbox. With network on and no listed
-/// sites, `"*"` is Claude Code's rule for every host. The API command engine's
-/// schema refuses it, so `shell::run` stops that policy before launch.
+/// sites, `"*"` is Claude Code's rule for every host. Native API commands use
+/// their separate policy in shell/policy.rs and require named sites.
 pub(crate) fn sandbox(
     root: &Path,
     access: &crate::workbench::capabilities::ConversationCapabilities,

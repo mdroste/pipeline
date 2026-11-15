@@ -16,7 +16,7 @@ import type {
   ConversationSnapshot,
   WorkbenchSession,
   Workspace,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 
 const mocks = vi.hoisted(() => ({
   modelCatalog: vi.fn(),
@@ -31,6 +31,8 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   openConversationFile: vi.fn(),
   readConversationFile: vi.fn(),
+  previewConversationFile: vi.fn(),
+  listConversationFiles: vi.fn(),
   reconcileSession: vi.fn(),
   updateSession: vi.fn(),
   moveSession: vi.fn(),
@@ -309,27 +311,6 @@ it("offers a way out when no conversation exists to type into", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("places conversations in the sidebar and keeps the draft while switching", async () => {
-  await mount();
-  const draft = screen.getByLabelText("Message");
-  fireEvent.change(draft, { target: { value: "Keep my working question" } });
-  expect(
-    within(screen.getByRole("navigation", { name: "Conversations" })).getByRole(
-      "button",
-      { name: "Policy discussion" },
-    ),
-  ).toBeVisible();
-  // No project is open, so its sections and switcher stay out of the way.
-  expect(
-    screen.queryByRole("navigation", { name: "Project sections" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Switch project" }),
-  ).not.toBeInTheDocument();
-  expect(draft).toHaveValue("Keep my working question");
-  expect(mocks.sendTurn).not.toHaveBeenCalled();
-});
-
 it("opens the project view picker while leaving a message draft untouched", async () => {
   localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
   localStorage.setItem("pipeline.workspace.sessionId", "conversation");
@@ -389,6 +370,15 @@ it("saves the exact composer draft before allowing navigation back to the index"
   fireEvent.change(message, {
     target: { value: "Preserve this unfinished argument" },
   });
+  const refuse = (event: Event) => event.preventDefault();
+  window.addEventListener("pipeline:flush-drafts", refuse);
+  try {
+    await act(async () => {
+      expect(await save!()).toBe(false);
+    });
+  } finally {
+    window.removeEventListener("pipeline:flush-drafts", refuse);
+  }
   let allowed = false;
   await act(async () => {
     allowed = await save!();
@@ -401,48 +391,6 @@ it("saves the exact composer draft before allowing navigation back to the index"
     }),
   );
   expect(mocks.sendTurn).not.toHaveBeenCalled();
-});
-
-it("makes absolute generated PDF and source paths clickable inside the project", async () => {
-  localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
-  localStorage.setItem("pipeline.workspace.sessionId", "conversation");
-  localStorage.setItem(`pipeline.workspace.view.${workspace.id}`, "assistant");
-  const rootedWorkspace = { ...workspace, root: "/Users/example/research" };
-  snapshot = {
-    ...snapshot,
-    workspace: rootedWorkspace,
-    session: { ...snapshot.session, workspaceId: workspace.id },
-    items: [
-      {
-        id: "generated-files",
-        turnId: null,
-        providerItemId: "native-generated-files",
-        itemKind: "agentMessage",
-        payload: {
-          text: "[Open PDF](/Users/example/research/output.pdf) · [Open source](/Users/example/research/source.tex#L8)",
-        },
-        isFinal: true,
-        createdAt: "now",
-        updatedAt: "now",
-      },
-    ],
-  };
-  const opened = vi.fn();
-  const off = appEvents.on("open-file", opened);
-
-  await mount();
-
-  const pdf = screen.getByRole("link", { name: "Open PDF" });
-  expect(screen.getByRole("link", { name: "Open source" })).toHaveAttribute(
-    "href",
-    "/Users/example/research/source.tex#L8",
-  );
-  fireEvent.click(pdf);
-  expect(opened).toHaveBeenCalledWith({
-    workspaceId: workspace.id,
-    location: { path: "output.pdf" },
-  });
-  off();
 });
 
 it("renders generated images in an unfiled conversation", async () => {
@@ -509,37 +457,66 @@ it("flushes and clears the old conversation when a sidebar entry switches projec
   ).not.toBeInTheDocument();
 });
 
-it("opens generated PDF and source links from an unfiled conversation", async () => {
-  const root = "/private/workbench/jobs/conversations/conversation";
+it("opens a linked file beside the chat in a collapsible, resizable pane", async () => {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 10, 10);
+  const root = "/private/conversation";
+  mocks.listConversationFiles.mockResolvedValue({
+    scopeRoot: root,
+    listing: null,
+  });
+  mocks.previewConversationFile.mockResolvedValue({
+    path: "analysis.py",
+    text: "# Results\nprint(1)",
+    mime: "text/plain",
+    editable: false,
+  });
   snapshot.items = [
     {
       id: "scratch-files",
       turnId: null,
       providerItemId: "native-scratch-files",
       itemKind: "agentMessage",
-      payload: {
-        text: `[PDF](${root}/hello-world.pdf) · [LaTeX source](${root}/hello-world.tex)`,
-      },
+      payload: { text: `[Python](${root}/analysis.py#L2)` },
       isFinal: true,
       createdAt: "now",
       updatedAt: "now",
     },
   ];
-
   await mount();
-  fireEvent.click(screen.getByRole("link", { name: "PDF" }));
-  fireEvent.click(screen.getByRole("link", { name: "LaTeX source" }));
-
-  expect(mocks.openConversationFile).toHaveBeenNthCalledWith(
-    1,
-    "conversation",
-    `${root}/hello-world.pdf`,
+  const toggle = screen.getByRole("button", { name: "Artifacts" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("region", { name: "Artifacts" })).toBeNull();
+  expect(mocks.listConversationFiles).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("link", { name: "Python" }));
+  const panel = await screen.findByRole("region", { name: "Artifacts" });
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("textbox", { name: "Message" })).toBeVisible();
+  expect(await within(panel).findByText("Ln 2, Col 1")).toBeVisible();
+  expect(within(panel).getByLabelText("Source language")).toHaveValue("python");
+  expect(
+    within(panel).getByRole("button", { name: "Show file list" }),
+  ).toBeVisible();
+  expect(within(panel).queryByRole("tree")).toBeNull();
+  const divider = within(panel).getByRole("separator", {
+    name: "Resize artifacts",
+  });
+  fireEvent.keyDown(divider, { key: "ArrowLeft", shiftKey: true });
+  expect(panel).toHaveStyle({ width: "552px" });
+  fireEvent.click(
+    within(panel).getByRole("button", { name: "Collapse artifacts" }),
   );
-  expect(mocks.openConversationFile).toHaveBeenNthCalledWith(
-    2,
-    "conversation",
-    `${root}/hello-world.tex`,
-  );
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(panel).not.toBeInTheDocument();
+  fireEvent.click(toggle);
+  const reopened = screen.getByRole("region", { name: "Artifacts" });
+  expect(reopened).toHaveStyle({ width: "552px" });
+  expect(
+    await within(reopened).findByRole("treeitem", { name: "analysis.py" }),
+  ).toBeVisible();
+  fireEvent.click(toggle);
+  expect(reopened).not.toBeInTheDocument();
+  expect(mocks.openConversationFile).not.toHaveBeenCalled();
 });
 
 it("opens the attach menu lazily and offers only things added to a message", async () => {
@@ -698,6 +675,12 @@ it("blocks sending while files are being imported", async () => {
 });
 
 const openMenu = () => {
+  if (
+    !screen.queryByRole("button", {
+      name: "Conversation actions for Policy discussion",
+    })
+  )
+    fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
   fireEvent.click(
     screen.getByRole("button", {
       name: "Conversation actions for Policy discussion",
@@ -730,7 +713,9 @@ it("deletes a conversation only after confirmation and clears the open transcrip
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
   expect(mocks.deleteSession).not.toHaveBeenCalled();
   // The prompt also covers Claude and API conversations.
-  expect(mocks.confirmDialog.mock.calls[0][0]).toContain("provider history");
+  expect(mocks.confirmDialog.mock.calls[0][0]).toContain(
+    "provider may retain its own history",
+  );
   expect(mocks.confirmDialog.mock.calls[0][0]).not.toContain("ChatGPT");
   mocks.confirmDialog.mockResolvedValue(true);
   mocks.deleteSession.mockResolvedValue(7);

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WaveDiagram from "./WaveDiagram";
-import type { MergeConfig, StepConfig } from "../lib/types";
+import type { MergeConfig, StepConfig } from "../lib/workflowTypes";
 
 function step(overrides: Partial<StepConfig> & { id: string }): StepConfig {
   return {
@@ -42,7 +42,9 @@ describe("WaveDiagram", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Orient" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Identify content" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Technical" }),
     ).toBeInTheDocument();
@@ -61,7 +63,9 @@ describe("WaveDiagram", () => {
         onSelect={() => {}}
       />,
     );
-    expect(screen.getByRole("button", { name: "Orient" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Identify content" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Merge" }),
     ).not.toBeInTheDocument();
@@ -82,7 +86,7 @@ describe("WaveDiagram", () => {
     expect(onSelect).toHaveBeenLastCalledWith("technical");
     await user.click(screen.getByRole("button", { name: "Extract" }));
     expect(onSelect).toHaveBeenLastCalledWith("extraction");
-    await user.click(screen.getByRole("button", { name: "Orient" }));
+    await user.click(screen.getByRole("button", { name: "Identify content" }));
     expect(onSelect).toHaveBeenLastCalledWith("orientation");
   });
 
@@ -134,12 +138,12 @@ describe("WaveDiagram", () => {
       />,
     );
     const stages = screen.getAllByRole("listitem");
-    expect(stages[0]).toHaveTextContent("1Prepare document bundle");
+    expect(stages[0]).toHaveTextContent("1Document bundle preparation");
     expect(stages[0]).toContainElement(
       screen.getByRole("button", { name: "Extract" }),
     );
     expect(stages[0]).toContainElement(
-      screen.getByRole("button", { name: "Orient" }),
+      screen.getByRole("button", { name: "Identify content" }),
     );
     expect(stages[1]).toHaveTextContent("2In parallel");
     expect(stages[1]).toContainElement(
@@ -165,7 +169,7 @@ describe("WaveDiagram", () => {
       screen.getByText("Prepare source-tree inventory"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("Prepare document bundle"),
+      screen.queryByText("Document bundle preparation"),
     ).not.toBeInTheDocument();
   });
 
@@ -276,7 +280,7 @@ describe("WaveDiagram", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Orient + classify" }),
+      screen.getByRole("button", { name: "Choose reviewers" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Adaptive agents (2–6)" }),

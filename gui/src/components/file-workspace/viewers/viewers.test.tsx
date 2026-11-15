@@ -374,3 +374,97 @@ it("offers another route when media cannot play", () => {
   fireEvent.error(screen.getByLabelText("clip.mov"));
   expect(screen.getByRole("alert")).toHaveTextContent("Open it externally");
 });
+
+it.each([false, true])(
+  "retries a failed media player when its source changes (video=%s)",
+  (video) => {
+    const { rerender } = render(
+      <MediaViewer src="broken" title="media" video={video} />,
+    );
+    fireEvent.error(screen.getByLabelText("media"));
+    expect(screen.getByRole("alert")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry playback" }));
+    expect(screen.getByLabelText("media")).toHaveAttribute("src", "broken");
+    fireEvent.error(screen.getByLabelText("media"));
+    rerender(<MediaViewer src="reloaded" title="media" video={video} />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("media")).toHaveAttribute("src", "reloaded");
+  },
+);
+
+it("reloads a changed workbook at a valid worksheet and row", async () => {
+  let changed = false;
+  const table = vi.fn(
+    async (_path: string, sheet: string | null, start: number) => {
+      if (changed && sheet === "Second") throw new Error("Worksheet removed");
+      return {
+        columns: ["name"],
+        rows:
+          start >= (changed ? 1 : 450)
+            ? []
+            : [[changed ? "New first row" : `row ${start}`]],
+        start,
+        pageSize: 200,
+        totalRows: changed ? 1 : 450,
+        sheet: sheet ?? "First",
+        sheets: changed ? ["First"] : ["First", "Second"],
+      };
+    },
+  );
+  const adapter: FileAdapter = { id: "book", read: vi.fn(), table };
+  const { rerender } = render(
+    <TableViewer adapter={adapter} path="book.xlsx" version="1" />,
+  );
+  await screen.findByText("row 0");
+  fireEvent.change(screen.getByLabelText("Worksheet"), {
+    target: { value: "Second" },
+  });
+  await waitFor(() =>
+    expect(table).toHaveBeenLastCalledWith("book.xlsx", "Second", 0),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("row 200");
+  changed = true;
+  rerender(<TableViewer adapter={adapter} path="book.xlsx" version="2" />);
+  expect(await screen.findByText("New first row")).toBeVisible();
+  expect(table).toHaveBeenLastCalledWith("book.xlsx", null, 0);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("keeps a valid worksheet page on refresh and resets only the page if the sheet shrinks", async () => {
+  let totalRows = 450;
+  const table = vi.fn(
+    async (_path: string, sheet: string | null, start: number) => ({
+      sheet: sheet ?? "First",
+      sheets: ["First", "Second"],
+      columns: ["name"],
+      rows:
+        start < totalRows
+          ? [[`${sheet ?? "First"} ${start} of ${totalRows}`]]
+          : [],
+      start,
+      pageSize: 200,
+      totalRows,
+    }),
+  );
+  const adapter: FileAdapter = { id: "book", read: vi.fn(), table };
+  const book = (version: string) => (
+    <TableViewer adapter={adapter} path="book.xlsx" version={version} />
+  );
+  const { rerender } = render(book("1"));
+  await screen.findByText("First 0 of 450");
+  fireEvent.change(screen.getByLabelText("Worksheet"), {
+    target: { value: "Second" },
+  });
+  await screen.findByText("Second 0 of 450");
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  await screen.findByText("Second 200 of 450");
+  totalRows = 300;
+  rerender(book("2"));
+  await screen.findByText("Second 200 of 300");
+  totalRows = 3;
+  rerender(book("3"));
+  await screen.findByText("Second 0 of 3");
+  expect(screen.getByRole("status")).toHaveTextContent("fewer rows");
+  expect(screen.getByLabelText("Worksheet")).toHaveValue("Second");
+});

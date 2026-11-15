@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { usePipeline } from "./usePipeline";
 import { router } from "../lib/router";
-import type { QueuedRun } from "../lib/types";
+import type { QueuedRun } from "../lib/reviewTypes";
 import { queuedRun } from "../test/queuedRunFixture";
 
 // Capture registered event handlers so tests can emit synthetic events.
@@ -115,6 +115,54 @@ describe("usePipeline run queue", () => {
     );
   });
 
+  it("keeps a newer queue event when the initial snapshot arrives late", async () => {
+    let resolve!: (value: unknown) => void;
+    invokeMock.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const { result } = await renderReady();
+    act(() => emitQueue([queued(RUN, "running")]));
+    await act(async () => resolve({ limit: 1, runs: [] }));
+    expect(result.current.queue.runs[0].key).toBe(RUN);
+    expect(result.current.views[RUN].state.kind).toBe("extracting");
+  });
+
+  it.each([null, new Error("temporary read failure")])(
+    "exposes report read failure and retries without a queue event: %s",
+    async (failure) => {
+      let attempt = 0;
+      invokeMock.mockImplementation((command: string) =>
+        command === "get_queued_run_result"
+          ? ++attempt === 1
+            ? failure === null
+              ? Promise.resolve(null)
+              : Promise.reject(failure)
+            : Promise.resolve({
+                markdown: "# Recovered",
+                extracted_text: "",
+                run_id: "saved",
+                report: { step_outputs: [], failed_steps: [] },
+              })
+          : new Promise(() => {}),
+      );
+      const { result } = await renderReady();
+      act(() => emitQueue([queued(RUN, "done", { resultAvailable: true })]));
+      await waitFor(() =>
+        expect(result.current.views[RUN].resultError).toBeTruthy(),
+      );
+      expect(result.current.queue.runs[0].status).toBe("done");
+      act(() => result.current.retryResult(RUN));
+      await waitFor(() =>
+        expect(result.current.views[RUN].state.kind).toBe("done"),
+      );
+      expect(result.current.views[RUN].resultError).toBeNull();
+      expect(attempt).toBe(2);
+    },
+  );
+
   it("flushes buffered log lines into the tagged run only", async () => {
     showPage("main");
     const { result, unmount } = await renderReady();
@@ -123,7 +171,7 @@ describe("usePipeline run queue", () => {
       emitLog("line one");
       emitLog("line two", {
         session: 3,
-        label: "Orientation map",
+        label: "Document overview",
         level: "info",
       });
       emitLog("other run", {}, "run-b");
@@ -146,7 +194,7 @@ describe("usePipeline run queue", () => {
     expect(logs[1]).toEqual({
       line: "line two",
       session: 3,
-      label: "Orientation map",
+      label: "Document overview",
       level: "info",
       t: expect.any(Number),
     });

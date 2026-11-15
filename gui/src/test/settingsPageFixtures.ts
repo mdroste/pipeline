@@ -1,5 +1,6 @@
 import type { Mock } from "vitest";
-import type { Settings, EngineStatus } from "../lib/types";
+import type { Settings } from "../lib/settingsTypes";
+import type { EngineStatus } from "../lib/engineTypes";
 
 export function mockSettingsLoad(
   invoke: Pick<Mock, "mockImplementation">,

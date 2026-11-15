@@ -153,10 +153,23 @@ pub fn parse_bibtex(text: &str) -> WorkbenchResult<Vec<BibEntry>> {
                     "BibTeX field {name} in {key} has an unclosed quote"
                 )));
             }
-            let value = if value.starts_with('{') && value.ends_with('}')
-                || value.starts_with('"') && value.ends_with('"')
-            {
-                value[1..value.len() - 1].to_string()
+            let operands = split_top_level(value, b'#')?;
+            let mut joined = String::new();
+            let mut literal = true;
+            for operand in operands {
+                let operand = operand.trim();
+                if operand.len() >= 2
+                    && ((operand.starts_with('{') && operand.ends_with('}'))
+                        || (operand.starts_with('"') && operand.ends_with('"')))
+                {
+                    joined.push_str(&operand[1..operand.len() - 1]);
+                } else {
+                    literal = false;
+                    break;
+                }
+            }
+            let value = if literal {
+                joined
             } else {
                 warnings.push(format!(
                     "{name}: bare value or macro retained without expansion"
@@ -343,14 +356,71 @@ pub(super) fn save_literature(
         &json!({"note":n,"source":source,"checklist":{"identity":if n.identity_checked{"researcher_checked"}else{"unknown"},"access":source.as_ref().map(|s|s["access"].clone()).unwrap_or(json!("unavailable")),"passageRelevance":n.support,"assessmentMethod":n.method,"freshness":"exact retained version; later versions require a new assessment"}}),
     )
 }
+/// Blank inactive TeX spans without moving the byte offsets used to open citations.
+fn citation_source(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut visible = bytes.to_vec();
+    let mut i = 0;
+    while i < bytes.len() {
+        let start = i;
+        match bytes[i] {
+            b'%' => {
+                i += bytes[i..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .unwrap_or(bytes.len() - i);
+            }
+            b'\\' => {
+                let tail = &text[i..];
+                if let Some(env) = ["verbatim", "verbatim*", "lstlisting", "minted"]
+                    .into_iter()
+                    .find(|env| tail.starts_with(&format!(r"\begin{{{env}}}")))
+                {
+                    let end = format!(r"\end{{{env}}}");
+                    i += tail.find(&end).map_or(tail.len(), |n| n + end.len());
+                } else if let Some(rest) = tail
+                    .strip_prefix(r"\verb")
+                    .filter(|rest| !rest.starts_with(|c: char| c.is_ascii_alphabetic()))
+                {
+                    let rest = rest.strip_prefix('*').unwrap_or(rest);
+                    let line = rest.split('\n').next().unwrap_or("");
+                    let length = line.chars().next().map_or(0, |delimiter| {
+                        let n = delimiter.len_utf8();
+                        line[n..]
+                            .find(delimiter)
+                            .map_or(line.len(), |at| at + 2 * n)
+                    });
+                    i += tail.len() - rest.len() + length;
+                } else {
+                    if bytes.get(i + 1) == Some(&b'\\') {
+                        visible[i..i + 2].fill(b' ');
+                        i += 2;
+                    } else if bytes.get(i + 1) == Some(&b'%') {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        }
+        visible[start..i].fill(b' ');
+    }
+    String::from_utf8(visible).expect("masked complete UTF-8 spans")
+}
 const MAX_CITATION_COMMANDS: usize = 2000;
 pub fn citation_navigation(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<Value> {
     let text = exact_text(store, ws, revision)?;
     // Any case and an optional star: \\citep*, \\Citet, \\autocite.
     let re = regex::Regex::new(r"(?i)\\(?:[a-z]*cite[a-z]*)\*?(?:\[[^\]]*\])*\{([^}]+)\}")
         .expect("citation regex");
+    let visible = citation_source(&text);
     let captures = re
-        .captures_iter(&text)
+        .captures_iter(&visible)
         .take(MAX_CITATION_COMMANDS + 1)
         .collect::<Vec<_>>();
     let capped = captures.len() > MAX_CITATION_COMMANDS;
@@ -549,5 +619,42 @@ mod tests {
         assert!(error.message.contains('k'), "{}", error.message);
         let entries = parse_bibtex("@article{k, title=\"\"}").unwrap();
         assert_eq!(entries[0].fields["title"], "");
+    }
+}
+
+#[cfg(test)]
+mod source_syntax_tests {
+    use super::*;
+    #[test]
+    fn concatenation_preserves_literals_and_warns_on_macros() {
+        let entry = parse_bibtex(r#"@article{k,title={Markets} # " and Growth",journal=j # {x}}"#)
+            .unwrap()
+            .remove(0);
+        assert_eq!(entry.fields["title"], "Markets and Growth");
+        assert_eq!(entry.fields["journal"], "j # {x}");
+        assert_eq!(entry.warnings.len(), 1);
+    }
+    #[test]
+    fn commented_and_verbatim_citations_preserve_live_offsets() {
+        let slashes = r"\\cite{literal} \\\cite{real}";
+        let visible = citation_source(slashes);
+        assert_eq!(
+            visible
+                .match_indices(r"\cite")
+                .map(|x| x.0)
+                .collect::<Vec<_>>(),
+            vec![slashes.find(r"\cite{real}").unwrap()]
+        );
+
+        let text="% é \\cite{old}\n\\verb|\\cite{verbatim}| \\begin{verbatim}\\cite{example}\\end{verbatim} \\% \\cite{live}";
+        let visible = citation_source(text);
+        assert_eq!(visible.len(), text.len());
+        assert_eq!(
+            visible
+                .match_indices(r"\cite")
+                .map(|x| x.0)
+                .collect::<Vec<_>>(),
+            vec![text.find(r"\cite{live}").unwrap()]
+        );
     }
 }

@@ -6,7 +6,7 @@ import AppSearch from "./AppSearch";
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   listWorkspaces: vi.fn(),
-  listSessions: vi.fn(),
+  index: vi.fn(),
   listRuns: vi.fn(),
   listTasks: vi.fn(),
 }));
@@ -15,7 +15,7 @@ vi.mock("../lib/workbench/workspaceClient", () => ({
   workspaceClient: { listWorkspaces: mocks.listWorkspaces },
 }));
 vi.mock("../lib/workbench/conversationClient", () => ({
-  conversationClient: { listSessions: mocks.listSessions },
+  conversationClient: { index: mocks.index },
 }));
 vi.mock("../lib/reviewHistoryClient", () => ({
   reviewHistoryClient: { list: mocks.listRuns },
@@ -33,18 +33,20 @@ beforeEach(() => {
   mocks.listWorkspaces.mockResolvedValue({
     workspaces: [{ id: "trade", name: "Trade paper", updatedAt: "2026-10-30" }],
   });
-  mocks.listSessions.mockImplementation(async (id: string | null) => ({
-    sessions: id
-      ? []
-      : [
-          {
-            id: "chat",
-            title: "Bartik shares",
-            workspaceId: null,
-            updatedAt: "2026-10-30",
-          },
-        ],
-  }));
+  mocks.index.mockResolvedValue({
+    items: [
+      {
+        session: {
+          id: "chat",
+          title: "Bartik shares",
+          workspaceId: null,
+          updatedAt: "2026-10-30",
+        },
+        projectName: null,
+      },
+    ],
+    nextCursor: null,
+  });
   mocks.listRuns.mockResolvedValue([
     { run_id: "run", input_name: "spillovers.pdf", profile_name: "Auto" },
   ]);

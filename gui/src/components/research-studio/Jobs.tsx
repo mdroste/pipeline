@@ -12,7 +12,7 @@ import {
 import type {
   ExecutionProfile,
   ResearchExecution,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/executionTypes";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { plainLabel } from "../research-panel/format";
 import { button, panel, ErrorNotice, Inspect, useAction } from "./shared";

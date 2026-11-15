@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { ModelCatalog, ModelSelection, Settings } from "../../lib/types";
+import type { ModelCatalog, ModelSelection } from "../../lib/reviewModelTypes";
+import type { Settings } from "../../lib/settingsTypes";
 import { stageModelSummary } from "../../lib/modelChoice";
 
 export default function ModelStage({

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReportIssueLink from "./ReportIssueLink";
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 
 interface ConfirmOptions {
   title?: string;
@@ -164,13 +166,13 @@ export default function DialogService({
           event.preventDefault();
           finish(false);
         }}
-        className="m-auto w-[min(30rem,calc(100%-2rem))] rounded-xl border border-gray-200 bg-white p-0 text-gray-900 shadow-2xl backdrop:bg-black/45 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+        className="ui-overlay-frame m-auto max-h-[calc(100dvh-2rem)] w-[min(30rem,calc(100%-2rem))] overflow-auto p-0"
       >
         {request && (
           <form
             key={request.id}
             method="dialog"
-            className="p-6"
+            className="ui-overlay-body"
             onSubmit={(event) => {
               event.preventDefault();
               if (request.kind === "prompt") finish(true);
@@ -178,7 +180,7 @@ export default function DialogService({
           >
             <h2
               id="pipeline-confirm-title"
-              className="break-words text-lg font-semibold"
+              className="break-words text-ui-title font-semibold"
             >
               {request.title ||
                 (request.kind === "prompt"
@@ -201,17 +203,17 @@ export default function DialogService({
                   aria-label={request.label ? undefined : request.message}
                   defaultValue={request.defaultValue ?? ""}
                   placeholder={request.placeholder}
-                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal dark:border-gray-700 dark:bg-gray-950"
+                  className="ui-input mt-1 w-full font-normal"
                 />
               </label>
             )}
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="ui-overlay-footer">
               {!request.acknowledgeOnly && (
                 <button
                   autoFocus={request.kind === "confirm"}
                   type="button"
                   onClick={() => finish(false)}
-                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-700"
+                  className="ui-button"
                 >
                   {request.cancelLabel || "Cancel"}
                 </button>
@@ -222,11 +224,7 @@ export default function DialogService({
                 onClick={
                   request.kind === "confirm" ? () => finish(true) : undefined
                 }
-                className={`rounded-lg px-3 py-2 text-sm font-medium text-white ${
-                  request.destructive
-                    ? "bg-red-600 hover:bg-red-700"
-                    : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
-                }`}
+                className={`ui-button ${request.destructive ? "ui-button--danger" : "ui-button--primary"}`}
               >
                 {request.confirmLabel ||
                   (request.kind === "prompt" ? "OK" : "Continue")}
@@ -276,12 +274,12 @@ function ToastCard({
         if (!event.currentTarget.contains(event.relatedTarget))
           setFocused(false);
       }}
-      className={`pointer-events-auto rounded-lg border px-4 py-3 text-sm shadow-lg ${
+      className={`ui-toast pointer-events-auto ${
         toast.kind === "error"
-          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          ? "ui-toast--error"
           : toast.kind === "success"
-            ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-            : "border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+            ? "ui-toast--success"
+            : ""
       }`}
     >
       <div className="flex gap-3">
@@ -302,14 +300,14 @@ function ToastCard({
             {toast.action.label}
           </button>
         )}
-        <button
-          type="button"
-          aria-label="Dismiss notification"
+        <IconButton
+          label="Dismiss notification"
+          tooltip={null}
+          size="sm"
           onClick={() => onDismiss(toast.id)}
-          className="pointer-events-auto shrink-0 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
         >
-          ×
-        </button>
+          <Icon name="close" className="h-4 w-4" />
+        </IconButton>
       </div>
     </div>
   );

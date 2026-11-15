@@ -71,8 +71,3 @@ export function lineDiff(a: string, b: string): DiffOp[] {
   while (j < m) ops.push({ type: "add", text: bLines[j++] });
   return ops;
 }
-
-/** Whether a diff has any actual change (any add/del op). */
-export function hasChanges(ops: DiffOp[]): boolean {
-  return ops.some((o) => o.type !== "same");
-}

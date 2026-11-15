@@ -1,0 +1,111 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import ConversationTitleSettings from "./settings/ConversationTitleSettings";
+
+const mocks = vi.hoisted(() => ({
+  accountState: vi.fn(),
+  modelCatalog: vi.fn(),
+  titlePreferences: vi.fn(),
+  saveTitlePreferences: vi.fn(),
+}));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
+
+const model = (id: string, isDefault: boolean, efforts: string[]) => ({
+  id,
+  model: id,
+  displayName: id,
+  description: "",
+  isDefault,
+  defaultReasoningEffort: efforts[0],
+  supportedReasoningEfforts: efforts.map((reasoningEffort) => ({
+    reasoningEffort,
+    description: "",
+  })),
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.accountState.mockResolvedValue({
+    status: "chatgpt",
+    email: "r@example.test",
+    planType: "plus",
+  });
+  mocks.modelCatalog.mockResolvedValue({
+    models: [
+      model("gpt-large", true, ["medium", "high"]),
+      model("gpt-mini", false, ["low", "medium"]),
+    ],
+  });
+  mocks.titlePreferences.mockResolvedValue({
+    enabled: true,
+    model: null,
+    effort: null,
+  });
+  mocks.saveTitlePreferences.mockImplementation(
+    async (preferences) => preferences,
+  );
+});
+
+it("edits automatic title preferences and saves each change", async () => {
+  render(<ConversationTitleSettings />);
+  const toggle = await screen.findByLabelText(
+    "Name new conversations automatically",
+  );
+  expect(toggle).toBeChecked();
+  const modelSelect = await screen.findByLabelText("Title model");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("option", { name: "gpt-mini" }),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.getByRole("option", { name: "low" })).toBeInTheDocument();
+  fireEvent.change(modelSelect, { target: { value: "gpt-large" } });
+  await waitFor(() =>
+    expect(mocks.saveTitlePreferences).toHaveBeenLastCalledWith({
+      enabled: true,
+      model: "gpt-large",
+      effort: null,
+    }),
+  );
+  expect(screen.queryByRole("option", { name: "low" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Title thinking level"), {
+    target: { value: "high" },
+  });
+  await waitFor(() =>
+    expect(mocks.saveTitlePreferences).toHaveBeenLastCalledWith({
+      enabled: true,
+      model: "gpt-large",
+      effort: "high",
+    }),
+  );
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(mocks.saveTitlePreferences).toHaveBeenLastCalledWith({
+      enabled: false,
+      model: "gpt-large",
+      effort: "high",
+    }),
+  );
+  expect(screen.getByLabelText("Title model")).toBeDisabled();
+});
+
+it("keeps title settings editable while signed out", async () => {
+  mocks.accountState.mockResolvedValue({ status: "signedOut" });
+  mocks.titlePreferences.mockResolvedValue({
+    enabled: true,
+    model: "gpt-mini",
+    effort: "low",
+  });
+  render(<ConversationTitleSettings />);
+  expect(await screen.findByLabelText("Title model")).toHaveValue("gpt-mini");
+  expect(
+    screen.getByRole("option", { name: "gpt-mini (saved, not available)" }),
+  ).toBeInTheDocument();
+  expect(screen.getByLabelText("Title thinking level")).toHaveValue("low");
+  expect(
+    screen.getByText("Sign in to ChatGPT to choose a model."),
+  ).toBeInTheDocument();
+});

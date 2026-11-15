@@ -37,3 +37,17 @@ describe("report paging", () => {
     ).toContain("[ref]: https://example.com");
   });
 });
+
+it.each([
+  ["$$", "$$"],
+  [String.raw`\[`, String.raw`\]`],
+])("keeps a %s display together at a part boundary", (open, close) => {
+  const equation = `${open}\n\\hat{\\sigma}_K = 0.67\n${close}`;
+  const chunks = splitReport(
+    "# First\n\nA paragraph.\n\n" + equation + "\n\n## End",
+    48,
+  );
+  expect(
+    chunks.some((chunk) => !chunk.plain && chunk.markdown.includes(equation)),
+  ).toBe(true);
+});

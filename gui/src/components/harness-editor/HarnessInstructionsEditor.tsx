@@ -12,7 +12,7 @@ import NativePromptViewer from "./NativePromptViewer";
 import type {
   EffectiveHarness,
   InstructionSection,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/harnessTypes";
 import {
   byteLength,
   instructionSections,

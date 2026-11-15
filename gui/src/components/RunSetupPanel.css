@@ -1,87 +1,168 @@
-.review-setup {
+/* Review setup keeps the common choices together and the next action close.
+   Expanded options can grow naturally; the preview bar stays within reach. */
+.ui-page.review-setup {
+  max-width: 75rem;
   min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
+  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-6);
+  container: review-setup / inline-size;
   overflow: visible;
+  color: var(--ui-text);
 }
 .review-setup-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1.75rem;
-  flex: 1;
-  align-content: start;
+  gap: var(--ui-space-4);
+  align-items: start;
 }
 .review-setup-column {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: var(--ui-row-padding);
 }
 .review-setup-card {
-  border: 1px solid var(--ui-page-line);
-  border-radius: 0.75rem;
-  padding: 1.25rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  padding: 1rem;
   background: var(--ui-surface);
 }
 .review-setup-card > h2 {
-  font-size: 0.875rem;
+  font-size: var(--ui-text-label);
   font-weight: 600;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 .review-setup-card > p {
-  font-size: 0.8125rem;
-  color: var(--ui-page-muted);
+  font-size: var(--ui-text-label);
+  color: var(--ui-muted);
 }
 .review-setup-card > div:first-child {
   border-top: 0;
   padding-top: 0;
 }
-.review-workflow-diagram {
-  margin-top: 1.25rem;
-  border-top: 1px solid var(--ui-page-line);
-  padding-top: 0.875rem;
+.review-file-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-sunken);
+  color: var(--ui-muted);
 }
-.review-workflow-diagram > summary {
+.review-setup .review-model-card > div:first-child,
+.review-setup .review-model-summary {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.review-workflow-diagram {
+  margin-top: 0.75rem;
+}
+.review-workflow-diagram > summary,
+.review-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   cursor: pointer;
-  font-size: 0.75rem;
-  color: var(--ui-page-muted);
+  list-style: none;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+  color: var(--ui-muted);
+}
+.review-workflow-diagram > summary::-webkit-details-marker,
+.review-disclosure::-webkit-details-marker {
+  display: none;
+}
+.review-workflow-diagram > summary::before,
+.review-disclosure::before {
+  content: "";
+  width: 0.375rem;
+  height: 0.375rem;
+  flex-shrink: 0;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+.review-workflow-diagram[open] > summary::before,
+[open] > .review-disclosure::before {
+  transform: rotate(135deg);
+}
+.review-workflow-diagram > summary:hover,
+.review-disclosure:hover {
+  color: var(--ui-text);
 }
 .review-setup-footer {
   position: sticky;
-  bottom: 0;
+  bottom: 1rem;
   z-index: 5;
   display: flex;
-  gap: 1.25rem;
+  gap: var(--ui-space-4);
   align-items: center;
-  margin-top: 1.75rem;
-  padding: 1.125rem 0;
-  border-top: 1px solid var(--ui-page-line);
-  background: var(--ui-surface);
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow-1);
 }
-.review-preview-button {
-  min-width: 7.5rem;
-  justify-content: center;
+.review-preview-heading {
+  font-size: var(--ui-text-label);
+  font-weight: 600;
+}
+.review-preview-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 1rem;
+}
+.review-setup .review-preview-button {
+  min-width: min(9rem, 100%);
+  min-height: 2.75rem;
+  font-weight: 600;
+}
+.review-setup :is(input, select, textarea, button, summary):focus {
+  scroll-margin-block-end: 9rem;
+}
+.review-privacy-link {
+  font-size: var(--ui-text-meta);
+  color: var(--ui-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.review-privacy-link:hover {
+  color: var(--ui-text);
 }
 .review-setup-errors {
-  margin-top: 1.25rem;
+  margin-top: 1rem;
   padding: 0.875rem;
-  border: 1px solid var(--ui-page-line);
-  border-radius: 0.5rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
   overflow-wrap: anywhere;
-  font-size: 0.8125rem;
+  font-size: var(--ui-text-label);
 }
 .review-setup-errors button {
   text-decoration: underline;
   margin-top: 0.375rem;
 }
-@media (max-width: 1000px) {
+@media (max-width: 1100px) {
+  .ui-page.review-setup {
+    padding: 1rem 1.25rem 1.5rem;
+  }
+}
+@container review-setup (max-width: 42rem) {
   .review-setup-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-@media (max-width: 600px) {
+@container review-setup (max-width: 35rem) {
+  .review-setup :is(input, select, textarea, button, summary):focus {
+    scroll-margin-block-end: 13rem;
+  }
   .review-setup-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .review-preview-actions {
     align-items: stretch;
     flex-direction: column;
     gap: 0.75rem;

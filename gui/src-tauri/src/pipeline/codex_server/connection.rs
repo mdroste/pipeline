@@ -1,6 +1,6 @@
 use crate::agent_runtime::codex::chatgpt;
 use crate::agent_runtime::codex::session::{private_directory, private_write, NativeSession};
-use crate::agent_runtime::codex::{AccountState, RateLimits};
+use crate::agent_runtime::codex::AccountState;
 use fs2::FileExt;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -218,16 +218,6 @@ pub async fn workflow_codex_login_start(
 #[tauri::command]
 pub async fn workflow_codex_login_cancel(login_id: String, epoch: u64) -> Result<bool, String> {
     chatgpt::chatgpt_login_cancel(login_id, epoch).await
-}
-
-#[tauri::command]
-pub async fn workflow_codex_logout() -> Result<(), String> {
-    chatgpt::chatgpt_logout().await
-}
-
-#[tauri::command]
-pub async fn workflow_codex_rate_limits() -> Result<RateLimits, String> {
-    chatgpt::chatgpt_rate_limits().await
 }
 
 /// Explicit user acknowledgement; never called from an automatic retry path.

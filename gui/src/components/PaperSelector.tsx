@@ -2,10 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { appClient } from "../lib/appClient";
 import { onFileDrop } from "../lib/fileDrop";
-import type { InputInterpretation, PrimaryInputSelection } from "../lib/types";
+import type {
+  InputInterpretation,
+  PrimaryInputSelection,
+} from "../lib/workflowTypes";
 import ReportIssueLink from "./ReportIssueLink";
+import { Icon } from "../ui/icons";
 
-const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx"];
+const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx", "pptx"];
 
 const isDocumentPath = (path: string) => {
   const name = path.split(/[/\\]/).pop() ?? "";
@@ -67,7 +71,9 @@ export default function PaperSelector({
     try {
       const path = await openDialog({
         multiple: true,
-        filters: [{ name: "Papers", extensions: DOCUMENT_EXTENSIONS }],
+        filters: [
+          { name: "Documents and slides", extensions: DOCUMENT_EXTENSIONS },
+        ],
       });
       if (path) {
         const paths = (Array.isArray(path) ? path : [path]) as string[];
@@ -142,7 +148,7 @@ export default function PaperSelector({
     const files = paths.filter(isDocumentPath);
     if (files.length === 0) {
       setPickerError(
-        "Only PDF, LaTeX, and Word files can be dropped here. To use a folder, choose it with the folder button.",
+        "Only PDF, LaTeX, Word, and PowerPoint files can be dropped here. To use a folder, choose it with the folder button.",
       );
       return;
     }
@@ -174,33 +180,32 @@ export default function PaperSelector({
   }, []);
 
   return (
-    <div ref={rootRef}>
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-        Inputs
-      </label>
-      <div className="flex gap-1.5">
+    <div ref={rootRef} className="review-input-picker">
+      <div className="flex gap-2">
         {inputMode !== "folder" && (
           <button
             type="button"
             onClick={handleFile}
             disabled={disabled || picking}
-            className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                       text-gray-900 dark:text-gray-100
-                       hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors text-left truncate"
+            className="review-file-button flex min-w-0 flex-1 items-center gap-3 rounded-ui-md border border-line px-3 py-3 text-left text-ui-body text-ink transition-colors hover:bg-sunken disabled:opacity-50"
           >
-            {selection?.selectionKind === "file"
-              ? selection.paths.length === 1
-                ? selectedName
-                : `${selection.paths.length} files selected`
-              : "Select files..."}
+            <span className="review-file-icon">
+              <Icon name="file" className="h-5 w-5" />
+            </span>
+            <span className="min-w-0 truncate">
+              {selection?.selectionKind === "file"
+                ? selection.paths.length === 1
+                  ? selectedName
+                  : `${selection.paths.length} files selected`
+                : "Select files..."}
+            </span>
           </button>
         )}
         <button
           type="button"
           onClick={handleDir}
           disabled={disabled || picking}
-          className={`${inputMode === "folder" ? "flex-1 text-left" : ""} py-2 px-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-500 dark:text-gray-400
-                     hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors shrink-0`}
+          className={`ui-button shrink-0 ${inputMode === "folder" ? "flex-1 justify-start" : ""}`}
           title="Select folder"
         >
           <svg
@@ -226,55 +231,56 @@ export default function PaperSelector({
           )}
         </button>
       </div>
-      <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+      <p hidden={!!selectedPath} className="mt-2 text-ui-meta text-ink-muted">
         {inputMode === "folder"
           ? "Drop a folder here, or use the folder picker."
-          : "Drop local files here, or use the file and folder pickers."}
+          : "Or drop files here · PDF, Word, PowerPoint, or LaTeX"}
       </p>
       {selectedPath && (
         <div className="mt-2 space-y-1.5">
-          <p className="text-xs text-gray-500 truncate" title={selectedPath}>
-            {selection?.paths.length === 1
-              ? selectedPath
-              : selection?.paths.join(", ")}
-          </p>
-          <div className="flex gap-2 text-xs">
-            <button
-              type="button"
-              onClick={
-                selection?.selectionKind === "folder" ? handleDir : handleFile
-              }
-              disabled={disabled || picking}
-              className="text-gray-600 underline underline-offset-2 dark:text-gray-300"
+          <div className="flex min-w-0 items-center gap-3 text-ui-meta">
+            <p
+              className="min-w-0 flex-1 truncate text-ink-muted"
+              title={selectedPath}
             >
-              Replace
-            </button>
-            <button
-              type="button"
-              onClick={clearSelection}
-              disabled={disabled}
-              className="text-red-600 underline underline-offset-2 dark:text-red-400"
-            >
-              Clear
-            </button>
+              {selection?.paths.length === 1
+                ? selectedPath
+                : selection?.paths.join(", ")}
+            </p>
+            <div className="flex gap-2 text-xs">
+              <button
+                type="button"
+                onClick={
+                  selection?.selectionKind === "folder" ? handleDir : handleFile
+                }
+                disabled={disabled || picking}
+                className="text-gray-600 underline underline-offset-2 dark:text-gray-300"
+              >
+                Replace
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                disabled={disabled}
+                className="text-red-600 underline underline-offset-2 dark:text-red-400"
+              >
+                Clear
+              </button>
+            </div>
           </div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-gray-300">
-            Use this{" "}
-            {selection?.selectionKind === "folder" ? "folder" : "selection"} as
+          <label className="flex items-center gap-3 text-ui-meta text-ink-muted">
+            <span className="shrink-0">Use as</span>
             <select
               aria-label="Input interpretation"
               value={selection?.interpretation}
               onChange={(event) =>
                 setInterpretation(event.target.value as InputInterpretation)
               }
-              className="mt-1 w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                         text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                         focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent
-                         transition-colors disabled:opacity-50"
+              className="min-w-0 flex-1"
             >
               {selection?.selectionKind === "folder" ? (
                 <>
-                  <option value="latex_project">One LaTeX paper</option>
+                  <option value="latex_project">One LaTeX document</option>
                   <option value="source_tree">Browsable source folder</option>
                   <option value="batch">Batch of documents</option>
                 </>
@@ -288,7 +294,10 @@ export default function PaperSelector({
               )}
             </select>
           </label>
-          <p className="text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400">
+          <p
+            hidden={selection?.interpretation === "document"}
+            className="text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400"
+          >
             {selection?.interpretation === "latex_project"
               ? "Pipeline finds the main TeX file and reads the local files it includes."
               : selection?.interpretation === "source_tree"

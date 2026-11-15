@@ -7,6 +7,8 @@ import type {
 
 /** Reads remain authorized and bounded by the owning Workflow backend. */
 export const artifactClient = {
+  open: (args: { runId: string; relPath?: string }) =>
+    invoke<void>("open_run_artifact", args),
   manifest: (runId: string) =>
     invoke<RunManifest>("get_run_manifest", { runId }),
   read: (runId: string, relPath: string) =>

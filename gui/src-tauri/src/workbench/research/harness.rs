@@ -63,7 +63,6 @@ fn resolve(
         ("webSearch", json!(false)),
         ("commandNetwork", json!(false)),
         ("commandDomains", json!("")),
-        ("browser", json!(false)),
         ("contextBudgetBytes", json!(DEFAULT_CONTEXT_BYTES)),
     ] {
         values.insert(key.to_string(), value);
@@ -377,7 +376,6 @@ fn resolve(
         if let Some((writer, _)) = crate::workbench::discovery::role_policy(store, session_id)? {
             if command_network
                 || requested_web_search
-                || capabilities.browser
                 || mode != if writer { "edit" } else { "inspect" }
             {
                 return Err(WorkbenchError::invalid(

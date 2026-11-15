@@ -18,6 +18,7 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
             ..Default::default()
         }];
         RunSnapshot {
+            review_handoff_id: None,
             author_note: None,
             settings: crate::settings::Settings::default(),
             config,
@@ -154,6 +155,7 @@ fn profile_snapshot_identity_is_stable_across_nested_override_map_order() {
 #[test]
 fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
     let snapshot = || RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings: crate::settings::Settings::default(),
         config: empty_test_config(),
@@ -258,6 +260,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         },
     ];
     let snapshot = RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings: crate::settings::Settings::default(),
         config,
@@ -304,6 +307,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
     let mut config = empty_test_config();
     config.merge.agents = vec!["antigravity".into()];
     let snapshot = RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings: crate::settings::Settings::default(),
         config,
@@ -428,6 +432,7 @@ fn a_run_with_a_secret_resumes_only_with_the_secret_entered_again_and_never_keep
 #[test]
 fn author_note_snapshot_is_normalized_optional_and_value_sensitive() {
     let snapshot = RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings: crate::settings::Settings::default(),
         config: empty_test_config(),

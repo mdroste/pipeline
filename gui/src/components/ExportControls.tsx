@@ -6,10 +6,11 @@ import type {
 } from "../lib/reportExportClient";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useMemo, useRef, useState } from "react";
-import type { PipelineReport } from "../lib/types";
+import type { PipelineReport } from "../lib/reviewTypes";
 import ExportDialog from "./ExportDialog";
 import { confirmDialog, notify } from "./DialogService";
 import ReportFormatItems from "./ReportFormatItems";
+import PdfExportResult from "./PdfExportResult";
 
 interface Props {
   runId?: string | null;
@@ -64,6 +65,7 @@ export default function ExportControls({
   const [selection, setSelection] = useState<ExportSelection>(SAFE_SELECTION);
   const [progress, setProgress] = useState<string | null>(null);
   const [result, setResult] = useState<ExportPackageResult | null>(null);
+  const [pdfPath, setPdfPath] = useState<string | null>(null);
 
   const customSensitive = useMemo(
     () =>
@@ -101,6 +103,36 @@ export default function ExportControls({
       notify(
         `Failed to open the print view: ${e instanceof Error ? e.message : String(e)}`,
       );
+    }
+  };
+
+  const handleSavePdf = async () => {
+    setMenuOpen(false);
+    setPdfPath(null);
+    setProgress("Preparing PDF…");
+    try {
+      const full = await loadFullReport?.();
+      const path = await reportExportClient.savePdf(
+        {
+          markdown: full?.pdfMarkdown ?? pdfMarkdown ?? markdown,
+          provenanceMarkdown: provenanceMarkdown ?? null,
+          runId: runId ?? null,
+          inputPath: inputPath ?? null,
+        },
+        ({ message }) => {
+          setProgress(message);
+        },
+      );
+      if (path) {
+        setPdfPath(path);
+        notify("PDF saved.", "success");
+      }
+    } catch (e: unknown) {
+      notify(
+        `Failed to save PDF: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setProgress(null);
     }
   };
 
@@ -214,9 +246,7 @@ export default function ExportControls({
           setCustomOpen(false);
         }}
         disabled={Boolean(progress)}
-        className="py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                   text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
-                   disabled:cursor-wait disabled:opacity-50"
+        className="ui-button ui-button--sm disabled:cursor-wait"
       >
         {progress ?? "Export"}
       </button>
@@ -256,6 +286,18 @@ export default function ExportControls({
                 Choose a report format or add findings to a copy of your
                 document.
               </p>
+              <button
+                onClick={() => void handleSavePdf()}
+                disabled={Boolean(progress)}
+                className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
+              >
+                <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Save as PDF…
+                </span>
+                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                  A formatted report with equations, ready to read or share.
+                </span>
+              </button>
               {runId && (
                 <>
                   {" "}
@@ -290,7 +332,7 @@ export default function ExportControls({
                 onClick={() => void handlePrint()}
                 className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
               >
-                Print / save as PDF…
+                Print…
               </button>
             </>
           ) : purpose === "share" ? (
@@ -440,6 +482,9 @@ export default function ExportControls({
         {progress && (
           <p className="text-xs text-gray-500 dark:text-gray-400">{progress}</p>
         )}
+        {pdfPath && (
+          <PdfExportResult path={pdfPath} onDismiss={() => setPdfPath(null)} />
+        )}
         {result && (
           <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-left text-xs text-green-900 shadow-lg dark:border-green-900 dark:bg-green-950 dark:text-green-200">
             <div className="flex items-start justify-between gap-3">
@@ -467,7 +512,7 @@ export default function ExportControls({
             </p>
             <button
               onClick={() => void reveal()}
-              className="mt-2 rounded border border-green-300 px-2 py-1 hover:bg-green-100 dark:border-green-800 dark:hover:bg-green-900/40"
+              className="mt-2 rounded border border-line-strong bg-surface px-2 py-1 text-ink hover:bg-sunken dark:bg-transparent dark:text-green-200 dark:border-green-800 dark:hover:bg-green-900/40"
             >
               Reveal in folder
             </button>

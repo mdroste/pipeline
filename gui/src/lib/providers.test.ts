@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ModelCatalog, Settings } from "./types";
+import type { ModelCatalog } from "./reviewModelTypes";
+import type { Settings } from "./settingsTypes";
 import {
   decodeModelSelection,
   defaultMergeAgent,

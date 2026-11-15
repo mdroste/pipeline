@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { QueuedRun } from "../lib/types";
+import type { QueuedRun } from "../lib/reviewTypes";
 import { queuedRun as fixture } from "../test/queuedRunFixture";
 const queuedRun = (status: QueuedRun["status"], key = "run-a") =>
   fixture(key, status);

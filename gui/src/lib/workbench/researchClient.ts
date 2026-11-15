@@ -4,7 +4,7 @@ import type {
   PaperWithRevision,
   PaperReadResult,
   PaperSearchHit,
-} from "../workbenchTypes";
+} from "./researchTypes";
 
 export const researchClient = {
   createNote(request: {

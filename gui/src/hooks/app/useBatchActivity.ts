@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { collectBatchListeners } from "../../lib/batchListeners";
 import { appClient } from "../../lib/appClient";
 import { hasActiveBatch } from "../../lib/appRunPreparation";
-import type { BatchJob } from "../../lib/types";
+import type { BatchJob } from "../../lib/reviewTypes";
 
 export function useBatchActivity() {
   const [batchActive, setBatchActive] = useState(false);
@@ -18,21 +19,8 @@ export function useBatchActivity() {
       }),
     ])
       .then((registrations) => {
-        const registered = registrations.flatMap((registration) =>
-          registration.status === "fulfilled" ? [registration.value] : [],
-        );
-        const failed = registrations.find(
-          (registration): registration is PromiseRejectedResult =>
-            registration.status === "rejected",
-        );
-        if (failed) {
-          registered.forEach((unlisten) => unlisten());
-          throw failed.reason;
-        }
-        if (!live) {
-          registered.forEach((unlisten) => unlisten());
-          return;
-        }
+        const registered = collectBatchListeners(registrations, live);
+        if (!registered) return;
         unlisteners = registered;
         // Register listeners before taking the snapshot so a just-started
         // batch cannot fall into the gap between the read and subscription.

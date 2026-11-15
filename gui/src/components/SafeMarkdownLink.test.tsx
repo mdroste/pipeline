@@ -109,7 +109,7 @@ describe("SafeMarkdownLink", () => {
           image: vi.fn(),
         }}
       >
-        <SafeMarkdownLink href="/private/conversation/output.pdf">
+        <SafeMarkdownLink href="/private/conversation/output.pdf#page=2">
           Generated PDF
         </SafeMarkdownLink>
       </FileNavigationScope>,
@@ -117,9 +117,10 @@ describe("SafeMarkdownLink", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Generated PDF" }));
 
-    expect(openAbsolute).toHaveBeenCalledWith(
-      "/private/conversation/output.pdf",
-    );
+    expect(openAbsolute).toHaveBeenCalledWith({
+      path: "/private/conversation/output.pdf",
+      page: 2,
+    });
     expect(openExternal).not.toHaveBeenCalled();
   });
 

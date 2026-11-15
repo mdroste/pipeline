@@ -7,9 +7,8 @@
 //!
 //! Restore turns each listed reference into an honest gap. Text references are
 //! nullable, so they are cleared and the record says its text is unavailable.
-//! `artifacts.storage_reference` can't be empty, so that row stays with a
-//! placeholder and readers report the file as unavailable. Retention rows are
-//! dropped by the usual adoption step, because nothing restored backs them.
+//! Artifact and delivery references use placeholders for unavailable files.
+//! Adoption drops retention rows for files the backup omitted.
 //!
 //! The list comes from an archive. It is validated like everything else, and it
 //! is only ever compared with stored text in the extracted database, so it can
@@ -29,7 +28,8 @@ use std::path::{Path, PathBuf};
 
 const PORTABLE_ROOT: &str = "workspace://blobs";
 /// The columns whose file a restored store would need.
-const FILE_COLUMNS: [(&str, &str); 3] = [
+pub(super) const FILE_COLUMNS: [(&str, &str); 4] = [
+    ("task_delivery_files", "storage_reference"),
     ("artifacts", "storage_reference"),
     ("paper_revisions", "text_reference"),
     ("source_versions", "text_reference"),
@@ -117,6 +117,10 @@ fn describe(connection: &Connection, table: &str, rowid: i64) -> WorkbenchResult
             .map_err(|error| WorkbenchError::storage("Failed to describe a stored file", error))
     };
     match table {
+        "task_delivery_files" => Ok(quoted(
+            "Delivered file",
+            &text("SELECT filename FROM task_delivery_files WHERE rowid=?1")?.unwrap_or_default(),
+        )),
         "paper_revisions" => Ok(quoted(
             "Readable text of paper",
             &text("SELECT p.title FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE pr.rowid=?1")?.unwrap_or_default(),
@@ -288,8 +292,8 @@ pub(super) fn clear_omitted_references(
             }
             affected.insert(describe(imported, table, rowid)?);
             match table {
-                "artifacts" => imported.execute(
-                    "UPDATE artifacts SET storage_reference=?2 WHERE rowid=?1",
+                "artifacts" | "task_delivery_files" => imported.execute(
+                    &format!("UPDATE {table} SET storage_reference=?2 WHERE rowid=?1"),
                     params![rowid, left_out_reference(&reference)],
                 ),
                 "paper_revisions" => imported.execute(

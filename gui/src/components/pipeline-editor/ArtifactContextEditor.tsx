@@ -7,7 +7,7 @@ import type {
   StepArtifactPart,
   StepConfig,
   StepContext,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
 import { defaultStepContext, primaryPartsForMode } from "./utils";
 
 function replaceArtifactSelector(
@@ -278,7 +278,7 @@ function ArtifactContextEditor({
             disabled={!surveyEnabled}
             onChange={(event) => setSurvey(event.target.checked)}
           />
-          Survey / orientation JSON
+          Document overview JSON
           {!surveyEnabled && (
             <span className="text-gray-600 dark:text-gray-400">
               (disabled for this review)

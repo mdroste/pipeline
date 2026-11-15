@@ -14,10 +14,7 @@ import { runtimeClient } from "../src/lib/workbench/runtimeClient";
 import { projectClient } from "../src/lib/projectClient";
 import { deskClient } from "../src/lib/deskClient";
 import { programClient } from "../src/lib/programClient";
-import type {
-  ConversationSnapshot,
-  Workspace,
-} from "../src/lib/workbenchTypes";
+import type { ConversationSnapshot, Workspace } from "../src/lib/workbench/sessionTypes";
 import "../src/App.css";
 
 const now = "2026-09-08T12:00:00Z";

@@ -35,7 +35,7 @@ export default class ErrorBoundary extends Component<Props, State> {
         import.meta.env.DEV && this.props.showTechnicalDetails !== false;
       return (
         <div
-          className={`${this.props.nested ? "h-full min-h-0 overflow-auto" : "h-screen"} flex bg-gray-50 dark:bg-gray-950 p-8`}
+          className={`${this.props.nested ? "h-full min-h-0 overflow-auto" : "h-screen"} flex bg-sunken p-8`}
         >
           {/* This screen replaces the app, and Windows has no native title bar
               to fall back on: keep the window movable and closable. */}
@@ -50,7 +50,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           )}
           {/* Auto margins center the message without clipping a tall one. */}
           <div role="alert" className="m-auto max-w-md text-center">
-            <h1 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
+            <h1 className="mb-2 text-xl font-semibold text-danger">
               Something went wrong
             </h1>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
@@ -78,7 +78,7 @@ export default class ErrorBoundary extends Component<Props, State> {
                   resetKey: prev.resetKey + 1,
                 }))
               }
-              className="px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
+              className="ui-button ui-button--primary"
             >
               Try Again
             </button>

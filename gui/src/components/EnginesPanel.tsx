@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { engineClient } from "../lib/engineClient";
+import { storageClient } from "../lib/storageClient";
 import { confirmDialog } from "./DialogService";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
+import type { EngineDownloadProgress, EngineStatus } from "../lib/engineTypes";
 import EngineInstallStatus, { type PhaseStatus } from "./EngineInstallStatus";
 import InfoButton from "./InfoButton";
 import ReportIssueLink from "./ReportIssueLink";
@@ -50,7 +51,7 @@ export default function EnginesPanel({
     setRefreshingStatus(true);
     setEngineStatusError(null);
 
-    const engineRequest = invoke<EngineStatus[]>("list_engines");
+    const engineRequest = engineClient.list();
 
     void engineRequest.then(
       (next) => {
@@ -85,7 +86,7 @@ export default function EnginesPanel({
     setOpenDirError(null);
     setOpeningPipelineDir(true);
     try {
-      await invoke("open_pipeline_dir");
+      await storageClient.openDirectory();
     } catch (e) {
       const detail = e instanceof Error ? e.message : String(e);
       setOpenDirError(`Could not open ~/.pipeline/: ${detail}`);
@@ -164,7 +165,7 @@ export default function EnginesPanel({
     setDownload(null);
     setLogLines([]);
     try {
-      await invoke("install_engine", { engineId: id });
+      await engineClient.install({ engineId: id });
       onSystemChange?.();
       if (repairLabel) setRepaired(repairLabel);
     } catch (e) {
@@ -197,7 +198,7 @@ export default function EnginesPanel({
     setDownload(null);
     setLogLines([]);
     try {
-      await invoke("uninstall_engine", { engineId: id });
+      await engineClient.uninstall({ engineId: id });
       onSystemChange?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -212,7 +213,7 @@ export default function EnginesPanel({
     setError(null);
     cancelRequested.current = true;
     try {
-      await invoke("cancel_engine_install");
+      await engineClient.cancelInstall();
     } catch (caught) {
       const detail = caught instanceof Error ? caught.message : String(caught);
       setError(`Could not cancel the install: ${detail}`);

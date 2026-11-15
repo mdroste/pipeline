@@ -12,7 +12,7 @@ import type {
   SessionCursor,
   SessionList,
   WorkbenchSession,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 
 /** How far down a project's list the researcher has read. */
 interface SessionPosition {

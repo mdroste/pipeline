@@ -11,10 +11,12 @@ import WorkspaceHarnessEditor from "./WorkspaceHarnessEditor";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
+} from "../lib/workbench/sessionTypes";
+import type {
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/harnessTypes";
 import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
 const mocks = vi.hoisted(() => ({
@@ -431,6 +433,8 @@ it("shows the inheritance table with the winning scope and writes to global, wor
   await screen.findByRole("heading", { name: "Empirical audit" });
   fireEvent.click(screen.getByRole("button", { name: /Access & inheritance/ }));
   const table = await screen.findByRole("table");
+  expect(within(table).getByText("Web search")).toBeInTheDocument();
+  expect(screen.queryByText("Browser interaction")).not.toBeInTheDocument();
   const rows = within(table).getAllByRole("row");
   const budgetRow = rows.find((row) =>
     within(row).queryByText("Source text limit"),

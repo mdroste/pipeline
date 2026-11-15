@@ -150,6 +150,18 @@ mod tests {
         let root = f.store.runtime_root(&session).unwrap();
         fs::write(root.join("paper.md"), "revised").unwrap();
         fs::write(root.join("new.md"), "new").unwrap();
+        let file = preview_conversation_file(&f.store, &session, "paper.md").unwrap();
+        save_conversation_file(
+            &f.store,
+            ConversationFileSave {
+                session_id: session.clone(),
+                path: file.path,
+                scope_root: file.scope_root.unwrap(),
+                expected_hash: file.hash,
+                content: "researcher revision".into(),
+            },
+        )
+        .unwrap();
         prepare(&f.store, &session).unwrap();
         assert_eq!(f.store.runtime_root(&session).unwrap(), root);
         assistant_files::capture_session(&f.store, &session).unwrap();
@@ -168,7 +180,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             fs::read_to_string(f.root.join("paper.md")).unwrap(),
-            "revised"
+            "researcher revision"
         );
         tasks::undo(&f.store, &f.ws, &app.id).unwrap();
         assert_eq!(

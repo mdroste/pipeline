@@ -426,6 +426,10 @@ fn pdf_dependencies_follow_the_effective_extractor() {
         pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.tex"), None);
     assert!(!tex.extraction);
     assert!(tex.configuration_ready);
+    let pptx =
+        pdf_dependency_requirements(&settings, Some(&config), Some("/slides/deck.PPTX"), None);
+    assert!(!pptx.extraction);
+    assert!(pptx.configuration_ready);
 }
 
 #[test]

@@ -106,6 +106,7 @@ fn a_report_too_long_for_the_screen_is_read_in_full_for_export() {
 
     let beyond = "x".repeat(MAX_REPORT_MARKDOWN_BYTES as usize + 1);
     std::fs::write(fixture.run_dir.join("report.md"), beyond).unwrap();
+    assert!(load_run(&fixture.run_dir, fixture.manifest.clone()).is_err());
     assert_eq!(
         report_text(&fixture.run_dir).unwrap_err(),
         "The report is too large to export"
@@ -368,4 +369,21 @@ fn an_export_has_a_saved_files_permissions_and_a_replaced_file_keeps_its_own() {
     write_atomically(&new, b"again").unwrap();
     assert_eq!(std::fs::read(&new).unwrap(), b"again");
     assert_eq!(mode(&new), 0o640);
+}
+
+#[test]
+fn ordinary_word_export_protects_original_and_preserves_revision_diff() {
+    let fixture = docx_fixture();
+    let original = std::fs::read(&fixture.original).unwrap();
+    std::fs::write(
+        fixture.run_dir.join("report.md"),
+        "# Review\n\n## Revision Diff\n\nThe previous estimate changed.",
+    )
+    .unwrap();
+    let run = load_run(&fixture.run_dir, fixture.manifest).unwrap();
+    let word = generate(&run, ReportFormat::Docx).unwrap();
+    assert!(check_destination(&fixture.original, &word.protected).is_err());
+    assert_eq!(original, std::fs::read(&fixture.original).unwrap());
+    let text = docx_text(&word.bytes).unwrap();
+    assert!(text.contains("Anchored finding") && text.contains("The previous estimate changed."));
 }

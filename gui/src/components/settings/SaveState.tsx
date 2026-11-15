@@ -45,7 +45,7 @@ export function SaveFeedback({
             {" "}
             <button
               type="button"
-              className="settings-text-link"
+              className="ui-button ui-button--sm"
               onClick={retry}
             >
               Retry
@@ -76,11 +76,14 @@ export function SettingRow({
   label,
   description,
   children,
+  controlId,
 }: {
   id?: string;
   label: string;
   description?: ReactNode;
   children: ReactNode;
+  /** Use for a single native field. Groups keep their own accessible name. */
+  controlId?: string;
 }) {
   return (
     <div
@@ -89,9 +92,20 @@ export function SettingRow({
       className="settings-row settings-anchor"
     >
       <div className="settings-row-copy">
-        <div className="settings-row-label">{label}</div>
+        {controlId ? (
+          <label htmlFor={controlId} className="settings-row-label">
+            {label}
+          </label>
+        ) : (
+          <div className="settings-row-label">{label}</div>
+        )}
         {description && (
-          <p className="settings-row-description">{description}</p>
+          <p
+            id={controlId ? `${controlId}-help` : undefined}
+            className="settings-row-description"
+          >
+            {description}
+          </p>
         )}
       </div>
       <div className="settings-row-control">{children}</div>

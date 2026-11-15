@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import stepEditing from "../../../tests/fixtures/workflow/step-editing.json";
 import stepRemoval from "../../../tests/fixtures/workflow/step-removal.json";
 import { computeWaves } from "../../lib/pipelineHelpers";
-import type { PipelineConfig, StepConfig } from "../../lib/types";
+import type { PipelineConfig, StepConfig } from "../../lib/workflowTypes";
 import {
   MAX_STEP_ID_CHARS,
   MAX_STEP_LABEL_CHARS,

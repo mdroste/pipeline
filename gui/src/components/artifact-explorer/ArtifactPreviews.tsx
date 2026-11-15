@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { artifactClient } from "../../lib/artifactClient";
 import { fileLanguage } from "../../lib/fileLanguages";
 import type { ArtifactEntry, ArtifactContent } from "../../lib/artifactTypes";
 import HighlightedCode from "../file-workspace/HighlightedCode";
@@ -76,7 +76,7 @@ export function BinaryCard({
     setOpenError(null);
     setOpening(true);
     try {
-      await invoke("open_run_artifact", { runId, relPath: entry?.rel_path });
+      await artifactClient.open({ runId, relPath: entry?.rel_path });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setOpenError(

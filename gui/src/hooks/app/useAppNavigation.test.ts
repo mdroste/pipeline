@@ -119,6 +119,27 @@ it("asks once and opens the new conversation when leaving is accepted", async ()
   });
 });
 
+it("coalesces repeated new chat activations while creation is pending", async () => {
+  const { result } = renderNavigation();
+  await act(() => router.navigate({ page: "project-index" }));
+  let complete: () => void = () => {};
+  createSession.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        complete = () => resolve({ record: { id: "one" } });
+      }),
+  );
+  const first = result.current.startConversation();
+  const second = result.current.startConversation();
+  expect(first).toBe(second);
+  await vi.waitFor(() => expect(createSession).toHaveBeenCalledOnce());
+  await act(async () => {
+    complete();
+    await first;
+  });
+  expect(router.route).toMatchObject({ sessionId: "one" });
+});
+
 it("leaves a project's saved tab alone when opening its conversation", async () => {
   renderNavigation();
   localStorage.setItem(

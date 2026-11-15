@@ -212,6 +212,23 @@ impl Settings {
         self.role_effort(&self.default_orientation_effort_overrides, provider)
     }
 
+    /// Indexed Paper Review has a local inventory and a second chance to read
+    /// difficult passages. Keep inherited ChatGPT reasoning bounded on both
+    /// calls. A stage-specific choice still controls its own effort.
+    pub(crate) fn paper_orientation_effort(&self, provider: &str) -> String {
+        let effort = self.orientation_effort(provider);
+        if provider == "codex"
+            && self.model_transport(provider) == "cli"
+            && matches!(effort.as_str(), "high" | "xhigh" | "max")
+            && self
+                .stage_effort(&self.default_orientation_effort_overrides, provider)
+                .is_empty()
+        {
+            return "medium".into();
+        }
+        effort
+    }
+
     pub fn usage_limit_fallback_agent(&self) -> Option<&str> {
         let provider = self.usage_limit_fallback_agent.trim();
         (!provider.is_empty()).then_some(provider)

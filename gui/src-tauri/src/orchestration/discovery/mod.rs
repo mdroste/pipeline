@@ -6,7 +6,10 @@
 //! is declined rather than shown to the researcher. Referees see the research
 //! record and a frozen manuscript version, never the author's chat or proposal
 //! scores. Role grants are revoked when the run ends.
+pub(crate) mod activity;
 mod artifacts;
+mod assessment;
+pub mod budget;
 use artifacts::{check_artifacts, consume, materialize, Rejection};
 pub mod commands;
 mod engine;
@@ -31,6 +34,22 @@ use model::*;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 use tauri::Emitter;
+
+fn reviewer_evidence(
+    inputs: &BTreeMap<String, Value>,
+    evidence: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    let mut files = inputs.clone();
+    for (id, a) in evidence {
+        if a["kind"] == "artifact" && inputs.get(id) != Some(a) {
+            files.insert(
+                format!("{id}-{}", a["filename"].as_str().unwrap_or("evidence")),
+                a.clone(),
+            );
+        }
+    }
+    files
+}
 
 /// How long an interrupted turn gets to stop, and how often it is checked.
 const SETTLE_SECS: i64 = 300;
@@ -244,7 +263,10 @@ fn reject_response(p: &mut Portfolio, child: &TaskRun, e: String) {
     if p.run.repairs < 2
         && !matches!(
             p.run.phase,
-            Phase::Acquire { .. } | Phase::ExternalReview { .. } | Phase::Deliver
+            Phase::Brainstorm
+                | Phase::Acquire { .. }
+                | Phase::ExternalReview { .. }
+                | Phase::Deliver
         )
     {
         p.run.repairs += 1;
@@ -378,7 +400,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     if p.run.state != "running" {
         return Ok(());
     }
-    if p.run.actions_reserved >= p.run.definition.max_actions
+    if p.run.actions_reserved.saturating_add(p.run.action_cost()) > p.run.definition.max_actions
         || p.run.active_seconds + 30 > p.run.definition.active_seconds
     {
         p.run.state = "exhausted".into();
@@ -451,15 +473,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     }
     if phase.reviewer() {
         if let Some(index) = phase.paper() {
-            let mut files = p.run.input_artifacts.clone();
-            for (id, a) in &p.papers[index].evidence {
-                if a["kind"] == "artifact" {
-                    files.insert(
-                        format!("{id}-{}", a["filename"].as_str().unwrap_or("evidence")),
-                        a.clone(),
-                    );
-                }
-            }
+            let mut files = reviewer_evidence(&p.run.input_artifacts, &p.papers[index].evidence);
             if let Some(v) = p.papers[index].versions.last() {
                 files.extend(v.artifacts.clone());
             }
@@ -526,6 +540,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
             action,
         }],
         limits: Limits {
+            max_api_cost_cents: p.run.definition.max_api_cost_cents,
             max_actions: 1,
             deadline_hours: p.run.definition.deadline_hours,
             action_timeout_secs: timeout,

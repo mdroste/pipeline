@@ -1,8 +1,9 @@
 import { SettingsCardId } from "./SaveState";
 import { useId } from "react";
-import type { ModelCatalog } from "../../lib/types";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 
 import InfoButton from "../InfoButton";
+import { input } from "../../ui/classes";
 
 export function SettingsCard({
   id,
@@ -83,11 +84,8 @@ export function CatalogStatus({
   );
 }
 
-export const selectClass =
-  "w-full py-1.5 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
-
-export const inputClass =
-  "w-full py-1.5 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
+export const selectClass = "w-full";
+export const inputClass = input;
 
 export function SectionHeader({
   title,
@@ -124,12 +122,23 @@ export function Field({
   help?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const labelId = useId();
+  const helpId = useId();
   return (
-    <div className="settings-field">
-      <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
+    <div
+      className="settings-field"
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={help ? helpId : undefined}
+    >
+      <div id={labelId} className="ui-field-label mb-1.5">
         <span>{label}</span>
       </div>
-      {help && <div className="settings-field-help">{help}</div>}
+      {help && (
+        <div id={helpId} className="ui-field-help">
+          {help}
+        </div>
+      )}
       {children}
     </div>
   );
@@ -180,17 +189,11 @@ export function Toggle({
           event.stopPropagation();
           onChange(!checked);
         }}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-          checked
-            ? "bg-gray-900 dark:bg-neutral-200"
-            : "bg-gray-300 dark:bg-neutral-600"
-        }`}
+        className="ui-toggle"
       >
-        <span
-          className={`inline-block h-3.5 w-3.5 rounded-full bg-white dark:bg-neutral-900 transition-transform ${
-            checked ? "translate-x-[18px]" : "translate-x-[3px]"
-          }`}
-        />
+        <span aria-hidden="true" className="ui-toggle-track">
+          <span className="ui-toggle-thumb" />
+        </span>
       </button>
     </div>
   );

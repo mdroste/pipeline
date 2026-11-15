@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
+import type {
+  WorkbenchSession,
+  Workspace,
+} from "../lib/workbench/sessionTypes";
 import Badge from "../ui/Badge";
 import IconButton from "../ui/IconButton";
 import { Icon } from "../ui/icons";
@@ -79,28 +82,32 @@ export default function WorkspaceRailNavigation({
     <>
       {project && (
         <>
-          <NavChild
-            ref={switcher}
-            strong
-            label={project.name}
-            ariaLabel={`Switch project: ${project.name}`}
-            title={
-              project.missingRootAt
-                ? `${project.name} · Folder not found`
-                : (project.root ?? project.name)
-            }
-            disabled={disabled}
-            aria-haspopup="menu"
-            aria-expanded={switching}
-            onClick={() => setSwitching((value) => !value)}
-            suffix={
-              project.missingRootAt ? (
-                <Badge kind="attention" label="Folder not found" />
-              ) : (
-                <Icon name="chevron-down" className="nav-switch-mark" />
-              )
-            }
-          />
+          <div className="nav-project-context">
+            <NavChild
+              ref={switcher}
+              strong
+              label={project.name}
+              ariaLabel={`Switch project: ${project.name}`}
+              title={
+                project.missingRootAt
+                  ? `${project.name} · Folder not found`
+                  : project.root
+                    ? `${project.name} · ${project.root}`
+                    : project.name
+              }
+              disabled={disabled}
+              aria-haspopup="menu"
+              aria-expanded={switching}
+              onClick={() => setSwitching((value) => !value)}
+              suffix={
+                project.missingRootAt ? (
+                  <Badge kind="attention" label="Folder not found" />
+                ) : (
+                  <Icon name="chevron-down" className="nav-switch-mark" />
+                )
+              }
+            />
+          </div>
           <Menu
             open={switching}
             onClose={() => setSwitching(false)}
@@ -142,7 +149,6 @@ export default function WorkspaceRailNavigation({
         <span>{project ? "Chats" : "No project"}</span>
         <IconButton
           size="sm"
-          className="!h-5 !w-5"
           label="New conversation"
           tooltipSide="right"
           disabled={disabled}

@@ -1,15 +1,11 @@
 import { memo, useId, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { InputSlot, VarSpec } from "../../lib/types";
+import {
+  workflowProfileClient,
+  type CalibrationDraft,
+} from "../../lib/workflowProfileClient";
+import type { InputSlot, VarSpec } from "../../lib/workflowTypes";
 import useDraftText from "../../hooks/useDraftText";
 import useModalDialog from "../../hooks/useModalDialog";
-
-interface CalibrationDraft {
-  addendum: string;
-  target_step_id: string;
-  target_label: string;
-  rejected_count: number;
-}
 
 function CalibrateSection({
   onAppend,
@@ -30,7 +26,7 @@ function CalibrateSection({
     setLoading(true);
     setError(null);
     try {
-      const d = await invoke<CalibrationDraft>("draft_calibration");
+      const d = await workflowProfileClient.calibration();
       setDraft(d);
       setText(d.addendum);
     } catch (e) {

@@ -3,7 +3,7 @@ import type {
   ResearchRecipe,
   RecipeInputCheck,
   RecipeRun,
-} from "../workbenchTypes";
+} from "./releaseTypes";
 
 export const recipeClient = {
   listRecipes(workspaceId: string | null) {

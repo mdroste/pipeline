@@ -190,6 +190,7 @@ fn build_parallel_prompt_output_format_substitution() {
     )
     .unwrap();
     assert!(result.contains("/runs/r1/artifacts/files/"));
+    assert!(result.contains("use `$...$` for inline mathematics"));
     assert!(result.contains("response schema supplied by Pipeline"));
     assert!(!result.contains("JSON object"));
     assert!(!result.contains("PIPELINE REPORT testnonce START"));
@@ -222,6 +223,8 @@ fn schema_output_format_defers_serialization_to_native_schema() {
     assert!(!block.contains("PIPELINE REPORT"));
     assert!(!block.contains("JSON"));
     assert!(!block.contains("markdown fences"));
+    assert!(block.contains("Markdown-bearing finding fields"));
+    assert!(block.contains("verbatim evidence quotations"));
 }
 
 #[test]

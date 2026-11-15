@@ -120,16 +120,31 @@ fn read_manifest_content_for_listing(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Locate the newest completed report in the same revision lineage. Stable
-/// input path is the primary lineage key; content hash also finds identical
-/// copies moved back to the same logical input.
+fn same_lineage(prior: &super::InputIdentity, current: &super::InputIdentity) -> bool {
+    !current.lineage_id.is_empty() && current.lineage_id == prior.lineage_id
+}
+
+/// Compatibility entry point for document comparisons. Folder workflows must
+/// supply an interpretation through the lineage-aware lookup.
 pub fn load_latest_report_for_input(
     input_path: &str,
     paper_hash: &str,
 ) -> Result<Option<crate::models::PipelineReport>, String> {
-    let normalized_input = Path::new(input_path)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(input_path));
+    if input_path.trim().is_empty() || Path::new(input_path).is_dir() {
+        return Ok(None);
+    }
+    load_latest_report_for_lineage(&super::input_identity(
+        input_path, "document", paper_hash, None,
+    ))
+}
+
+/// Locate the newest completed report of the same interpreted input.
+pub(crate) fn load_latest_report_for_lineage(
+    current: &super::InputIdentity,
+) -> Result<Option<crate::models::PipelineReport>, String> {
+    if current.lineage_id.is_empty() {
+        return Ok(None);
+    }
     let mut candidates: Vec<(String, PathBuf)> = Vec::new();
     let mut walk =
         crate::safety::WalkBudget::new_cancellable("Prior report discovery").without_time_limit();
@@ -154,12 +169,22 @@ pub fn load_latest_report_for_input(
         {
             continue;
         }
-        let same_path = Path::new(&manifest.input_path)
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(&manifest.input_path))
-            == normalized_input;
-        let same_hash = manifest.run_id.starts_with(&format!("{paper_hash}_"));
-        if same_path || same_hash {
+        let mut prior = manifest.input_identity;
+        if prior.lineage_id.is_empty() && !manifest.input_path.is_empty() {
+            // Older manifests predate saved identities. A file with no declared
+            // interpretation is a document; a legacy folder is ambiguous.
+            let interpretation = if manifest.input_interpretation.is_empty()
+                && Path::new(&manifest.input_path).is_file()
+            {
+                "document"
+            } else {
+                manifest.input_interpretation.as_str()
+            };
+            if !interpretation.is_empty() {
+                prior = super::input_identity(&manifest.input_path, interpretation, "", None);
+            }
+        }
+        if same_lineage(&prior, current) {
             candidates.push((manifest.created, entry.path().join("report.json")));
         }
     }
@@ -199,4 +224,22 @@ pub fn update_run_meta(run_id: &str, title: &str, tags: &[String]) -> Result<(),
         .collect();
     let dir = runs_dir()?.join(run_id);
     write_manifest(&dir, &manifest)
+}
+
+#[cfg(test)]
+mod lineage_tests {
+    use super::*;
+    #[test]
+    fn revision_comparison_requires_matching_interpreted_lineage() {
+        let id = |path, kind| super::super::input_identity(path, kind, "hash", None);
+        assert!(!same_lineage(&id("", "none"), &id("", "none")));
+        assert!(!same_lineage(
+            &id("/paper", "latex_project"),
+            &id("/paper", "source_tree")
+        ));
+        assert!(same_lineage(
+            &id("/paper", "document"),
+            &id("/paper", "document")
+        ));
+    }
 }

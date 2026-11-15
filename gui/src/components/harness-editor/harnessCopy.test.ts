@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import type { HarnessModule, HarnessPreset } from "../../lib/workbenchTypes";
+import type {
+  HarnessModule,
+  HarnessPreset,
+} from "../../lib/workbench/harnessTypes";
 import {
   harnessDiagnostic,
   moduleDescription,

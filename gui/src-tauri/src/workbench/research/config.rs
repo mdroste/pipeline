@@ -271,10 +271,39 @@ pub(super) fn merge_config(
 ) {
     if let Some(object) = source.as_object() {
         for (key, value) in object {
-            if !value.is_null() {
+            // Retired browser preferences remain readable in old settings and
+            // archives, but never affect access, inheritance or fingerprints.
+            if key != "browser" && !value.is_null() {
                 target.insert(key.clone(), value.clone());
                 sources.insert(key.clone(), Value::String(source_name.to_string()));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retired_browser_settings_are_ignored_at_every_scope() {
+        let mut target = Map::new();
+        let mut sources = Map::new();
+        for scope in ["global", "workspace", "conversation"] {
+            merge_config(
+                &mut target,
+                &json!({"browser":true,"webSearch":true}),
+                scope,
+                &mut sources,
+            );
+            assert_eq!(
+                target,
+                json!({"webSearch":true}).as_object().unwrap().clone()
+            );
+            assert_eq!(
+                sources,
+                json!({"webSearch":scope}).as_object().unwrap().clone()
+            );
         }
     }
 }

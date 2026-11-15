@@ -59,6 +59,14 @@ export default function AuthorNoteField({
         className="flex min-h-11 w-full items-center gap-2 px-3 py-3 text-left text-ui-label font-medium text-ink transition-colors hover:bg-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-50"
       >
         <span className="min-w-0 flex-1">Additional instructions</span>
+        {!note && (
+          <span
+            aria-hidden="true"
+            className="text-ui-meta font-normal text-ink-muted"
+          >
+            Optional
+          </span>
+        )}
         <Icon
           name="chevron-down"
           className={`h-3.5 w-3.5 shrink-0 text-ink-muted transition-transform motion-reduce:transition-none ${expanded ? "rotate-180" : ""}`}
@@ -66,6 +74,7 @@ export default function AuthorNoteField({
       </button>
       <p
         id={`${id}-scope`}
+        hidden={!expanded && !note}
         className="px-3 pb-3 text-ui-meta leading-5 text-ink-muted"
       >
         {note

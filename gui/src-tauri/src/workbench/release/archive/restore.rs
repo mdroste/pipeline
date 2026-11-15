@@ -68,20 +68,25 @@ pub(super) fn moved_path(path: &str, old: &str, new: &str) -> Option<String> {
 }
 
 /// Command profiles, run receipts, and captured plans name absolute folders, so
-/// they move with the project. Call before the Workspace row takes its new root.
-fn remap_execution_paths(imported: &Connection, old: &str, new: &str) -> WorkbenchResult<()> {
+/// they move once with their original owner, even when project roots are swapped.
+fn remap_execution_paths(
+    imported: &Connection,
+    workspace: &str,
+    old: &str,
+    new: &str,
+) -> WorkbenchResult<()> {
     let failed = |error| WorkbenchError::storage("Failed to remap imported command folders", error);
     for (select, update) in [
         (
-            "SELECT id,cwd FROM execution_profiles WHERE workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            "SELECT id,cwd FROM execution_profiles WHERE workspace_id=?1",
             "UPDATE execution_profiles SET cwd=?2 WHERE id=?1",
         ),
         (
-            "SELECT id,cwd FROM research_executions WHERE workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            "SELECT id,cwd FROM research_executions WHERE workspace_id=?1",
             "UPDATE research_executions SET cwd=?2 WHERE id=?1",
         ),
         (
-            "SELECT id,json_extract(body_json,'$.profile.cwd') FROM desk_records WHERE kind='execution_plan' AND json_valid(body_json) AND json_type(body_json,'$.profile.cwd')='text' AND workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            "SELECT id,json_extract(body_json,'$.profile.cwd') FROM desk_records WHERE kind='execution_plan' AND json_valid(body_json) AND json_type(body_json,'$.profile.cwd')='text' AND workspace_id=?1",
             // The record's identity stays its captured hash; only where its
             // folder now lives changes.
             "UPDATE desk_records SET body_json=json_set(body_json,'$.profile.cwd',?2) WHERE id=?1",
@@ -90,7 +95,7 @@ fn remap_execution_paths(imported: &Connection, old: &str, new: &str) -> Workben
         let rows = imported
             .prepare(select)
             .map_err(failed)?
-            .query_map([old], |row| {
+            .query_map([workspace], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(failed)?
@@ -301,11 +306,7 @@ pub fn import_archive(
         .iter()
         .map(|blob| blob.original_reference.as_str())
         .collect::<Vec<_>>();
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-    ] {
+    for (table, column) in super::omissions::FILE_COLUMNS {
         let mut statement = imported
             .prepare(&format!(
                 "SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
@@ -358,26 +359,21 @@ pub fn import_archive(
             ));
         }
     }
+    let mut mappings = Vec::with_capacity(request.root_mappings.len());
+    let mut destinations = HashSet::new();
     for (old, new) in &request.root_mappings {
         if old.is_empty() {
             return Err(WorkbenchError::invalid(
                 "Root remapping keys cannot be empty",
             ));
         }
-        let present: bool = imported
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE root=?1)",
-                [old],
-                |row| row.get(0),
-            )
+        let workspace: String = imported
+            .query_row("SELECT id FROM workspaces WHERE root=?1", [old], |row| {
+                row.get(0)
+            })
             .map_err(|error| {
                 WorkbenchError::storage("Failed to validate imported root mapping", error)
             })?;
-        if !present {
-            return Err(WorkbenchError::invalid(
-                "Root remapping key does not match an archived Workspace root",
-            ));
-        }
         let (new_root, new_identity) = match new {
             Some(new) => {
                 let canonical = crate::workbench::store::canonical_workspace_root(
@@ -385,6 +381,11 @@ pub fn import_archive(
                     store.root_path(),
                 )?;
                 let identity = crate::workbench::store::root_identity(&canonical)?;
+                if !destinations.insert(canonical.clone()) {
+                    return Err(WorkbenchError::invalid(
+                        "Choose a different destination for each archived Workspace root",
+                    ));
+                }
                 (
                     Some(canonical.to_string_lossy().into_owned()),
                     Some(identity),
@@ -392,18 +393,37 @@ pub fn import_archive(
             }
             None => (None, None),
         };
+        mappings.push((workspace, old, new_root, new_identity));
+    }
+    // Validate against the original rows first, then clear uniqueness slots on
+    // the private imported database. The published store never sees this state.
+    let transaction = imported
+        .unchecked_transaction()
+        .map_err(|error| WorkbenchError::storage("Failed to start imported root mapping", error))?;
+    transaction
+        .execute(
+            "UPDATE workspaces SET root=NULL,root_identity=NULL WHERE root IS NOT NULL",
+            [],
+        )
+        .map_err(|error| {
+            WorkbenchError::storage("Failed to prepare imported root mapping", error)
+        })?;
+    for (workspace, old, new_root, new_identity) in mappings {
         if let Some(new_root) = &new_root {
-            remap_execution_paths(&imported, old, new_root)?;
+            remap_execution_paths(&transaction, &workspace, old, new_root)?;
         }
-        imported
+        transaction
             .execute(
-                "UPDATE workspaces SET root=?2,root_identity=?3,missing_root_at=NULL WHERE root=?1",
-                params![old, new_root, new_identity],
+                "UPDATE workspaces SET root=?2,root_identity=?3,missing_root_at=NULL WHERE id=?1",
+                params![workspace, new_root, new_identity],
             )
             .map_err(|error| {
                 WorkbenchError::storage("Failed to remap imported Workspace root", error)
             })?;
     }
+    transaction.commit().map_err(|error| {
+        WorkbenchError::storage("Failed to commit imported root mapping", error)
+    })?;
     let blob_root = store.root_path().join("blobs");
     fs::create_dir_all(&blob_root)
         .map_err(|error| WorkbenchError::storage("Failed to create imported blob store", error))?;
@@ -438,11 +458,7 @@ pub fn import_archive(
         );
     }
     for (old, new) in &reference_map {
-        for (table, column) in [
-            ("artifacts", "storage_reference"),
-            ("paper_revisions", "text_reference"),
-            ("source_versions", "text_reference"),
-        ] {
+        for (table, column) in super::omissions::FILE_COLUMNS {
             imported
                 .execute(
                     &format!("UPDATE {table} SET {column}=?2 WHERE {column}=?1"),
@@ -453,11 +469,7 @@ pub fn import_archive(
                 })?;
         }
     }
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-    ] {
+    for (table, column) in super::omissions::FILE_COLUMNS {
         let mut statement = imported
             .prepare(&format!(
                 "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
@@ -531,6 +543,11 @@ pub fn import_archive(
         .execute("DELETE FROM storage_trash", [])
         .map_err(|error| {
             WorkbenchError::storage("Failed to discard imported trash authority", error)
+        })?;
+    imported
+        .execute("DELETE FROM chat_approvals", [])
+        .map_err(|error| {
+            WorkbenchError::storage("Failed to discard imported chat approvals", error)
         })?;
     imported.execute("UPDATE turns SET state='interrupted',terminal_at=?1,updated_at=?1,error_json=COALESCE(error_json,?2) WHERE terminal_at IS NULL", params![now(), json!({"message":"Imported unfinished turn: outcome is unknown; no work was replayed."}).to_string()])
         .map_err(|error| WorkbenchError::storage("Failed to reconcile imported unfinished turns", error))?;

@@ -1,4 +1,5 @@
-import type { EngineStatus, Settings } from "../../lib/types";
+import type { EngineStatus } from "../../lib/engineTypes";
+import type { Settings } from "../../lib/settingsTypes";
 import type { AppPreferences } from "../../lib/appPreferences";
 import type { ThemePreference } from "../../lib/theme";
 import type { Section } from "./navigation";
@@ -183,13 +184,13 @@ export function settingsSearchEntries(
     "workflow",
     "workflow-models",
     "Model defaults",
-    "Default review model, second opinion, stage exceptions, input assessment orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
+    "Default review model, second opinion, stage exceptions, document bundle preparation orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
     "",
   );
   for (const [label, target, agents, models, efforts] of [
     [
-      "Input assessment",
-      "Input assessment providers",
+      "Document bundle preparation",
+      "Document bundle preparation providers",
       [defaultOrientationAgent(s)],
       s.default_orientation_model_overrides,
       s.default_orientation_effort_overrides,

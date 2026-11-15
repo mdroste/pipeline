@@ -1,4 +1,4 @@
-import type { PipelineReport } from "./types";
+import type { PipelineReport } from "./reviewTypes";
 
 export interface IssueEvidence {
   page?: number;
@@ -181,11 +181,6 @@ function jsonCandidates(text: string): unknown[] {
       .forEach((span) => add(trimmed.slice(span.start, span.end)));
   }
   return candidates;
-}
-
-/** Pull the first parseable JSON value out of a model reply. */
-export function extractJson(text: string): unknown | null {
-  return jsonCandidates(text)[0] ?? null;
 }
 
 function normalizeSeverity(value: unknown): string {

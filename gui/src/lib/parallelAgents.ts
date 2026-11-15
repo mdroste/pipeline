@@ -1,5 +1,7 @@
 import { defaultParallelAgents } from "./providers";
-import type { ModelSelection, PipelineConfig, Settings } from "./types";
+import type { ModelSelection } from "./reviewModelTypes";
+import type { PipelineConfig } from "./workflowTypes";
+import type { Settings } from "./settingsTypes";
 
 /** What a workflow's parallel steps run on before any one-review change. */
 export interface WorkflowParallelAgents {

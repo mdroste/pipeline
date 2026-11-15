@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { QueuedRun } from "../../lib/types";
+import type { QueuedRun } from "../../lib/reviewTypes";
 import useRefreshWhenRunsFinish from "./useRefreshWhenRunsFinish";
 
 const listen = vi.hoisted(() => vi.fn());

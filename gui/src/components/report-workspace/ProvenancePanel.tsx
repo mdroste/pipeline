@@ -7,7 +7,7 @@ import {
   type RunProvenance,
 } from "../../lib/runProvenance";
 import { reportStatusDisplay } from "../../lib/reportPresentation";
-import type { ReportQuality } from "../../lib/types";
+import type { ReportQuality } from "../../lib/reviewTypes";
 
 const METADATA_LABEL =
   "text-[0.6875rem] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400";
@@ -124,7 +124,7 @@ export default function ProvenancePanel({
                   `${quality.recovered_pages} pages · ${quality.recovered_blocks} blocks · ${quality.recovered_assets} assets`,
                 ],
                 [
-                  "Orientation",
+                  "Document reading",
                   `${quality.orientation_included_bytes.toLocaleString()} included · ${quality.orientation_omitted_bytes.toLocaleString()} omitted bytes`,
                 ],
                 [
@@ -268,9 +268,9 @@ export default function ProvenancePanel({
           </div>
           {!provenance.usage_matches_total && (
             <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              Totals may include document reading, input assessment, setup
-              calls, and reused results that cannot be assigned to a model in
-              this table.
+              Totals may include document reading, document bundle preparation,
+              setup calls, and reused results that cannot be assigned to a model
+              in this table.
             </p>
           )}
         </div>

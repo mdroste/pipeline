@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { WorkbenchEvent } from "../lib/workbenchTypes";
-import type { BatchJob, QueuedRun } from "../lib/types";
+import type { WorkbenchEvent } from "../lib/workbench/runtimeTypes";
+import type { BatchJob, QueuedRun } from "../lib/reviewTypes";
 import {
   automationNotice,
   deliverNotice,

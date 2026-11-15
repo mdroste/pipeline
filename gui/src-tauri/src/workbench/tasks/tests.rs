@@ -1,5 +1,5 @@
 use super::*;
-fn fixture() -> (tempfile::TempDir, Store, String) {
+pub(super) fn fixture() -> (tempfile::TempDir, Store, String) {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open_at(&temp.path().join("workspace")).unwrap();
     let session = store
@@ -95,7 +95,7 @@ fn structured_final_answer_is_separate_from_progress_and_unknown_phases() {
         .is_none());
 }
 /// Projects a finished turn with these items and reads its outcome.
-fn finished_turn(s: &Store, session: &str, turn: &str, items: Vec<Value>) -> Value {
+pub(super) fn finished_turn(s: &Store, session: &str, turn: &str, items: Vec<Value>) -> Value {
     use crate::agent_runtime::events::NormalizedEvent;
     let binding = s
         .active_binding(session)

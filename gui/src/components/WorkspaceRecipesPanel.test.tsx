@@ -1,11 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import WorkspaceRecipesPanel from "./WorkspaceRecipesPanel";
-import type {
-  ConversationSnapshot,
-  RecipeRun,
-  ResearchRecipe,
-} from "../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../lib/workbench/sessionTypes";
+import type { RecipeRun, ResearchRecipe } from "../lib/workbench/releaseTypes";
 
 const mocks = vi.hoisted(() => ({
   listRecipes: vi.fn(),

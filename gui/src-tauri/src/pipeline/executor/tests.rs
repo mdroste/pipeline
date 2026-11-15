@@ -11,7 +11,7 @@ use super::paths::step_slug;
 use super::prompts::{
     append_evidence_retrieval_guidance, append_shared_context_note, build_parallel_prompt,
     expand_template, output_format_block, specialist_context_outputs, step_ref_text,
-    substitute_placeholders, substitute_run_context, tools_with_write,
+    substitute_run_context, tools_with_write,
 };
 use super::schedule::{
     base_id, dependency_policy_failure, dependents_of, execution_plan, input_processing_label,

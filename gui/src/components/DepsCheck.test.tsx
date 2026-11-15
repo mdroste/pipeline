@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DepsCheck from "./DepsCheck";
-import type { DepStatus, DepsReport } from "../lib/types";
+import type { DepStatus, DepsReport } from "../lib/settingsTypes";
 
 const openUrl = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));

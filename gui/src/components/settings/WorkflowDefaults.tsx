@@ -1,5 +1,6 @@
 import { providerAvailability } from "../../lib/connections";
-import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
+import type { DepsReport, Settings } from "../../lib/settingsTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 import {
   defaultMergeAgent,
   defaultMergeEffortOverrides,
@@ -153,12 +154,13 @@ export function ModelDefaultsSection({
               </summary>
               <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
                 Give a stage its own model only when it needs one, such as a
-                faster model for input assessment. New review lists every stage
-                set here and can switch it to the review model for one review.
+                faster model for document bundle preparation. New review lists
+                every stage set here and can switch it to the review model for
+                one review.
               </p>
               <div>
                 <ModelStage
-                  title="Input assessment"
+                  title="Document bundle preparation"
                   inherited={
                     !settings.default_orientation_agent
                       ? inheritsDefault
@@ -193,7 +195,7 @@ export function ModelDefaultsSection({
                           default_orientation_effort_overrides: {},
                         }),
                     }}
-                    label="Input assessment"
+                    label="Document bundle preparation"
                     help="Reads the inputs and selects the specialist reviewers."
                     onChange={(next) =>
                       setSettings({
@@ -440,7 +442,7 @@ export function WorkflowSection({
 
         <SettingRow
           label="Step time limit"
-          description="Maximum time for each model call. Input assessment and PDF extraction calls get half this time."
+          description="Maximum time for each model call. Document bundle preparation and PDF extraction calls get half this time."
         >
           <select
             aria-label="Step time limit"

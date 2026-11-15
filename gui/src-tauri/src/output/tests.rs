@@ -1,4 +1,27 @@
+use super::markdown::{strip_preamble, RUN_DETAILS_END, RUN_DETAILS_START};
+use super::summary::{
+    estimate_cost, format_cost, format_duration, provider_in_api_mode, render_run_summary,
+};
 use super::*;
+use crate::models::PipelineReport;
+use crate::settings::Settings;
+use std::time::Duration;
+
+#[test]
+fn schema_contracts_preserve_report_math_instructions() {
+    for directory in [None, Some("/runs/example/artifacts")] {
+        for contract in [
+            structured_output_format(directory),
+            text_artifact_output_format(directory, "Markdown report"),
+        ] {
+            assert!(contract.contains(r"$\kappa_w = c\lambda_w(1-\beta)$"));
+            assert!(contract.contains("`$$` on separate lines"));
+            assert!(contract.contains("finding fields (titles"));
+            assert!(contract.contains("verbatim evidence quotations"));
+            assert!(contract.contains("decoded Markdown"));
+        }
+    }
+}
 
 #[test]
 fn schema_backed_text_artifact_round_trips_without_transport_json() {
@@ -518,4 +541,20 @@ fn a_legacy_report_still_loses_its_narrated_preamble() {
     let markdown = report_opening_with("Let me compile the report.", 0);
     assert!(!markdown.contains("Let me compile"), "{markdown}");
     assert!(markdown.contains("## Details"));
+}
+
+#[test]
+fn report_math_survives_schema_decode_and_assembly() {
+    let body = r"The slope $\kappa_w = c\lambda_w(1-\beta)$ costs \$5.";
+    let json = serde_json::json!({"content": body}).to_string();
+    let decoded = extract_text_artifact(&json).unwrap();
+    assert_eq!(normalize_math_delimiters(&decoded), body);
+    for contract in [
+        structured_output_format(None),
+        text_artifact_output_format(None, "Markdown report"),
+    ] {
+        assert!(contract.contains("use `$...$` for inline mathematics"));
+        assert!(contract.contains("decoded Markdown"));
+        assert!(contract.contains("verbatim evidence quotations"));
+    }
 }

@@ -5,6 +5,10 @@ use std::collections::BTreeMap;
 
 pub const CONTRACT: &str = "self-discovery-v1";
 pub const BATCH: usize = 5;
+pub const MAX_IDEA_AGENTS: u8 = 8;
+fn no_agents(n: &u8) -> bool {
+    *n == 0
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +32,9 @@ pub struct Definition {
     pub mode: Mode,
     pub prompt: String,
     pub candidate_count: usize,
+    // Omit zero so pre-feature Start fingerprints remain identical.
+    #[serde(default, skip_serializing_if = "no_agents")]
+    pub idea_agents: u8,
     pub shortlist_count: usize,
     pub paper_count: usize,
     pub proposal_reviewers: usize,
@@ -38,6 +45,8 @@ pub struct Definition {
     pub research_rounds: usize,
     pub challenge_research: bool,
     pub max_replacements: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_api_cost_cents: Option<u32>,
     pub max_actions: u32,
     pub active_seconds: u64,
     pub action_timeout_seconds: u32,
@@ -54,9 +63,10 @@ pub struct Definition {
 impl Default for Definition {
     fn default() -> Self {
         Self { schema_version: 1, mode: Mode::Supervised, prompt: String::new(),
-            candidate_count: 75, shortlist_count: 10, paper_count: 5,
+            candidate_count: 75, idea_agents: 0, shortlist_count: 10, paper_count: 5,
             proposal_reviewers: 2, proposal_revision_passes: 1, paper_reviewers: 2, revision_passes: 2,
             research_rounds: 8, challenge_research: true, max_replacements: 2,
+            max_api_cost_cents: None,
             max_actions: 500, active_seconds: 172800, action_timeout_seconds: 1800,
             deadline_hours: 168, allow_computation: true, acquire_literature: true, input_paths: Vec::new(),
             review_profile_id: None, author_model: None, reviewer_model: None,
@@ -146,6 +156,8 @@ pub struct Selection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Investigation {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_ids: Vec<String>,
     pub contract: String,
     pub summary: String,
     pub claims: Vec<String>,
@@ -173,6 +185,8 @@ pub struct Challenge {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manuscript {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub central_claims: Vec<String>,
     pub title: String,
     pub abstract_text: String,
     pub markdown: String,
@@ -209,6 +223,10 @@ pub struct Review {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaperVersion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_delivered: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_record: Option<crate::orchestration::claims::Record>,
     pub version: usize,
     pub manuscript: Manuscript,
     pub hash: String,
@@ -218,7 +236,19 @@ pub struct PaperVersion {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObjectionResponse {
+    pub objection: usize,
+    pub subject: usize,
+    pub evidence_id: String,
+    pub explanation: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Assessment {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub objection_responses: Vec<ObjectionResponse>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_assessments: Vec<crate::orchestration::claims::Submission>,
     pub summary: String,
     pub sound: bool,
     pub contribution: String,
@@ -230,6 +260,8 @@ pub struct Assessment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Paper {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub infeasibility: Option<crate::orchestration::claims::Record>,
     pub candidate_id: u32,
     pub state: String,
     pub reason: String,
@@ -242,10 +274,32 @@ pub struct Paper {
     pub assessment: Option<Assessment>,
     pub stagnant_rounds: usize,
 }
+impl PaperVersion {
+    pub fn subjects(&self, paper: &Paper) -> Vec<String> {
+        if !self.manuscript.central_claims.is_empty() {
+            return self.manuscript.central_claims.clone();
+        }
+        paper
+            .rounds
+            .iter()
+            .rev()
+            .find(|r| !r.claims.is_empty())
+            .map(|r| r.claims.clone())
+            .unwrap_or_else(|| vec![self.manuscript.title.clone()])
+    }
+}
 impl Paper {
+    pub fn supported(&self) -> bool {
+        self.versions
+            .last()
+            .and_then(|v| v.claim_record.as_ref())
+            .is_some_and(|r| r.supported)
+    }
+
     pub fn new(candidate_id: u32) -> Self {
         Self {
             candidate_id,
+            infeasibility: None,
             state: "researching".into(),
             reason: String::new(),
             scope: None,
@@ -272,6 +326,7 @@ pub struct RankedPaper {
 pub enum Phase {
     Orient,
     Acquire { index: usize },
+    Brainstorm,
     Generate,
     Screen { offset: usize },
     Assess { index: usize, reviewer: usize },
@@ -330,6 +385,8 @@ pub struct Run {
     pub phase: Phase,
     pub orientation: Option<Orientation>,
     pub literature: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub idea_seeds: Vec<String>,
     pub deep_candidates: Vec<u32>,
     pub selection: Option<Selection>,
     pub selection_hash: Option<String>,
@@ -352,6 +409,20 @@ pub struct Run {
     pub selection_since: Option<i64>,
 }
 impl Run {
+    pub fn next_generation_phase(&self) -> Phase {
+        if self.definition.idea_agents > 0 {
+            Phase::Brainstorm
+        } else {
+            Phase::Generate
+        }
+    }
+    pub fn action_cost(&self) -> u32 {
+        if self.phase == Phase::Brainstorm {
+            super::budget::team_cost(self.definition.idea_agents)
+        } else {
+            1
+        }
+    }
     pub fn deadline_passed(&self) -> bool {
         self.selection_since.is_none() && self.deadline_at <= crate::orchestration::store::now()
     }

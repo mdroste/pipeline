@@ -16,8 +16,8 @@ import type {
   ModelCatalog,
   ModelSelection,
   RosterEntry,
-  Settings,
-} from "./types";
+} from "./reviewModelTypes";
+import type { Settings } from "./settingsTypes";
 
 /** What older builds store in place of a model when the CLI chose it. */
 const UNRECORDED_MODEL = "Provider default";

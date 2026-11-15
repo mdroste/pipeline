@@ -1,36 +1,19 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  programClient,
+  type ResearchActivity as Activity,
+} from "../lib/programClient";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { listen } from "@tauri-apps/api/event";
 import { taskClient } from "../lib/taskClient";
 import { type TaskSummary } from "../lib/taskTypes";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import { listedRunStatus } from "../lib/reportPresentation";
-import type { RunSummary } from "../lib/types";
-import type { WorkbenchEvent } from "../lib/workbenchTypes";
+import type { RunSummary } from "../lib/reviewTypes";
 import { button, muted, Inspect } from "./research-programs/shared";
 import PageHeader from "../ui/PageHeader";
 import ReportIssueLink from "./ReportIssueLink";
-interface Activity {
-  turns: {
-    sessionId: string;
-    workspaceId: string | null;
-    title: string;
-    threadId: string;
-    turnId: string | null;
-    state: string;
-  }[];
-  jobs: {
-    id: string;
-    workspaceId: string;
-    title: string;
-    adapter: string;
-    state: string;
-    owner: string | null;
-  }[];
-  pendingRequests: WorkbenchEvent[];
-  researchAttention: number;
-}
 export default function ResearchActivity({
   onClose,
   onSession,
@@ -54,7 +37,7 @@ export default function ResearchActivity({
     [reviewError, setReviewError] = useState("");
   const refresh = async () => {
     const [a, t] = await Promise.allSettled([
-      invoke<Activity>("workbench_research_activity"),
+      programClient.activity(),
       taskClient.list(),
     ]);
     if (a.status === "fulfilled") setActivity(a.value);
@@ -70,7 +53,8 @@ export default function ResearchActivity({
     );
   };
   const refreshReviews = () =>
-    invoke<RunSummary[]>("list_runs")
+    reviewHistoryClient
+      .list()
       .then((next) => {
         setReviews(next);
         setReviewError("");

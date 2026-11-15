@@ -109,7 +109,6 @@ export const projectKinds = [
   { id: "thesis", label: "Thesis chapter" },
   { id: "other", label: "Other" },
 ] as const;
-export type ProjectKind = (typeof projectKinds)[number]["id"];
 /** Where the paper is on its way to publication. Decides what the overview leads with. */
 export const projectStages = [
   { id: "idea", label: "Idea" },
@@ -119,7 +118,6 @@ export const projectStages = [
   { id: "revising", label: "Revising" },
   { id: "accepted", label: "Accepted" },
 ] as const;
-export type ProjectStage = (typeof projectStages)[number]["id"];
 export const kindLabel = (id: string | null | undefined) =>
   projectKinds.find((kind) => kind.id === id)?.label ?? null;
 export const stageLabel = (id: string | null | undefined) =>
@@ -166,17 +164,4 @@ export function loadWorkspacePins(workspaceId: string): WorkspaceDestination[] {
     /* Corrupt or inaccessible optional preferences use defaults. */
   }
   return [...defaultWorkspacePins];
-}
-export function saveWorkspacePins(
-  workspaceId: string,
-  pins: WorkspaceDestination[],
-) {
-  try {
-    localStorage.setItem(
-      `pipeline.workspace.pins.${workspaceId}`,
-      JSON.stringify({ version: 1, pins }),
-    );
-  } catch {
-    /* Navigation preferences never block research work. */
-  }
 }

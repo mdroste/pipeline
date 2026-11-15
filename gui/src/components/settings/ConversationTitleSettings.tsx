@@ -2,10 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { conversationClient } from "../../lib/workbench/conversationClient";
 import { runtimeClient } from "../../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import type {
-  TitlePreferences,
-  WorkspaceModelCatalog,
-} from "../../lib/workbenchTypes";
+import type { TitlePreferences } from "../../lib/workbench/sessionTypes";
+import type { WorkspaceModelCatalog } from "../../lib/workbench/runtimeTypes";
 import { SaveFeedback, useSettingsOperation } from "./SaveState";
 const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"];
 export default function ConversationTitleSettings() {

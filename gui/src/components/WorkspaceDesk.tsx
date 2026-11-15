@@ -1,7 +1,8 @@
 // Project and assistant panes for one project. The split view needs 848 px of
 // working width. Below that, one pane shows at a time and both stay mounted, so
 // drafts survive; widening restores the saved choice. View and assistant width
-// are per-project device preferences and grant no access.
+// are per-project device preferences and grant no access. When artifacts open
+// alongside the chat, the project pane stays mounted for the return to split.
 
 import {
   useEffect,
@@ -9,11 +10,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { WorkspacePaneVisibility } from "./workspacePaneVisibility";
 import useContainerWidth from "../hooks/useContainerWidth";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import ResizeHandle from "./ResizeHandle";
+import WorkspaceArtifactsPane from "./WorkspaceArtifactsPane";
 import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
 import { MenuItem } from "../ui/Menu";
@@ -33,8 +37,15 @@ function loadView(key: string): DeskView | null {
   return null;
 }
 
+function subscribeVisibility(listener: () => void) {
+  document.addEventListener("visibilitychange", listener);
+  return () => document.removeEventListener("visibilitychange", listener);
+}
+const windowVisible = () => document.visibilityState !== "hidden";
+
 export default function WorkspaceDesk({
   project,
+  artifacts,
   children,
   hidden,
   assistantOnly,
@@ -55,6 +66,7 @@ export default function WorkspaceDesk({
   toolsDisabled = false,
 }: {
   project: ReactNode;
+  artifacts?: { id: string; onCollapse: () => void; content: ReactNode };
   children: ReactNode;
   hidden?: boolean;
   assistantOnly?: boolean;
@@ -77,6 +89,7 @@ export default function WorkspaceDesk({
   onTools?: () => void;
   toolsDisabled?: boolean;
 }) {
+  const visible = useSyncExternalStore(subscribeVisibility, windowVisible);
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const preferenceKey = `pipeline.workspace.view.${workspaceId ?? "unfiled"}`;
   const [preferred, setPreferred] = useState<DeskView>(
@@ -112,7 +125,7 @@ export default function WorkspaceDesk({
   const fits = width !== null && width >= 848;
   const visibleAssistantWidth = Math.min(assistantWidth, (width ?? 848) - 480);
   const effective =
-    !project || assistantOnly
+    !project || assistantOnly || (artifacts && preferred === "split")
       ? "assistant"
       : preferred === "split" && !fits
         ? lastPane
@@ -155,6 +168,7 @@ export default function WorkspaceDesk({
       assistantButton.current?.focus();
   }, [effective]);
   const choose = (pane: "project" | "assistant") => {
+    artifacts?.onCollapse();
     setLastPane(pane);
     setPreferred(pane);
   };
@@ -167,12 +181,14 @@ export default function WorkspaceDesk({
   }, [assistantRequest]);
   useEffect(() => {
     if (projectRequest !== requests.current.projectRequest) {
+      artifacts?.onCollapse();
       setLastPane("project");
       setPreferred((value) => (value === "assistant" ? "project" : value));
     }
     requests.current.projectRequest = projectRequest;
   }, [projectRequest]);
   const split = () => {
+    artifacts?.onCollapse();
     // Choosing the default explicitly still counts as a choice.
     chosen.current = true;
     try {
@@ -204,7 +220,7 @@ export default function WorkspaceDesk({
         aria-label="Desk views"
         data-tauri-drag-region={isMac ? "deep" : undefined}
       >
-        <span className="workspace-desk-title">
+        <span className="workspace-desk-title" title={projectName ?? undefined}>
           {projectName ?? "Unfiled conversations"}
         </span>
         {project && onTools && (
@@ -310,7 +326,11 @@ export default function WorkspaceDesk({
             onFocusCapture={() => setLastPane("project")}
             className="workspace-desk-project"
           >
-            {project}
+            <WorkspacePaneVisibility.Provider
+              value={visible && !hidden && effective !== "assistant"}
+            >
+              {project}
+            </WorkspacePaneVisibility.Provider>
           </div>
         )}
         <div
@@ -323,7 +343,11 @@ export default function WorkspaceDesk({
             effective === "split" ? { width: visibleAssistantWidth } : undefined
           }
         >
-          {children}
+          <WorkspacePaneVisibility.Provider
+            value={visible && !hidden && effective !== "project"}
+          >
+            {children}
+          </WorkspacePaneVisibility.Provider>
           {effective === "split" && (
             <ResizeHandle
               edge="left"
@@ -338,6 +362,15 @@ export default function WorkspaceDesk({
             />
           )}
         </div>
+        {effective !== "project" && artifacts && (
+          <WorkspaceArtifactsPane
+            id={artifacts.id}
+            deskWidth={width}
+            onCollapse={artifacts.onCollapse}
+          >
+            {artifacts.content}
+          </WorkspaceArtifactsPane>
+        )}
       </div>
     </div>
   );

@@ -1066,7 +1066,7 @@ fn git_without_scopes_still_finds_the_repositorys_keys() {
         }
         let mut command = Command::new("git");
         command.args(args);
-        tasks::capture_git(command, &f.root, tasks::GitLimits::default())
+        capture_git(command, &f.root, GitLimits::default())
     };
     let guard = ReadGuard::listed_by(&old_git).unwrap();
     stale(&f.root.join("paper.tex"));
@@ -1086,7 +1086,7 @@ fn git_without_scopes_outside_a_repository_has_nothing_to_override() {
         }
         let mut command = Command::new("git");
         command.args(args);
-        tasks::capture_git(command, temp.path(), tasks::GitLimits::default())
+        capture_git(command, temp.path(), GitLimits::default())
     };
     ReadGuard::listed_by(&old_git).unwrap();
 }

@@ -266,22 +266,12 @@ pub(super) fn collapse_findings_fan_out(
         {
             continue;
         }
-        let Some(source_text) = upstream_outputs
-            .iter()
-            .rev()
-            .find(|output| {
-                !output.skipped
-                    && output.step_id.split('/').next().unwrap_or(&output.step_id) == source.step
-            })
-            .map(|output| output.raw_text.clone())
-        else {
-            continue;
-        };
+        let sources = super::units::source_artifacts(upstream_outputs, &source.step);
         // The dispatch cap limits model work, never the preserved source ledger.
         let mut complete_source = for_each.clone();
         complete_source.max = u32::MAX;
         let Ok((elements, _)) =
-            artifact_fan_out_elements(step, source, &complete_source, Some(&source_text), app)
+            artifact_fan_out_elements(step, source, &complete_source, &sources, app)
         else {
             continue;
         };

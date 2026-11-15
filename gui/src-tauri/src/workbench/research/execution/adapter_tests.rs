@@ -878,32 +878,31 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
     )
     .unwrap();
     drop(store);
-    // Recreate the version 15 table definition around the existing row.
-    let connection = rusqlite::Connection::open(store_root.join("research.sqlite3")).unwrap();
-    connection
-        .execute_batch(
-            "DROP INDEX transcript_items_page;
-             PRAGMA foreign_keys=OFF;
-             CREATE TABLE old_profiles AS SELECT * FROM execution_profiles;
-             DROP TABLE execution_profiles;
-             CREATE TABLE execution_profiles (
-                id TEXT PRIMARY KEY,
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                adapter TEXT NOT NULL CHECK (adapter IN ('latex', 'stata', 'command')),
-                argv_json TEXT NOT NULL, cwd TEXT NOT NULL, environment_json TEXT NOT NULL,
-                inputs_json TEXT NOT NULL,
-                timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 7200),
-                outputs_json TEXT NOT NULL, tested_at TEXT, test_status TEXT,
-                revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-             INSERT INTO execution_profiles SELECT * FROM old_profiles;
-             DROP TABLE old_profiles;
-             CREATE INDEX execution_profiles_workspace ON execution_profiles(workspace_id, name);
-             DROP TABLE conversation_tool_receipts;
-             PRAGMA user_version=15;",
+    let current = rusqlite::Connection::open(store_root.join("research.sqlite3")).unwrap();
+    let root_identity: String = current
+        .query_row(
+            "SELECT root_identity FROM workspaces WHERE id=?1",
+            [&workspace_id],
+            |row| row.get(0),
         )
         .unwrap();
+    drop(current);
+    let store_root = temp.path().join("legacy-store");
+    let connection = crate::workbench::store::historical_test_database(&store_root, 15);
+    connection
+        .execute(
+            "INSERT INTO workspaces(id,name,root,root_identity,created_at,updated_at) VALUES (?1,'Migration',?2,?3,'t','t')",
+            rusqlite::params![workspace_id, root.canonicalize().unwrap().to_string_lossy(), root_identity],
+        )
+        .unwrap();
+    connection.execute(
+        "INSERT INTO execution_profiles(id,workspace_id,name,adapter,argv_json,cwd,environment_json,inputs_json,timeout_seconds,outputs_json,tested_at,test_status,revision,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'t','t')",
+        rusqlite::params![legacy.id, legacy.workspace_id, legacy.name, legacy.adapter,
+            serde_json::to_string(&legacy.argv).unwrap(), legacy.cwd,
+            serde_json::to_string(&legacy.environment).unwrap(), serde_json::to_string(&legacy.inputs).unwrap(),
+            legacy.timeout_seconds as i64, serde_json::to_string(&legacy.outputs).unwrap(),
+            legacy.tested_at, legacy.test_status, legacy.revision],
+    ).unwrap();
     assert!(connection
         .execute(
             "UPDATE execution_profiles SET adapter='python' WHERE id=?1",

@@ -26,7 +26,8 @@ use std::path::{Component, Path, PathBuf};
 /// counts only these, and only these hold the folder's record back when one
 /// can't be resolved. `review_handoffs.staged_path` is rebased separately, and
 /// provenance such as `artifacts.original_path` stays as it was recorded.
-pub(crate) const REFERENCE_COLUMNS: [(&str, &str); 5] = [
+pub(crate) const REFERENCE_COLUMNS: [(&str, &str); 6] = [
+    ("task_delivery_files", "storage_reference"),
     ("artifacts", "storage_reference"),
     ("paper_revisions", "text_reference"),
     ("source_versions", "text_reference"),

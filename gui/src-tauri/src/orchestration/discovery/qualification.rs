@@ -19,9 +19,11 @@ pub(crate) fn scripted(s: &store::Store, child: &store::TaskRun) -> store::Resul
     };
     let p = storage::load(s, &id)?;
     let result = response(&p).to_string();
-    Ok(Some(
-        json!({"state":"completed","text":result,"finalText":result,"qualification":"synthetic-native-development"}),
-    ))
+    let mut output = json!({"state":"completed","text":result,"finalText":result,"qualification":"synthetic-native-development"});
+    if p.run.phase == Phase::Brainstorm {
+        output["completedIdeaAgents"] = json!(p.run.definition.idea_agents);
+    }
+    Ok(Some(output))
 }
 
 pub(super) fn assessment(id: u32) -> Value {
@@ -31,6 +33,9 @@ pub(super) fn response(p: &Portfolio) -> Value {
     match p.run.phase {
         Phase::Orient => {
             json!({"fields":["History"],"subjectIds":[],"methodIds":[],"researchStandards":["Source criticism and provenance"],"contributionForms":["Interpretation supported by primary texts"],"proposalLenses":["Transmission","Attribution","Context"],"assumptions":[],"constraints":["Only available primary sources"],"literatureQueries":[]})
+        }
+        Phase::Brainstorm => {
+            json!({"ideas": (1..=p.run.definition.candidate_count).map(|i|format!("Study witness {i} against its earliest independently dated copy")).collect::<Vec<_>>()})
         }
         Phase::Generate => {
             json!({"proposals":(0..BATCH.min(p.run.definition.candidate_count-p.candidates.len())).map(|i|json!({"title":format!("Project {}",p.candidates.len()+i+1),"question":"What explains the textual variant?","contribution":"An account of source transmission","method":"Historical source criticism","firstTest":"Compare independently dated witnesses","requiredEvidence":["Primary texts"],"relatedWork":[],"risks":["Missing witness"]})).collect::<Vec<_>>()})

@@ -14,16 +14,13 @@
   width: 100%;
 }
 .workspace-assistant-inspector aside > header {
-  padding: 0.5rem 1rem;
+  padding: var(--ui-space-2) var(--ui-space-4);
 }
 .workspace-assistant-inspector aside > header h2 {
   font-size: var(--ui-text-title);
 }
 .workspace-assistant-inspector aside > header p {
   margin-top: 0.125rem;
-}
-.workspace-assistant-inspector .workspace-research-tabs {
-  padding: 0 1rem 0.5rem;
 }
 .workspace-research-content {
   overflow-wrap: anywhere;
@@ -40,22 +37,19 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 1.25rem;
+  padding: var(--ui-space-4);
   font-size: var(--ui-text-label);
 }
 .workspace-inspector-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 1.125rem;
+  gap: var(--ui-space-3);
+  margin-bottom: var(--ui-section-gap);
 }
 .workspace-inspector-heading h2 {
   font-size: var(--ui-text-title);
   font-weight: 600;
-}
-.workspace-inspector-heading button {
-  padding: 0.25rem 0.625rem;
 }
 .workspace-simple-inspector p {
   margin-bottom: 0.75rem;
@@ -63,8 +57,9 @@
 .workspace-simple-inspector > button {
   display: block;
   margin: 0.75rem 0;
-  padding: 0.4375rem 0.625rem;
-  border: 1px solid var(--ui-border);
+  min-height: var(--ui-control-height-sm);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  border: 1px solid var(--ui-border-strong);
   border-radius: var(--ui-radius-sm);
   font-size: var(--ui-text-meta);
 }

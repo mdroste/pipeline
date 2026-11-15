@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ExportControls from "./ExportControls";
-import type { PipelineReport } from "../lib/types";
+import type { PipelineReport } from "../lib/reviewTypes";
 
 const openDialog = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
 const confirmDialog = vi.hoisted(() => vi.fn());
 const notify = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke,
+  Channel: class {
+    onmessage = (_message: unknown) => {};
+  },
+}));
 vi.mock("./DialogService", () => ({ confirmDialog, notify }));
 
 const fakeReport: PipelineReport = {
@@ -31,16 +36,15 @@ describe("ExportControls", () => {
     notify.mockReset();
   });
 
-  it("uses an export dialog and accurately labels the print-dialog flow", async () => {
+  it("offers direct PDF saving separately from printing", async () => {
     render(<ExportControls markdown="# report" />);
     expect(screen.getAllByRole("button")).toHaveLength(1);
     await openMenu();
     expect(
       screen.getByRole("button", { name: "Save Markdown…" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Print / save as PDF…" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Print…" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Save as PDF…/ })).toBeVisible();
   });
 
   it("saves Markdown without accepting a webview-controlled path", async () => {
@@ -69,11 +73,102 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Print / save as PDF…" }));
+      .click(screen.getByRole("button", { name: "Print…" }));
     expect(invoke).toHaveBeenCalledWith("print_report_html", {
       markdown: "## Clean",
       provenanceMarkdown: "# Provenance",
     });
+  });
+
+  it("saves the complete PDF with cleaned content and reveals only its returned path", async () => {
+    invoke
+      .mockResolvedValueOnce("/tmp/report.pdf")
+      .mockResolvedValueOnce(undefined);
+    const loadFullReport = vi.fn().mockResolvedValue({
+      markdown: "# Full raw report",
+      pdfMarkdown: "# Full clean report",
+    });
+    render(
+      <ExportControls
+        runId="saved-run"
+        markdown="# Preview"
+        inputPath="/papers/original.pdf"
+        provenanceMarkdown="# Details"
+        loadFullReport={loadFullReport}
+      />,
+    );
+    await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Save as PDF…/ }));
+    expect(invoke).toHaveBeenCalledWith("save_report_pdf", {
+      request: {
+        markdown: "# Full clean report",
+        provenanceMarkdown: "# Details",
+        runId: "saved-run",
+        inputPath: "/papers/original.pdf",
+      },
+      onProgress: expect.anything(),
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      "print_report_html",
+      expect.anything(),
+    );
+    expect(notify).toHaveBeenCalledWith("PDF saved.", "success");
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "Show in folder" }));
+    expect(invoke).toHaveBeenLastCalledWith("reveal_export_in_folder", {
+      path: "/tmp/report.pdf",
+    });
+  });
+
+  it("silently returns to export when the PDF save dialog is cancelled", async () => {
+    invoke.mockResolvedValueOnce(null);
+    render(<ExportControls markdown="# Report" />);
+    await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Save as PDF…/ }));
+    expect(await screen.findByRole("button", { name: "Export" })).toBeEnabled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Show in folder" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows export progress and recovers from a native renderer error", async () => {
+    let rejectExport: (reason: string) => void = () => {};
+    invoke.mockImplementation((command, args) => {
+      if (command !== "save_report_pdf") return Promise.resolve();
+      args.onProgress.onmessage({
+        message: "Creating PDF…",
+        settingUp: false,
+      });
+      return new Promise((_resolve, reject) => {
+        rejectExport = reject;
+      });
+    });
+    render(<ExportControls markdown="# Report" />);
+    await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Save as PDF…/ }));
+    expect(
+      screen.getByRole("button", { name: "Creating PDF…" }),
+    ).toBeDisabled();
+    expect(invoke).toHaveBeenLastCalledWith(
+      "save_report_pdf",
+      expect.any(Object),
+    );
+    await act(async () => rejectExport("Native renderer failed."));
+    expect(screen.getByRole("button", { name: "Export" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Cancel setup" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Show in folder" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers safe, forensic, and custom packages only for saved runs", async () => {

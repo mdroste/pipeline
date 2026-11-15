@@ -71,7 +71,7 @@ describe("VariablePrompt accessibility", () => {
       filters: [
         {
           name: "Rubric",
-          extensions: ["pdf", "tex", "docx", "md", "markdown", "txt"],
+          extensions: ["pdf", "tex", "docx", "pptx", "md", "markdown", "txt"],
         },
       ],
     });

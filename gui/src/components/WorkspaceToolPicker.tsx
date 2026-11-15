@@ -1,3 +1,5 @@
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import useModalDialog from "../hooks/useModalDialog";
@@ -107,20 +109,17 @@ export default function WorkspaceToolPicker({
         role="dialog"
         aria-modal="true"
         aria-labelledby={title}
-        className="workspace-tool-picker"
+        className="workspace-tool-picker ui-overlay-frame"
         tabIndex={-1}
       >
-        <div className="workspace-picker-heading">
+        <div className="workspace-picker-heading ui-overlay-header">
           <h2 id={title}>Open a project view</h2>
-          <button
-            type="button"
-            aria-label="Close project view picker"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <IconButton label="Close project view picker" onClick={onClose}>
+            <Icon name="close" />
+          </IconButton>
         </div>
         <input
+          className="ui-input"
           data-autofocus
           type="search"
           role="combobox"

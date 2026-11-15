@@ -56,7 +56,7 @@ pub(crate) fn normalize_review(value: Value, artifact: Value) -> Result<Value> {
 
 /// The Review an operation ran, from its ownership journal.
 pub(crate) fn journaled_review(store: &Store, operation: &str) -> Result<Option<String>> {
-    if operation.len() != 32 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !crate::orchestration::store::is_operation(operation) {
         return Err("Invalid Task operation".into());
     }
     let path = store
@@ -139,6 +139,7 @@ pub fn recover_review(store: &Store, operation: &str) -> Result<Option<Value>> {
             metadata["runId"]
                 .as_str()
                 .ok_or("Review receipt omitted run identity")?,
+            operation,
         )?
     } else {
         None

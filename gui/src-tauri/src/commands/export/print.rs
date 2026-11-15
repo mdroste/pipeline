@@ -213,6 +213,27 @@ pub(in crate::commands) fn build_print_report_html(
     markdown: &str,
     provenance_markdown: Option<&str>,
 ) -> Result<String, String> {
+    let html = build_report_html(markdown, provenance_markdown, false)?;
+    Ok(html.replace(
+        "</body></html>",
+        "<script>window.pipelineReportReady.then(function(){window.print();});</script></body></html>",
+    ))
+}
+
+/// Both export routes use the same document and readiness signal. Direct PDF
+/// export waits for math and fonts without ever opening a print dialog.
+pub(super) fn build_pdf_report_html(
+    markdown: &str,
+    provenance_markdown: Option<&str>,
+) -> Result<String, String> {
+    build_report_html(markdown, provenance_markdown, true)
+}
+
+fn build_report_html(
+    markdown: &str,
+    provenance_markdown: Option<&str>,
+    native_pdf: bool,
+) -> Result<String, String> {
     let report_html = render_print_markdown(markdown);
     let provenance_html = provenance_markdown
         .map(str::trim)
@@ -279,7 +300,12 @@ pub(in crate::commands) fn build_print_report_html(
         "tr { break-inside: avoid; }\n",
         ".pipeline-display-equation, .katex-display { break-before: avoid; break-inside: avoid; }\n",
         ".katex { font-size: 1em; }\n",
-        ".katex-display { margin: 1.15rem 0; overflow: visible; }\n",
+        // The box bounds layout overflow even before fonts finish loading.
+        // The print script then fits the whole equation without clipping it.
+        ".pipeline-math { display: inline-block; max-width: 100%; min-width: 0; overflow: hidden; vertical-align: middle; padding: 0.2em 0; text-indent: 0; }\n",
+        ".pipeline-math-display { display: block; margin: 1.15rem 0; }\n",
+        ".pipeline-math .katex { display: inline-block; white-space: nowrap; }\n",
+        ".pipeline-math .katex-display { margin: 0; }\n",
         "img { max-width: 100%; height: auto; }\n",
         "@page { margin: 0 0 0.28in; }\n",
         "@page { @bottom-center { content: counter(page) \" / \" counter(pages); color: #7b838a; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 8pt; font-variant-numeric: tabular-nums; } }\n",
@@ -301,6 +327,11 @@ pub(in crate::commands) fn build_print_report_html(
         "@media (max-width: 640px) { .report-document { width: 100%; margin: 0; padding: 2.25rem 1.35rem 3rem; border: 0; border-radius: 0; box-shadow: none; } .report-masthead > p { grid-template-columns: 1fr; row-gap: 0.05rem; margin-top: 0.45rem; } }\n",
         "</style>\n</head><body>\n<article class=\"report-document\">\n",
     ));
+    // Adjust only the owned template, before inserting the report. Replacing
+    // these strings in the final document would also change quoted source code.
+    if native_pdf {
+        html_doc = html_doc.replace("@media print {", "@media screen, print {");
+    }
     if let Some(provenance_html) = provenance_html.as_ref() {
         html_doc.push_str("<header class=\"report-masthead\">\n");
         html_doc.push_str(provenance_html);
@@ -311,7 +342,7 @@ pub(in crate::commands) fn build_print_report_html(
     html_doc.push_str("</main>\n");
     html_doc.push_str("</article>");
     // Rendering is synchronous, but embedded webfonts are not. Wait for the
-    // font set before the final paint and print dialog.
+    // font set before either caller captures the final layout.
     html_doc.push_str(concat!(
         "\n<script>",
         // No `$`/`$$` delimiters here: all legitimate dollar-delimited math was
@@ -326,9 +357,18 @@ pub(in crate::commands) fn build_print_report_html(
         "'\\\\Q':'\\\\mathbb{Q}','\\\\E':'\\\\mathbb{E}',",
         "'\\\\Var':'\\\\operatorname{Var}','\\\\Cov':'\\\\operatorname{Cov}',",
         "'\\\\diag':'\\\\operatorname{diag}'}});",
+        "</script><script>",
+        include_str!("print_math.js"),
+        "</script><script>",
         "var fontsReady=(document.fonts&&document.fonts.ready)?document.fonts.ready:Promise.resolve();",
-        "fontsReady.then(function(){requestAnimationFrame(function(){window.print();});});",
-        "</script>\n</body></html>",
+        "window.pipelineReportReady=fontsReady.then(function(){window.pipelineFitEquations();return new Promise(function(resolve){",
     ));
+    // A hidden native webview may never deliver an animation frame.
+    html_doc.push_str(if native_pdf {
+        "setTimeout(resolve,0);"
+    } else {
+        "requestAnimationFrame(resolve);"
+    });
+    html_doc.push_str("});});</script>\n</body></html>");
     Ok(html_doc)
 }

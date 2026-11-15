@@ -189,7 +189,7 @@ pub fn admit(s: &Store, p: &mut Portfolio, mut chain: Chain, scope: Scope) -> Re
     if r.state != "running"
         || r.active_child.is_some()
         || r.deadline_at <= now()
-        || r.actions_reserved >= r.definition.max_actions
+        || r.actions_reserved.saturating_add(r.action_cost()) > r.definition.max_actions
         || remaining < 30
         || chain.steps.len() != 1
         || chain.limits.max_actions != 1
@@ -243,7 +243,7 @@ pub fn admit(s: &Store, p: &mut Portfolio, mut chain: Chain, scope: Scope) -> Re
         ],
     )
     .map_err(err)?;
-    r.actions_reserved += 1;
+    r.actions_reserved += r.action_cost();
     r.active_child = Some(child.id);
     r.active_scope = Some(scope);
     r.due_at = Some(time + 60);
@@ -251,6 +251,26 @@ pub fn admit(s: &Store, p: &mut Portfolio, mut chain: Chain, scope: Scope) -> Re
     write(&tx, r, "dispatched")?;
     write_records(&tx, p)?;
     tx.commit().map_err(err)
+}
+/// Only a child admitted by discovery for this phase may start native agents.
+pub fn idea_team(s: &Store, child: &str) -> Result<Option<u8>> {
+    let row: Option<(u8, bool)> = s
+        .connection()?
+        .query_row(
+            "SELECT json_extract(r.body,'$.definition.ideaAgents'),
+                COALESCE(d.adopted=0 AND json_extract(r.body,'$.activeChild')=d.task_id,0)
+           FROM discovery_children d JOIN discovery_runs r ON r.id=d.run_id
+          WHERE d.task_id=?1 AND json_extract(d.phase,'$.kind')='brainstorm'",
+            [child],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    match row {
+        Some((count, true)) if (1..=MAX_IDEA_AGENTS).contains(&count) => Ok(Some(count)),
+        Some(_) => Err("The discovery portfolio no longer owns this idea team".into()),
+        None => Ok(None),
+    }
 }
 pub fn owner(s: &Store, child: &str) -> Result<Option<String>> {
     s.connection()?

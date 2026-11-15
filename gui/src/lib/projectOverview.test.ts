@@ -1,28 +1,29 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ProjectHome } from "./projectClient";
-import type { PaperWithRevision, WorkbenchSession } from "./workbenchTypes";
-import type { ProjectIssue, RunSummary } from "./types";
+import type { PaperWithRevision } from "./workbench/researchTypes";
+import type { WorkbenchSession } from "./workbench/sessionTypes";
+import type { ProjectIssue } from "./reviewCollectionTypes";
+import type { RunSummary } from "./reviewTypes";
 import type { RepositoryStatus } from "./repositoryClient";
+import { NO_SIGNALS } from "./project-overview/types";
 import {
-  NO_SIGNALS,
   VISIT_GAP_MS,
-  arrangeOverview,
-  briefNotes,
-  currentManuscript,
   diffFiles,
+  recordVisit,
+} from "./project-overview/visits";
+import { arrangeOverview } from "./project-overview/arrange";
+import { briefNotes, leftOff } from "./project-overview/conversations";
+import {
+  currentManuscript,
   draftBlock,
   isThinProject,
-  leftOff,
-  recordVisit,
-  repositoryBlock,
-  roundBlock,
-  sinceBlock,
-  syncBlock,
-  targetSummary,
-  underRoot,
-  type OverviewBlock,
-  type ProjectSignals,
-} from "./projectOverview";
+} from "./project-overview/manuscript";
+import { repositoryBlock } from "./project-overview/repository";
+import { roundBlock, syncBlock } from "./project-overview/review";
+import { sinceBlock } from "./project-overview/since";
+import { targetSummary } from "./project-overview/target";
+import { underRoot } from "./project-overview/projectPaths";
+import type { OverviewBlock, ProjectSignals } from "./project-overview/types";
 
 function home(patch: Partial<ProjectHome> = {}): ProjectHome {
   return {

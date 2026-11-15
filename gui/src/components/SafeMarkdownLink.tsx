@@ -5,7 +5,7 @@ import type {
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { notify } from "./DialogService";
 import { useFileNavigation } from "./file-workspace/FileNavigation";
-import { absoluteLocalFilePath, resolveFileLink } from "../lib/fileLinks";
+import { absoluteLocalFileLocation, resolveFileLink } from "../lib/fileLinks";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 
 type SafeMarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
@@ -93,50 +93,35 @@ export default function SafeMarkdownLink({
 
   const externalHref = safeExternalHref(href);
   if (!externalHref) {
-    const location =
+    const scoped =
       href && navigation
         ? resolveFileLink(navigation.path, href, navigation.root)
         : null;
-    if (location && navigation)
+    const open = scoped ? navigation?.open : navigation?.openAbsolute;
+    const location =
+      scoped ?? (href && open ? absoluteLocalFileLocation(href) : null);
+    if (location && open) {
+      const openFile = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        void Promise.resolve(open(location)).catch((error) =>
+          notify(`Could not open this file: ${workbenchErrorMessage(error)}`),
+        );
+      };
       return (
         <a
           {...props}
           className={className}
           title={title ?? `Open ${location.path} in Pipeline`}
           href={href}
-          onClick={(event) => {
-            event.preventDefault();
-            void Promise.resolve(navigation.open(location)).catch((error) =>
-              notify(
-                `Could not open this file: ${workbenchErrorMessage(error)}`,
-              ),
-            );
+          onClick={openFile}
+          onAuxClick={(event) => {
+            if (event.button === 1) openFile(event);
           }}
         >
           {children}
         </a>
       );
-    const absolutePath = href ? absoluteLocalFilePath(href) : null;
-    const openAbsolute = navigation?.openAbsolute;
-    if (absolutePath && openAbsolute)
-      return (
-        <a
-          {...props}
-          className={className}
-          title={title ?? "Open this conversation file"}
-          href={href}
-          onClick={(event) => {
-            event.preventDefault();
-            void Promise.resolve(openAbsolute(absolutePath)).catch((error) =>
-              notify(
-                `Could not open this file: ${workbenchErrorMessage(error)}`,
-              ),
-            );
-          }}
-        >
-          {children}
-        </a>
-      );
+    }
     return (
       <span
         className={className}

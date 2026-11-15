@@ -3,13 +3,13 @@ import type { WorkflowLintWarning } from "../../lib/pipelineHelpers";
 import type { KeyboardEvent } from "react";
 import type {
   MergeConfig,
-  ModelCatalog,
   PipelineConfig,
   Phase,
-  Settings,
   StepConfig,
   VarSpec,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
+import type { Settings } from "../../lib/settingsTypes";
 import { ADAPTIVE_REVIEW_PROFILE_IDS } from "../../lib/autoReview";
 import {
   defaultMergeAgent,
@@ -56,7 +56,7 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
             onClick={() => onChange({ enabled: !merge.enabled })}
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
               merge.enabled
-                ? "bg-green-600 dark:bg-neutral-200"
+                ? "bg-inverse dark:bg-neutral-200"
                 : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
@@ -136,7 +136,7 @@ export function PipelineSettingsEditorPanel({
             }
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
               config.context_cache?.enabled
-                ? "bg-green-600 dark:bg-neutral-200"
+                ? "bg-inverse dark:bg-neutral-200"
                 : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
@@ -160,10 +160,10 @@ export function PipelineSettingsEditorPanel({
               </span>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Prepare the document text and input assessment once for all review
-              steps. Supported providers reuse this material to reduce repeated
-              processing. Paper Review and Slide Review enable this by default;
-              other providers process each call normally.
+              Prepare the document text and document bundle preparation once for
+              all review steps. Supported providers reuse this material to
+              reduce repeated processing. Paper Review and Slide Review enable
+              this by default; other providers process each call normally.
             </p>
             {config.context_cache?.enabled && (
               <p className="text-[0.6875rem] text-green-700 dark:text-green-400 mt-1">
@@ -190,7 +190,7 @@ export function PipelineSettingsEditorPanel({
                 type="button"
                 onClick={() => onResetParallelTemplate("generic")}
                 className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                title="Include the input assessment, step instructions, and file path."
+                title="Include the document bundle preparation, step instructions, and file path."
               >
                 Reset to generic
               </button>
@@ -500,10 +500,8 @@ export const StepEditorPanel = memo(function StepEditorPanel({
                 onClick={() => onPhaseChange(step.id, phase)}
                 className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
                   step.phase === phase
-                    ? phase === "parallel"
-                      ? "bg-blue-700 text-white border-blue-700"
-                      : "bg-orange-700 text-white border-orange-700"
-                    : "bg-white dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                    ? "border-inverse bg-inverse text-on-inverse"
+                    : "border-line bg-surface text-ink-muted hover:border-line-strong"
                 }`}
               >
                 {phase === "parallel"

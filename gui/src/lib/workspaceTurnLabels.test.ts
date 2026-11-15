@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ConversationTurn, TranscriptItem } from "./workbenchTypes";
+import type {
+  ConversationTurn,
+  TranscriptItem,
+} from "./workbench/sessionTypes";
 import {
   conversationWarning,
   turnFailureReason,

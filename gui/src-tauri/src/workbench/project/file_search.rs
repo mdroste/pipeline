@@ -251,3 +251,16 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn search_limit_only_reports_truncation_after_an_extra_matching_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    for n in [MAX_MATCHES, MAX_MATCHES + 1] {
+        fs::write(&file, "needle\n".repeat(n)).unwrap();
+        let result = search_files(dir.path(), "needle").unwrap();
+        assert_eq!(result.matches.len(), MAX_MATCHES);
+        assert_eq!(result.truncated, n > MAX_MATCHES);
+    }
+}

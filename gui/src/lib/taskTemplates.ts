@@ -113,6 +113,7 @@ export function template(
             label: "Address the review",
             kind: "workspace",
             prompt:
+              (prompt.trim() ? `Researcher instructions:\n${prompt}\n\n` : "") +
               "Revise the paper below to address the review. Preserve the argument and flag claims you cannot verify. Return the complete revised paper as Markdown, without a surrounding code fence.\n\nPaper:\n{{output:review#/paperText}}\n\nReview:\n{{output:review#/report}}\n\nReview quality and limitations:\n{{output:review#/quality}}",
           },
           {

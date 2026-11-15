@@ -17,9 +17,9 @@ export default function WorkspaceBackgroundTurnNotice({
   return (
     <div
       role="status"
-      className="flex items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+      className="ui-notice ui-notice--warning flex flex-wrap items-center gap-3"
     >
-      <p className="min-w-0 flex-1">
+      <p className="min-w-0 flex-[1_1_12rem]">
         {waiting > 0
           ? `A response in ${conversation} is waiting for your approval.`
           : automation
@@ -29,7 +29,7 @@ export default function WorkspaceBackgroundTurnNotice({
       <button
         type="button"
         onClick={automation ? onOpenAutomations : onOpen}
-        className="shrink-0 rounded border border-amber-400 px-2 py-1 text-xs font-medium"
+        className="ui-button ui-button--sm shrink-0"
       >
         {automation ? "Open Automations" : "Open conversation"}
       </button>

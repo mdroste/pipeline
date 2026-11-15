@@ -1,4 +1,4 @@
-import type { WorkbenchEvent } from "./workbenchTypes";
+import type { WorkbenchEvent } from "./workbench/runtimeTypes";
 /**
  * Unresolved requests by id, with the conversation each one waits in. Returns
  * `current` itself when the event changes nothing, because this runs on every

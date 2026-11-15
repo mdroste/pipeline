@@ -20,11 +20,8 @@ import { Fragment, lazy, useMemo, useState, type ReactNode } from "react";
 import { detectReportIssues, type IssueEvidence } from "../lib/issues";
 import { reportExportClient } from "../lib/reportExportClient";
 import { buildRunProvenance } from "../lib/runProvenance";
-import {
-  isPaperOrientation,
-  type PipelineReport,
-  type RunSummary,
-} from "../lib/types";
+import { isPaperOrientation } from "../lib/reviewOrientation";
+import type { PipelineReport, RunSummary } from "../lib/reviewTypes";
 import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
 import type {
   ArtifactSelectionRequest,
@@ -456,7 +453,7 @@ export default function ReportWorkspace({
       <div
         role="tablist"
         aria-label="Report workspace"
-        className="flex h-11 shrink-0 items-center gap-6 border-b border-gray-200 bg-white px-6 dark:border-gray-800 dark:bg-gray-950"
+        className="flex min-h-11 shrink-0 items-stretch gap-4 overflow-x-auto border-b border-line bg-surface px-[var(--ui-page-gutter)]"
       >
         <TabButton
           active={tab === "report"}

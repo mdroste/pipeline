@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod blobs;
+mod git_process;
 mod home;
 mod inventory;
 mod records;
@@ -23,7 +24,8 @@ use blobs::{blob, blob_read};
 pub(super) use home::home_record;
 use home::save_home;
 pub use home::{
-    excluded_notes, home, project_context, selected_manuscript, ProjectHome, ProjectHomeSettings,
+    chat_brief, excluded_notes, home, project_context, selected_manuscript, ProjectHome,
+    ProjectHomeSettings,
 };
 use inventory::{check_for_changes, ignored, inventory_at, refresh};
 pub(crate) use inventory::{materialize_research_files, task_capture};
@@ -36,6 +38,8 @@ use records::{decode, put, read_record};
 
 pub(crate) mod assistant_files;
 pub(crate) mod conversation_copy;
+mod conversation_edit;
+pub use conversation_edit::{save_conversation_file, ConversationFileSave};
 mod discovery_files;
 mod documents;
 pub mod earlier_records;
@@ -46,19 +50,21 @@ mod file_search;
 mod file_workspace;
 mod files;
 mod index;
-pub use index::{project_index, ProjectIndexItem};
+pub use index::{project_index, project_index_page, ProjectIndexItem};
 pub mod relations;
 pub mod repository;
 pub mod version_control;
 pub use file_browser::{
-    external_target, list_workspace_directory, reveal_target, scoped_folder, search_folder,
-    stat_workspace_files, FileListEntry, FileListRequest, FileListing, FileStamp, FileStatRequest,
+    external_target, list_conversation_directory, list_workspace_directory, reveal_target,
+    scoped_folder, search_folder, stat_workspace_files, ConversationFileListing, FileListEntry,
+    FileListRequest, FileListing, FileStamp, FileStatRequest,
 };
 pub use file_formats::{
     docx_text, file_table, tiff_preview, DocumentText, FileTableRequest, ImagePreview,
 };
-pub use file_open::open_workspace_file;
+pub use file_open::{open_workspace_file, preview_conversation_file};
 pub use file_search::{search_files, FileSearchMatch, FileSearchRequest, FileSearchResult};
+pub(crate) use file_workspace::conversation_file_bytes;
 pub use file_workspace::{
     read_conversation_file, read_workspace_file, snapshot_conversation_file, FilePreview,
     FileReadRequest,

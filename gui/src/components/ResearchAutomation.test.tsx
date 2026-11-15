@@ -1,0 +1,804 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import TasksPage from "./TasksPage";
+import MissionDetail from "./research-missions/Detail";
+import MissionBuilder from "./research-missions/Builder";
+import { newMission, type Mission } from "../lib/missionClient";
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listeners: new Map<string, () => void>(),
+}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name: string, callback: () => void) => {
+    mocks.listeners.set(name, callback);
+    return () => mocks.listeners.delete(name);
+  }),
+}));
+vi.mock("./ReportViewer", () => ({
+  default: ({ markdown }: { markdown: string }) => <pre>{markdown}</pre>,
+}));
+const scope = {
+  sessionId: "investigator",
+  workspaceId: "project",
+  runtimeRoot: "/research/task-copy",
+  profiles: {},
+  checks: {},
+};
+const mission: Mission = {
+  id: "mission1",
+  revision: 1,
+  definition: newMission(),
+  state: "draft",
+  reason: "Prepared research scope",
+  sourceSessionId: "source",
+  workspaceId: "project",
+  scope,
+  plannerScope: { ...scope, sessionId: "planner" },
+  challengerScope: { ...scope, sessionId: "challenger" },
+  capabilities: [],
+  goals: [],
+  rounds: [],
+  questions: [],
+  methods: [],
+  selectedMethods: [],
+  activeChild: null,
+  childIds: [],
+  phase: "plan",
+  actionsReserved: 0,
+  activeSeconds: 0,
+  stagnantRounds: 0,
+  createdAt: 100,
+  updatedAt: 100,
+  deadlineAt: null,
+  dueAt: null,
+  brief: "Retained research brief",
+  attentionCount: 0,
+  changes: [],
+};
+beforeEach(() => {
+  mocks.invoke.mockReset();
+  mocks.listeners.clear();
+  localStorage.clear();
+  mocks.invoke.mockImplementation(async (name: string) => {
+    switch (name) {
+      case "task_storage_issues":
+      case "automation_list":
+      case "task_schedules":
+      case "mission_methods":
+      case "mission_events":
+        return [];
+      case "task_background":
+        return false;
+      case "task_sessions":
+        return [
+          {
+            id: "source",
+            title: "Research question",
+            workspaceName: "Project",
+          },
+        ];
+      case "list_profiles":
+        return [{ id: "review", name: "Paper review" }];
+      case "mission_choices":
+        return {
+          workspaceId: "project",
+          root: "/research/task-copy",
+          canEdit: false,
+          commandNetwork: false,
+          canHostCompute: true,
+          checks: [{ id: "check", name: "Baseline check" }],
+          experiments: [
+            { id: "grid", title: "Elasticity grid", kind: "experiment_plan" },
+          ],
+          monitors: [{ id: "monitor", title: "Accepted data" }],
+        };
+      case "mission_prepare":
+      case "mission_get":
+        return mission;
+      case "mission_control":
+        return { ...mission, state: "queued", revision: 2 };
+      case "mission_answer":
+        return mission;
+      case "mission_evidence":
+        return { text: "Exact retained evidence", truncated: false };
+      case "mission_export":
+        return null;
+      default:
+        throw new Error(`Unexpected command: ${name}`);
+    }
+  });
+});
+it("shows missions without starting a model or loading research configuration", async () => {
+  render(<TasksPage />);
+  await screen.findByRole("button", { name: "+ New automation" });
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("automation_list", {
+      view: "active",
+      offset: 0,
+    }),
+  );
+  expect(new Set(mocks.invoke.mock.calls.map(([name]) => name))).toEqual(
+    new Set(["automation_list", "task_background", "task_storage_issues"]),
+  );
+});
+it("previews whether the action limit reaches a challenged result with the selected Review", async () => {
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onClose={vi.fn()}
+      onPrepared={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  const limit = await screen.findByLabelText("Maximum actions");
+  fireEvent.change(limit, {
+    target: { value: "3" },
+  });
+  expect(screen.getByText(/Up to 1 full round fits/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & review" }));
+  await screen.findByRole("option", { name: "Paper review" });
+  fireEvent.change(screen.getByLabelText("Additional review"), {
+    target: { value: "review" },
+  });
+  fireEvent.click(screen.getByRole("tab", { name: "Limits" }));
+  expect(
+    screen.getByText(/This action limit cannot reach that milestone/),
+  ).toBeInTheDocument();
+  fireEvent.change(limit, {
+    target: { value: "4" },
+  });
+  expect(screen.getByText(/Up to 1 full round fits/)).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
+  ).toBe(false);
+});
+it("prepares an inspect-only mission and shows its concrete scope before start", async () => {
+  render(<TasksPage />);
+  fireEvent.click(screen.getByRole("button", { name: "+ New automation" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Investigate a question" }),
+  );
+  await screen.findByRole("option", { name: /Research question/ });
+  fireEvent.change(screen.getByLabelText("Source conversation"), {
+    target: { value: "source" },
+  });
+  const prepare = await screen.findByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(prepare).toBeEnabled());
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & review" }));
+  expect(
+    screen.getByLabelText("Allow edits in the working copy"),
+  ).toBeDisabled();
+  fireEvent.click(prepare);
+  await screen.findByRole("button", { name: "Start research automation" });
+  expect(screen.getByText("/research/task-copy")).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
+  ).toBe(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research automation" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
+      id: "mission1",
+      revision: 1,
+      action: "start",
+    }),
+  );
+});
+it("keeps a recoverable mission draft after preparation fails", async () => {
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((name, ...args) =>
+    name === "mission_prepare"
+      ? Promise.reject("Captured inputs changed")
+      : handler(name, ...args),
+  );
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Preview research automation →" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: "Test the extension" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Preview research automation →" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Captured inputs changed",
+  );
+  expect(screen.getByLabelText("Automation name")).toHaveValue(
+    "Test the extension",
+  );
+  expect(
+    JSON.parse(localStorage.getItem("pipeline.researchMission.draft.v1")!)
+      .definition.name,
+  ).toBe("Test the extension");
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
+  ).toBe(false);
+});
+describe("a saved draft and the conversation the builder opened from", () => {
+  const key = "pipeline.researchMission.draft.v1";
+  const saved = (sessionId: string) => {
+    const definition = newMission();
+    definition.name = "Earlier draft";
+    definition.policy.checkProfileIds = ["other-project-check"];
+    definition.methodIds = ["other-project-method"];
+    localStorage.setItem(
+      key,
+      JSON.stringify({ definition, sessionId, operationId: "earlier" }),
+    );
+  };
+  const open = async (initialSessionId: string | null) => {
+    render(
+      <MissionBuilder
+        initialSessionId={initialSessionId}
+        onPrepared={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByLabelText("Automation name");
+    return JSON.parse(localStorage.getItem(key)!);
+  };
+  it("takes the conversation it opened from, keeping the text but not the other project's tools", async () => {
+    saved("old-conversation");
+    const draft = await open("source");
+    expect(screen.getByLabelText("Source conversation")).toHaveValue("source");
+    expect(screen.getByLabelText("Automation name")).toHaveValue(
+      "Earlier draft",
+    );
+    expect(draft.sessionId).toBe("source");
+    expect(draft.definition.policy.checkProfileIds).toEqual([]);
+    expect(draft.definition.methodIds).toEqual([]);
+    expect(draft.operationId).not.toBe("earlier");
+  });
+  it("keeps a draft for the same conversation exactly as it was", async () => {
+    saved("source");
+    const draft = await open("source");
+    expect(draft.operationId).toBe("earlier");
+    expect(draft.definition.policy.checkProfileIds).toEqual([
+      "other-project-check",
+    ]);
+  });
+  it("keeps the draft's conversation when opened from no conversation", async () => {
+    saved("old-conversation");
+    const draft = await open(null);
+    expect(draft.sessionId).toBe("old-conversation");
+    expect(draft.operationId).toBe("earlier");
+  });
+});
+it("shows which check is waiting for approval until the automation ends", async () => {
+  const capability = {
+    id: "check",
+    kind: "check",
+    name: "Baseline check",
+    fingerprint: "pin",
+    parameters: {},
+    execution: {},
+    timeoutSeconds: 30,
+  };
+  const waiting = {
+    ...mission,
+    state: "running",
+    capabilities: [{ ...capability, unavailable: true }],
+  };
+  const view = render(
+    <MissionDetail mission={waiting} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  expect(
+    await screen.findByText(/Waiting for your approval/),
+  ).toHaveTextContent("Baseline check");
+  view.rerender(
+    <MissionDetail
+      mission={{ ...waiting, state: "stopped" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/Waiting for your approval/)).toBeNull();
+});
+it("passes selected computations and monitors as bounded explicit policy", async () => {
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Preview research automation →" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & review" }));
+  fireEvent.click(screen.getByText("Configured local checks"));
+  fireEvent.click(screen.getByLabelText("Baseline check"));
+  fireEvent.click(screen.getByText("Captured plans and experiment grids"));
+  fireEvent.click(screen.getByLabelText(/Elasticity grid/));
+  fireEvent.click(screen.getByText("Wake on changes from these monitors"));
+  fireEvent.click(screen.getByLabelText("Accepted data"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Preview research automation →" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_prepare",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          definition: expect.objectContaining({
+            policy: expect.objectContaining({
+              checkProfileIds: ["check"],
+              experimentIds: ["grid"],
+              monitorIds: ["monitor"],
+              allowEdits: false,
+            }),
+          }),
+        }),
+      }),
+    ),
+  );
+});
+it("does not allow host computations through an isolated task conversation", async () => {
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation(async (name, ...args) =>
+    name === "mission_choices"
+      ? {
+          ...(await handler(name, ...args)),
+          canEdit: true,
+          canHostCompute: false,
+        }
+      : handler(name, ...args),
+  );
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Preview research automation →" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Tools & review" }));
+  fireEvent.click(screen.getByText("Configured local checks"));
+  fireEvent.click(screen.getByText("Captured plans and experiment grids"));
+  expect(screen.getByLabelText("Baseline check")).toBeDisabled();
+  expect(screen.getByLabelText(/Elasticity grid/)).toBeDisabled();
+});
+it("sends answers with a stable operation and leaves other decisions available", async () => {
+  const updated = vi.fn();
+  const questions = [
+    {
+      id: "q1",
+      question: "Which sample should be used?",
+      whyNeeded: "The target population is unclear.",
+      goalIds: ["g1"],
+      answer: null,
+    },
+    {
+      id: "q2",
+      question: "Which horizon matters?",
+      whyNeeded: "An independent experiment can continue.",
+      goalIds: ["g2"],
+      answer: null,
+    },
+  ];
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "waiting", questions }}
+      onUpdated={updated}
+      onClose={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Decisions (2)" }));
+  fireEvent.change(screen.getByLabelText("Which sample should be used?"), {
+    target: { value: "The baseline sample" },
+  });
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Send research input" })[0],
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_answer",
+      expect.objectContaining({
+        id: "mission1",
+        questionId: "q1",
+        answer: "The baseline sample",
+        operationId: expect.any(String),
+      }),
+    ),
+  );
+  expect(screen.getByLabelText("Which horizon matters?")).toHaveValue("");
+});
+it("offers reconciliation without automatically retrying an uncertain action", async () => {
+  render(
+    <MissionDetail
+      mission={{
+        ...mission,
+        state: "attention",
+        activeChild: "child1",
+        reason: "Turn outcome is unknown",
+      }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+      onTask={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
+  ).toBeEnabled();
+  expect(mocks.invoke).not.toHaveBeenCalledWith(
+    "mission_control",
+    expect.anything(),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
+      id: "mission1",
+      revision: 1,
+      action: "reconcile",
+    }),
+  );
+});
+it("lets a stuck action be left behind by reconsidering the agenda", async () => {
+  mocks.invoke.mockResolvedValue({ ...mission, state: "queued" });
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention", activeChild: "child" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry interrupted action" }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
+      id: "mission1",
+      revision: 1,
+      action: "reconsider",
+    }),
+  );
+});
+it("offers only Reconsider the agenda when no action is stuck", () => {
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry interrupted action" }),
+  ).toBeNull();
+});
+it("keeps terminal budget outcomes distinct from scientific completion", () => {
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "exhausted", actionsReserved: 32 }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Budget reached")).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Start research automation" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Criteria assessed as met"),
+  ).not.toBeInTheDocument();
+});
+it("refreshes a selected mission after a native mission change", async () => {
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((name, ...args) =>
+    name === "automation_list"
+      ? Promise.resolve([
+          {
+            id: mission.id,
+            name: mission.definition.name,
+            state: "draft",
+            reason: "Prepared",
+            kind: "research",
+            updatedAt: mission.updatedAt,
+            dueAt: null,
+          },
+        ])
+      : handler(name, ...args),
+  );
+  render(<TasksPage />);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /Investigate a theoretical result/,
+    }),
+  );
+  await screen.findByRole("button", { name: "Start research automation" });
+  mocks.invoke.mockImplementation((name, ...args) =>
+    name === "mission_get"
+      ? Promise.resolve({
+          ...mission,
+          state: "completed",
+          reason: "All criteria assessed with evidence",
+        })
+      : handler(name, ...args),
+  );
+  act(() => mocks.listeners.get("missions:changed")?.());
+  await screen.findByText("All criteria assessed with evidence");
+  expect(
+    screen.queryByRole("button", { name: "Start research automation" }),
+  ).not.toBeInTheDocument();
+});
+it("keeps loaded activity pages and appends new events when the mission updates", async () => {
+  const log = Array.from({ length: 150 }, (_, i) => ({
+    sequence: i + 1,
+    at: 100,
+    kind: "note",
+    detail: `Event ${i + 1}`,
+  }));
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((name, args) =>
+    name === "mission_events"
+      ? Promise.resolve(
+          log.filter((e) => e.sequence > args.after).slice(0, 100),
+        )
+      : handler(name, args),
+  );
+  const running = { ...mission, state: "running" as const };
+  const view = render(
+    <MissionDetail mission={running} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+  await screen.findByText("Event 100");
+  fireEvent.click(screen.getByRole("button", { name: "Load more activity" }));
+  await screen.findByText("Event 150");
+  expect(
+    screen.queryByRole("button", { name: "Load more activity" }),
+  ).not.toBeInTheDocument();
+  log.push({ sequence: 151, at: 101, kind: "note", detail: "Event 151" });
+  view.rerender(
+    <MissionDetail
+      mission={{ ...running, revision: 2 }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await screen.findByText("Event 151");
+  expect(screen.getByText("Event 1")).toBeInTheDocument();
+  expect(screen.getByText("Event 120")).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls
+      .filter(([name]) => name === "mission_events")
+      .map(([, args]) => args.after),
+  ).toEqual([0, 100, 150]);
+});
+it("brings opened evidence into view and returns focus when it closes", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    render(
+      <MissionDetail
+        mission={{
+          ...mission,
+          state: "running",
+          methods: [
+            {
+              id: "method1",
+              missionId: "mission1",
+              workspaceId: "project",
+              round: 1,
+              name: "Residual check",
+              whenToUse: "After calibration",
+              procedure: "Compare residuals",
+              limitations: "Tested grid only",
+              evidenceIds: ["evidence-1"],
+              retained: false,
+            },
+          ],
+        }}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Methods" }));
+    const opener = screen.getByRole("button", { name: "evidence-1" });
+    fireEvent.click(opener);
+    const heading = await screen.findByRole("heading", { name: "evidence-1" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scroll).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close evidence" }));
+    expect(opener).toHaveFocus();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+it("ignores blank criteria lines and says why preview is unavailable", async () => {
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: " " },
+  });
+  expect(preview).toBeDisabled();
+  expect(preview).toHaveAccessibleDescription("Name the automation.");
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: "Extension" },
+  });
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "\n" },
+  });
+  expect(preview).toHaveAccessibleDescription(
+    "Add at least one completion criterion.",
+  );
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "Reproduce the baseline\n\n Explain the gap \n" },
+  });
+  expect(preview).toBeEnabled();
+  fireEvent.click(preview);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_prepare",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          definition: expect.objectContaining({
+            criteria: ["Reproduce the baseline", "Explain the gap"],
+          }),
+        }),
+      }),
+    ),
+  );
+});
+
+it("keeps research, limits, and review choices while navigating settings with the keyboard", async () => {
+  const user = userEvent.setup();
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  await user.type(
+    screen.getByLabelText("Current understanding"),
+    "Baseline established.",
+  );
+  const research = screen.getByRole("tab", { name: "Research" });
+  await user.click(research);
+  await user.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: "Limits" })).toHaveFocus();
+  expect(screen.getByRole("tabpanel", { name: "Limits" })).toBeVisible();
+  expect(
+    screen.queryByRole("textbox", { name: "Current understanding" }),
+  ).toBeNull();
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Maximum actions" }),
+    { target: { value: "48" } },
+  );
+  await user.keyboard("{End}");
+  expect(
+    screen.getByRole("tabpanel", { name: "Tools & review" }),
+  ).toBeVisible();
+  await user.selectOptions(
+    screen.getByLabelText("Additional review"),
+    "review",
+  );
+  await user.click(research);
+  expect(screen.getByLabelText("Current understanding")).toHaveValue(
+    "Baseline established.",
+  );
+  await user.click(preview);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_prepare",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          definition: expect.objectContaining({
+            background: "Baseline established.",
+            budget: expect.objectContaining({ maxActions: 48 }),
+            policy: expect.objectContaining({ reviewProfileId: "review" }),
+          }),
+        }),
+      }),
+    ),
+  );
+});
+
+it("opens Limits and focuses an invalid hidden field before preparing", async () => {
+  const user = userEvent.setup();
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  await user.click(screen.getByRole("tab", { name: "Limits" }));
+  const actions = screen.getByRole("spinbutton", { name: "Maximum actions" });
+  fireEvent.change(actions, { target: { value: "2" } });
+  await user.click(screen.getByRole("tab", { name: "Research" }));
+  await user.click(preview);
+  expect(screen.getByRole("tabpanel", { name: "Limits" })).toBeVisible();
+  await waitFor(() => expect(actions).toHaveFocus());
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "mission_prepare"),
+  ).toBe(false);
+  fireEvent.change(actions, { target: { value: "32" } });
+  await user.click(preview);
+  await waitFor(() =>
+    expect(
+      mocks.invoke.mock.calls.some(([name]) => name === "mission_prepare"),
+    ).toBe(true),
+  );
+});
+
+it("uses the full research view for setup and recovers the draft after returning to the list", async () => {
+  const user = userEvent.setup();
+  render(<TasksPage />);
+  await user.click(
+    await screen.findByRole("button", { name: "+ New automation" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Investigate a question" }),
+  );
+  await screen.findByRole("form", { name: "New research automation" });
+  expect(screen.queryByRole("button", { name: "+ New automation" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: "Retained draft" },
+  });
+  await user.click(
+    screen.getByRole("button", { name: "Close research automation builder" }),
+  );
+  await user.click(screen.getByRole("button", { name: "+ New automation" }));
+  await user.click(
+    screen.getByRole("button", { name: "Investigate a question" }),
+  );
+  expect(await screen.findByLabelText("Automation name")).toHaveValue(
+    "Retained draft",
+  );
+});

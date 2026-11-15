@@ -79,6 +79,9 @@ const PERMISSION_FIELDS: [(&str, &[&str]); 2] = [
 pub fn request_details(method: &str, params: &Value) -> Option<RequestDetails> {
     match method {
         "item/commandExecution/requestApproval" => Some(RequestDetails::Command(approval(params))),
+        crate::workbench::claude::approval::METHOD => {
+            Some(RequestDetails::Command(approval(params)))
+        }
         "item/fileChange/requestApproval" => Some(RequestDetails::FileChange(approval(params))),
         "item/permissions/requestApproval" => Some(RequestDetails::Permission(PermissionRequest {
             reason: text(&params["reason"]),

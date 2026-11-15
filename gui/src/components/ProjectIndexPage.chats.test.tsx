@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import ProjectIndexPage from "./ProjectIndexPage";
 import type { ProjectIndexItem } from "../lib/projectIndex";
-import type { WorkbenchSession } from "../lib/workbenchTypes";
+import type { WorkbenchSession } from "../lib/workbench/sessionTypes";
 
 const session = (
   id: string,
@@ -21,6 +21,7 @@ const session = (
   }) as WorkbenchSession;
 
 const mocks = vi.hoisted(() => ({
+  index: vi.fn(),
   listWorkspaces: vi.fn(),
   listSessions: vi.fn(),
   sessionSnapshot: vi.fn(),
@@ -73,6 +74,43 @@ const renderPage = (
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  mocks.index.mockImplementation(async (archived, unfiled, query) => {
+    const { workspaces } = await mocks.listWorkspaces();
+    const lists = await Promise.all(
+      [null, ...workspaces.map((w: { id: string }) => w.id)].map((id) =>
+        mocks.listSessions(id, archived),
+      ),
+    );
+    const items = lists
+      .flatMap((v) => v.sessions)
+      .map((session: WorkbenchSession) => ({
+        ...session,
+        workspaceName:
+          workspaces.find((w: { id: string }) => w.id === session.workspaceId)
+            ?.name ?? null,
+      }))
+      .filter(
+        (s: WorkbenchSession & { workspaceName: string | null }) =>
+          Boolean(s.archivedAt) === archived &&
+          (!unfiled || !s.workspaceId) &&
+          (!query ||
+            (s.title + " " + s.workspaceName)
+              .toLowerCase()
+              .includes(query.toLowerCase())),
+      )
+      .sort((a: WorkbenchSession, b: WorkbenchSession) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      );
+    return {
+      items: items.map(
+        (s: WorkbenchSession & { workspaceName: string | null }) => ({
+          session: s,
+          projectName: s.workspaceName,
+        }),
+      ),
+      nextCursor: null,
+    };
+  });
   mocks.listWorkspaces.mockResolvedValue({
     workspaces: [{ id: "trade", name: "Trade paper" }],
   });
@@ -99,6 +137,7 @@ it("lists conversations across projects, newest first", async () => {
   const user = userEvent.setup();
   const onOpen = vi.fn().mockResolvedValue(true);
   renderPage(onOpen);
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
 
   const newest = await screen.findByRole("button", { name: "Bartik shares" });
   const older = screen.getByRole("button", { name: "Elasticity priors" });
@@ -115,6 +154,7 @@ it("lists conversations across projects, newest first", async () => {
 it("filters to unfiled and archived conversations and by search", async () => {
   const user = userEvent.setup();
   renderPage();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
   await screen.findByRole("button", { name: "Bartik shares" });
 
   await user.click(screen.getByRole("button", { name: "No project" }));
@@ -130,15 +170,17 @@ it("filters to unfiled and archived conversations and by search", async () => {
 
   await user.click(screen.getByRole("button", { name: "All chats" }));
   await user.type(
-    screen.getByRole("searchbox", { name: "Search projects and chats" }),
+    screen.getByRole("searchbox", { name: "Search chats" }),
     "nothing like this",
   );
   await waitFor(() => expect(screen.getByText(/No chats match/)).toBeVisible());
 });
 
 it("reports a list that cannot load", async () => {
+  const user = userEvent.setup();
   mocks.listWorkspaces.mockRejectedValue(new Error("store offline"));
   renderPage();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("store offline");
   expect(screen.getByRole("button", { name: "Trade paper" })).toBeVisible();
 });
@@ -148,6 +190,7 @@ it("starts an independent chat and links a chat to its project", async () => {
   const onNew = vi.fn();
   const onOpenProject = vi.fn().mockResolvedValue(undefined);
   renderPage(vi.fn(), onNew, onOpenProject);
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
   await user.click(screen.getByRole("button", { name: "+ New chat" }));
   expect(onNew).toHaveBeenCalledOnce();
   expect(onOpenProject).not.toHaveBeenCalled();
@@ -155,7 +198,10 @@ it("starts an independent chat and links a chat to its project", async () => {
     await screen.findByRole("button", { name: "Open project Trade paper" }),
   );
   expect(onOpenProject).toHaveBeenCalledWith("trade");
-  await user.type(screen.getByRole("searchbox"), "Trade paper");
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search chats" }),
+    "Trade paper",
+  );
   expect(screen.getByRole("button", { name: "Trade paper" })).toBeVisible();
   expect(
     screen.getByRole("button", { name: "Elasticity priors" }),
@@ -178,6 +224,7 @@ it("moves an unfiled chat into a project and refreshes its membership", async ()
     );
   });
   renderPage();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
   await user.click(
     await screen.findByRole("button", {
       name: "Move Bartik shares to project",
@@ -202,6 +249,7 @@ it("keeps a failed move retryable and can remove a chat's project", async () => 
   mocks.sessionSnapshot.mockResolvedValue({ session: { revision: 9 } });
   mocks.moveSession.mockRejectedValueOnce(new Error("Chat is busy"));
   renderPage();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
   await user.click(
     await screen.findByRole("button", {
       name: "Move Elasticity priors to project",
@@ -220,4 +268,23 @@ it("keeps a failed move retryable and can remove a chat's project", async () => 
     expectedRevision: 9,
     operationId: expect.any(String),
   });
+});
+
+it("loads conversations only after expanding Browse chats", async () => {
+  const user = userEvent.setup();
+  renderPage();
+  expect(screen.getByRole("button", { name: "Browse chats" })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  expect(mocks.listWorkspaces).not.toHaveBeenCalled();
+  expect(mocks.listSessions).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  expect(
+    await screen.findByRole("button", { name: "Bartik shares" }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  expect(
+    screen.queryByRole("region", { name: "Chats" }),
+  ).not.toBeInTheDocument();
 });

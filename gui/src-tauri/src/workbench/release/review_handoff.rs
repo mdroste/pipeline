@@ -181,11 +181,7 @@ pub fn prepare_review_handoff(
     let mut count = 0;
     let mut bytes = 0;
     copy_tree(&source, &destination, &mut count, &mut bytes)?;
-    let interpretation = if source.is_dir() {
-        "source_tree"
-    } else {
-        "document"
-    };
+    let interpretation = folder_interpretation(&destination);
     let timestamp = now();
     connection.execute("INSERT INTO review_handoffs (id,operation_id,version,workspace_id,session_id,paper_id,revision_id,content_hash,media_kind,staged_path,input_interpretation,metadata_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)", params![id,request.operation_id,HANDOFF_VERSION,request.workspace_id,request.session_id,request.paper_id,revision_id,hash,kind,destination.to_string_lossy(),interpretation,request.metadata.to_string(),timestamp]).map_err(|error| WorkbenchError::storage("Failed to record Review handoff", error))?;
     connection.query_row("SELECT version,id,workspace_id,session_id,paper_id,revision_id,content_hash,media_kind,staged_path,metadata_json,input_interpretation,external_reference,created_at,linked_at FROM review_handoffs WHERE id=?1", [id], handoff_from_row).map_err(|error| WorkbenchError::storage("Failed to read Review handoff", error))
@@ -219,4 +215,99 @@ pub fn link_review_handoff(
     }
     connection.execute("UPDATE review_handoffs SET external_reference=COALESCE(external_reference,?2), linked_at=COALESCE(linked_at,?3) WHERE id=?1", params![request.handoff_id,request.external_reference,now()]).map_err(|error| WorkbenchError::storage("Failed to link Review handoff", error))?;
     connection.query_row("SELECT version,id,workspace_id,session_id,paper_id,revision_id,content_hash,media_kind,staged_path,metadata_json,input_interpretation,external_reference,created_at,linked_at FROM review_handoffs WHERE id=?1", [&request.handoff_id], handoff_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read linked handoff", error))?.ok_or_else(|| WorkbenchError::invalid("Review handoff was not found"))
+}
+
+fn folder_interpretation(path: &std::path::Path) -> &'static str {
+    if !path.is_dir() {
+        "document"
+    } else if crate::pipeline::extract::find_main_tex(path).is_some() {
+        "latex_project"
+    } else {
+        "source_tree"
+    }
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::*;
+    #[test]
+    fn staged_folder_uses_its_actual_paper_type() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(folder_interpretation(root.path()), "source_tree");
+        std::fs::write(root.path().join("main.tex"), r"\documentclass{article}").unwrap();
+        assert_eq!(folder_interpretation(root.path()), "latex_project");
+    }
+}
+
+/// A Review accepts this project reference only with the input actually staged
+/// by the Workspace. Batch selections can select documents below a staged tree.
+pub(crate) fn validate_handoff_inputs(
+    store: &Store,
+    id: &str,
+    paths: &[String],
+) -> WorkbenchResult<()> {
+    validate_id("handoff id", id)?;
+    let path: String = store
+        .connection()?
+        .query_row(
+            "SELECT staged_path FROM review_handoffs WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| WorkbenchError::storage("Failed to read project Review handoff", e))?
+        .ok_or_else(|| {
+            WorkbenchError::invalid("The selected project Review handoff no longer exists")
+        })?;
+    let staged = Path::new(&path);
+    let folder = store.root_path().join("handoffs").join(id);
+    if staged.parent() != Some(folder.as_path()) || paths.is_empty() {
+        return Err(WorkbenchError::invalid(
+            "The Review handoff has no staged input here",
+        ));
+    }
+    let staged = fs::canonicalize(staged)
+        .map_err(|e| WorkbenchError::storage("Cannot resolve staged handoff input", e))?;
+    for selected in paths {
+        let source = fs::canonicalize(selected)
+            .map_err(|e| WorkbenchError::storage("Cannot resolve selected Review input", e))?;
+        if !source.starts_with(&staged) {
+            return Err(WorkbenchError::invalid(
+                "The selected file does not belong to this project Review handoff",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectReviewLink {
+    id: String,
+    staged_path: String,
+    external_reference: Option<String>,
+    content_hash: String,
+}
+
+pub fn project_review_links(
+    store: &Store,
+    workspace_id: &str,
+    after: Option<String>,
+) -> WorkbenchResult<Vec<ProjectReviewLink>> {
+    validate_id("workspace id", workspace_id)?;
+    let connection = store.connection()?;
+    let mut stmt=connection.prepare("SELECT id,staged_path,external_reference,content_hash FROM review_handoffs WHERE workspace_id=?1 AND id>?2 ORDER BY id LIMIT 200")
+        .map_err(|e|WorkbenchError::storage("Failed to load project Review links",e))?;
+    let rows = stmt
+        .query_map(params![workspace_id, after.as_deref().unwrap_or("")], |r| {
+            Ok(ProjectReviewLink {
+                id: r.get(0)?,
+                staged_path: r.get(1)?,
+                external_reference: r.get(2)?,
+                content_hash: r.get(3)?,
+            })
+        })
+        .map_err(|e| WorkbenchError::storage("Failed to read project Review links", e))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| WorkbenchError::storage("Invalid Review link", e))
 }

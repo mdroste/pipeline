@@ -1,14 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import WorkspaceToolPicker from "./WorkspaceToolPicker";
-import { saveWorkspacePins } from "../lib/workspaceNavigation";
 
 beforeEach(() => localStorage.clear());
 
 it("finds tools across sections and opens the keyboard selection without sending anything", async () => {
   const choose = vi.fn(),
     close = vi.fn();
-  saveWorkspacePins("project", ["writing", "files"]);
+  localStorage.setItem(
+    "pipeline.workspace.pins.project",
+    JSON.stringify({ version: 1, pins: ["writing", "files"] }),
+  );
   render(
     <WorkspaceToolPicker
       workspaceId="project"

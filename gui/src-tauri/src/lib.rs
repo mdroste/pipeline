@@ -31,6 +31,7 @@ pub mod safety;
 pub mod settings;
 pub mod storage;
 pub mod updates;
+mod usage_allowance;
 pub mod workbench;
 use tauri::Manager;
 
@@ -51,6 +52,11 @@ fn write_smoke_ready(path: Option<std::ffi::OsString>) -> Result<bool, String> {
     Ok(true)
 }
 
+// Generate once: on macOS the macro emits the executable's Info.plist symbol.
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 pub fn run() {
     process::suppress_windows_error_dialogs();
     let builder = tauri::Builder::default();
@@ -69,6 +75,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                file_stream::release_captures();
+            }
+        })
         .register_asynchronous_uri_scheme_protocol(
             file_stream::SCHEME,
             |context, request, responder| {
@@ -128,20 +141,27 @@ pub fn run() {
             orchestration::missions::commands::mission_events,
             orchestration::missions::commands::mission_methods,
             orchestration::missions::commands::mission_control,
+            orchestration::missions::commands::mission_accept_assessment,
             orchestration::missions::commands::mission_answer,
             orchestration::missions::commands::mission_retain_method,
             orchestration::missions::commands::mission_export,
             orchestration::missions::commands::mission_evidence,
+            orchestration::commands::automation_usage,
+            orchestration::commands::automation_review_estimate,
+            orchestration::discovery::commands::discovery_budget_preview,
             orchestration::discovery::commands::discovery_start,
             orchestration::discovery::commands::discovery_list,
             orchestration::discovery::commands::discovery_get,
+            orchestration::discovery::activity::discovery_activity,
             orchestration::discovery::commands::discovery_candidates,
             orchestration::discovery::commands::discovery_paper,
             orchestration::discovery::commands::discovery_select,
             orchestration::discovery::commands::discovery_control,
+            orchestration::discovery::commands::discovery_accept_assessment,
             orchestration::discovery::commands::discovery_export,
             orchestration::discovery::commands::discovery_events,
             orchestration::commands::task_list,
+            orchestration::commands::automation_list,
             orchestration::commands::task_get,
             orchestration::commands::task_events,
             orchestration::commands::task_control,
@@ -162,6 +182,9 @@ pub fn run() {
             orchestration::commands::task_proposals,
             orchestration::commands::task_prepare_proposal,
             orchestration::commands::task_export_artifact,
+            orchestration::commands::task_storage_issues,
+            orchestration::commands::task_delivered_files,
+            orchestration::commands::task_save_delivered_file,
             orchestration::commands::task_export_chain,
             orchestration::commands::task_step_output,
             commands::export::read_full_report,
@@ -174,6 +197,7 @@ pub fn run() {
             commands::export::export_run_package,
             commands::export::reveal_export_in_folder,
             commands::export::print_report_html,
+            commands::export::save_report_pdf,
             commands::artifacts::cancel_pipeline,
             commands::lifecycle::cancel_pass,
             commands::artifacts::get_run_manifest,
@@ -241,6 +265,7 @@ pub fn run() {
             workbench::commands::workbench_get_title_preferences,
             workbench::commands::workbench_save_title_preferences,
             workbench::commands::workbench_generate_session_title,
+            workbench::commands::workbench_conversation_index,
             workbench::commands::workbench_list_sessions,
             workbench::commands::workbench_session_snapshot,
             workbench::commands::workbench_conversation_snapshot,
@@ -258,6 +283,7 @@ pub fn run() {
             workbench::commands::workbench_import_paper,
             workbench::commands::workbench_list_papers,
             workbench::commands::workbench_project_home,
+            workbench::commands::workbench_chat_brief,
             workbench::commands::workbench_project_tasks,
             workbench::commands::workbench_project_index,
             workbench::commands::workbench_repository_status,
@@ -303,8 +329,15 @@ pub fn run() {
             workbench::commands::workbench_file_search,
             workbench::commands::workbench_file_stat,
             workbench::commands::workbench_conversation_file_open,
+            workbench::commands::workbench_conversation_file_open_with,
             workbench::commands::workbench_conversation_folder_reveal,
             workbench::commands::workbench_conversation_file_read,
+            workbench::commands::workbench_conversation_file_preview,
+            workbench::commands::workbench_conversation_file_save,
+            workbench::commands::workbench_conversation_file_run,
+            workbench::commands::workbench_conversation_file_run_status,
+            workbench::commands::workbench_conversation_file_run_stop,
+            workbench::commands::workbench_conversation_file_list,
             workbench::commands::workbench_file_reveal,
             workbench::commands::workbench_anchor_mapping,
             workbench::commands::workbench_snapshot_preview,
@@ -332,6 +365,7 @@ pub fn run() {
             workbench::commands::workbench_record_performance,
             workbench::commands::workbench_record_research_evaluation,
             workbench::commands::workbench_list_research_evaluations,
+            workbench::commands::workbench_project_review_links,
             workbench::commands::workbench_prepare_review_handoff,
             workbench::commands::workbench_link_review_handoff,
             workbench::commands::workbench_missing_backup_files,
@@ -363,71 +397,67 @@ pub fn run() {
             workbench::commands::workbench_codex_validate_model_selection,
             workbench::commands::workbench_codex_rate_limits,
             workbench::claude::usage::workbench_claude_rate_limits,
-            workbench::browser::workbench_browser_status,
-            workbench::tool_setup::workbench_tool_setup_cancel,
             workbench::shell::workbench_shell_status,
-            workbench::shell::workbench_shell_install,
-            workbench::browser::workbench_browser_install,
             workbench::commands::workbench_codex_send_turn,
             workbench::commands::workbench_codex_interrupt_turn,
             workbench::commands::workbench_codex_reconcile_session,
-            workbench::commands::workbench_codex_resolve_server_request,
-            workbench::commands::workbench_codex_pending_requests,
+            workbench::commands::codex::requests::workbench_codex_resolve_server_request,
+            workbench::commands::workbench_clear_chat_approvals,
+            workbench::commands::codex::requests::workbench_codex_pending_requests,
             workbench::commands::workbench_active_turn,
-            commands::config::get_settings,
-            commands::config::save_settings,
-            commands::config::discard_undecryptable_secret,
-            commands::config::get_model_catalog,
-            commands::config::get_pipeline_config,
-            commands::config::get_run_setup,
-            commands::config::get_auto_review_catalog,
-            commands::config::resolve_orientation_schema_catalogs,
-            commands::config::get_auto_review_specialist_step,
-            commands::config::get_execution_plan,
-            commands::config::get_model_roster,
+            commands::settings::get_settings,
+            commands::settings::save_settings,
+            commands::settings::discard_undecryptable_secret,
+            commands::settings::get_model_catalog,
+            commands::profiles::get_pipeline_config,
+            commands::review_setup::get_run_setup,
+            commands::review_setup::get_auto_review_catalog,
+            commands::review_setup::resolve_orientation_schema_catalogs,
+            commands::review_setup::get_auto_review_specialist_step,
+            commands::review_setup::get_execution_plan,
+            commands::review_setup::get_model_roster,
             commands::review_pdf::review_pdf_options,
-            commands::review_pdf::preview_review_pdf,
             pipeline::analyzers::registry::list_analyzers,
-            commands::config::save_pipeline_config,
-            commands::config::get_default_parallel_template,
-            commands::config::get_default_prompt,
-            commands::config::get_orientation_defaults,
-            commands::config::get_findings_output_schema,
-            commands::config::preview_provider_schema,
-            commands::config::get_auto_review_orientation_defaults,
-            commands::config::reset_pipeline_config,
+            commands::profiles::save_pipeline_config,
+            commands::review_setup::get_default_parallel_template,
+            commands::review_setup::get_default_prompt,
+            commands::review_setup::get_orientation_defaults,
+            commands::review_setup::get_findings_output_schema,
+            commands::review_setup::preview_provider_schema,
+            commands::review_setup::get_auto_review_orientation_defaults,
+            commands::profiles::reset_pipeline_config,
             // Profile management
-            commands::config::list_profiles,
-            commands::config::get_active_profile,
-            commands::config::create_profile,
-            commands::config::duplicate_profile,
-            commands::config::rename_profile,
-            commands::config::delete_profile,
-            commands::config::switch_profile,
+            commands::profiles::list_profiles,
+            commands::profiles::get_active_profile,
+            commands::profiles::create_profile,
+            commands::profiles::duplicate_profile,
+            commands::profiles::rename_profile,
+            commands::profiles::delete_profile,
+            commands::profiles::switch_profile,
             // Export/import
-            commands::config::export_item,
-            commands::config::import_item,
-            commands::config::export_profile,
-            commands::config::import_profile,
-            commands::config::export_bundle,
-            commands::config::import_bundle,
+            commands::profiles::export_item,
+            commands::profiles::import_item,
+            commands::profiles::export_profile,
+            commands::profiles::import_profile,
+            commands::profiles::export_bundle,
+            commands::profiles::import_bundle,
             // Update check
-            commands::config::check_for_update,
-            commands::config::update_status,
-            commands::config::update_set_automatic,
-            commands::config::update_install_state,
-            commands::config::update_install_start,
-            commands::config::update_install_cancel,
-            commands::config::update_install_restart,
-            commands::config::update_running_automations,
-            commands::config::open_pipeline_dir,
-            commands::config::get_storage_settings,
-            commands::config::set_storage_directory,
+            commands::maintenance::check_for_update,
+            commands::maintenance::update_status,
+            commands::maintenance::update_set_automatic,
+            commands::maintenance::update_install_state,
+            commands::maintenance::update_install_start,
+            commands::maintenance::update_install_cancel,
+            commands::maintenance::update_install_restart,
+            commands::maintenance::update_running_automations,
+            commands::maintenance::open_pipeline_dir,
+            commands::maintenance::get_storage_settings,
+            commands::maintenance::set_storage_directory,
             // Managed local engines
-            commands::config::list_engines,
-            commands::config::install_engine,
-            commands::config::uninstall_engine,
-            commands::config::cancel_engine_install,
+            commands::maintenance::list_engines,
+            commands::maintenance::install_engine,
+            commands::maintenance::uninstall_engine,
+            commands::maintenance::cancel_engine_install,
             pipeline::codex_server::connection::workflow_codex_status,
             pipeline::codex_server::connection::workflow_codex_acknowledge_attempt,
             pipeline::codex_server::connection::workflow_codex_reconcile_attempt,
@@ -443,7 +473,7 @@ pub fn run() {
             app_menu::set_sidebar_menu_collapsed,
             mark_smoke_ready,
         ])
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("error while building tauri application")
         .run(|app, event| match event {
             tauri::RunEvent::ExitRequested { api, code, .. } => {
@@ -459,7 +489,7 @@ pub fn run() {
 /// before the Windows updater ends the process, which skips the exit event.
 fn stop_runtimes() {
     workbench::store::Store::close_idle_connection();
-    workbench::tool_setup::workbench_tool_setup_cancel();
+    workbench::shell::cancel_all();
     engines::cancel_install();
     // The coordinator stops the reviews it owns through its own adapter first.
     tauri::async_runtime::block_on(orchestration::shutdown());
@@ -470,6 +500,11 @@ fn stop_runtimes() {
     tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
     tauri::async_runtime::block_on(workbench::commands::stop_codex_runtime());
     tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
+}
+
+/// Internal Linux command guard mode, entered before desktop initialization.
+pub fn run_command_guard_if_requested() -> bool {
+    workbench::shell::run_guard_if_requested()
 }
 
 #[cfg(test)]

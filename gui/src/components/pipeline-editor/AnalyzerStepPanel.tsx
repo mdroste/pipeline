@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import type { Phase, PipelineConfig, StepConfig } from "../../lib/types";
+import type {
+  Phase,
+  PipelineConfig,
+  StepConfig,
+} from "../../lib/workflowTypes";
 import {
   analyzerNetworkEnabled,
   listAnalyzers,

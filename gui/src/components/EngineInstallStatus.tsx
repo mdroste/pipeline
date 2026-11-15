@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { EngineDownloadProgress } from "../lib/types";
+import type { EngineDownloadProgress } from "../lib/engineTypes";
 
 export type PhaseStatus = "running" | "done" | "failed";
 
@@ -136,7 +136,7 @@ export default function EngineInstallStatus({
     : (running?.activity ?? "Preparing the installation…");
 
   return (
-    <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-900">
+    <div className="space-y-3 rounded-ui-md border border-line bg-sunken p-3">
       <ol className="flex flex-wrap gap-x-4 gap-y-1.5">
         {steps.map((phase) => {
           const status = phases[phase.id];
@@ -180,7 +180,7 @@ export default function EngineInstallStatus({
             aria-valuemin={percent === null ? undefined : 0}
             aria-valuemax={percent === null ? undefined : 100}
             aria-valuenow={percent ?? undefined}
-            className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700"
+            className="h-1.5 overflow-hidden rounded-full bg-[var(--ui-border-strong)]"
           >
             <div
               className={`h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none ${

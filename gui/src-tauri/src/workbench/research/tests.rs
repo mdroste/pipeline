@@ -887,14 +887,16 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
         },
     )
     .unwrap();
-    let connection = fixture.store.connection().unwrap();
+    let legacy_root = fixture._temporary.path().join("legacy-store");
+    let connection = crate::workbench::store::historical_test_database(&legacy_root, 13);
     connection
-        .execute_batch(
-            "DROP INDEX transcript_items_page; DROP TABLE conversation_tool_receipts; DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
+        .execute(
+            "INSERT INTO presets (id,name,description,instructions,modules_json,source_preset_id,revision,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'t','t')",
+            params![copy.id, copy.name, copy.description, copy.instructions, serde_json::to_string(&copy.modules).unwrap(), copy.source_preset_id, copy.revision],
         )
         .unwrap();
     drop(connection);
-    let migrated = Store::open_at(fixture.store.root_path()).unwrap();
+    let migrated = Store::open_at(&legacy_root).unwrap();
     assert_eq!(find_preset(&migrated, None, &copy.id).unwrap(), copy);
 }
 

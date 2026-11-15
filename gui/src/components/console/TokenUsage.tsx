@@ -25,8 +25,8 @@ export default function TokenUsage({
     {
       name: "cache read",
       value: usage.cached,
-      bar: "bg-emerald-500 dark:bg-emerald-500",
-      text: "text-emerald-700 dark:text-emerald-400",
+      bar: "bg-ink dark:bg-emerald-500",
+      text: "text-ink dark:text-emerald-400",
     },
     {
       name: "cache write",

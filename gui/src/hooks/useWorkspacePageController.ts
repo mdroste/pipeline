@@ -1,8 +1,6 @@
-import {
-  useWorkspaceConversationRuntime,
-  useWorkspaceConversationEvents,
-  createWorkspaceSubmission,
-} from "./workspace/useWorkspaceConversationRuntime";
+import { useWorkspaceConversationRuntime } from "./workspace/useWorkspaceConversationRuntime";
+import { useWorkspaceConversationEvents } from "./workspace/useWorkspaceConversationEvents";
+import { createWorkspaceSubmission } from "./workspace/createWorkspaceSubmission";
 import {
   useWorkspaceSessionPersistence,
   useWorkspaceDraftAutosave,
@@ -43,11 +41,11 @@ import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import type { WorkbenchEvent } from "../lib/workbench/runtimeTypes";
 import type {
-  WorkbenchEvent,
   WorkbenchSession,
   Workspace,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 
 export function useWorkspacePageController({
   entryTarget,
@@ -147,8 +145,6 @@ export function useWorkspacePageController({
     refreshSessionRecord,
     acceptSnapshot,
   } = conversation;
-  // Automations are a first-class capability; no discovery gate hides them.
-  const tasksEnabled = true;
   const [selectedMessage, setSelectedMessage] = useState<string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<string | null>(null);
   const messageRef = useRef<HTMLTextAreaElement>(null);
@@ -184,11 +180,17 @@ export function useWorkspacePageController({
   const routedSession = useRef<string | null>(null);
   const persistence = useWorkspaceSessionPersistence(conversation);
   const { editDraft, saveCurrentDraft, saveSelection } = persistence;
+  const [archivedScope, setArchivedScope] = useState<string | null | undefined>(
+    undefined,
+  );
+  const showArchived = archivedScope === workspaceId;
+  const setShowArchived = (enabled: boolean) =>
+    setArchivedScope(enabled ? workspaceId : undefined);
   const olderSessions = useOlderSessions(
     workspaceRef,
     sessionListSequence,
     setSessions,
-    false,
+    showArchived,
     setError,
   );
   const { position: sessionPosition, setHasOlder } = olderSessions;
@@ -201,7 +203,7 @@ export function useWorkspacePageController({
     sessionListSequence,
     setSessions,
     setSessionId,
-    false,
+    showArchived,
     setError,
     sessionPaging,
   );
@@ -240,13 +242,16 @@ export function useWorkspacePageController({
     setError,
   );
 
+  const lastListScope = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    const keepSelection = lastListScope.current === workspaceId;
+    lastListScope.current = workspaceId;
     const routed = routedSession.current;
     routedSession.current = null;
     void loadSessions(
       workspaceId,
-      false,
-      routed !== null && routed === sessionRef.current,
+      showArchived,
+      keepSelection || (routed !== null && routed === sessionRef.current),
     );
   }, [loadSessions, workspaceId]);
 
@@ -437,7 +442,7 @@ export function useWorkspacePageController({
 
   const projectCreated = async (created: Workspace) => {
     ++navigationGeneration.current;
-    await saveCurrentDraft().catch(() => undefined);
+    await saveCurrentDraft();
     setWorkspaces((old) => [
       created,
       ...old.filter((item) => item.id !== created.id),
@@ -535,7 +540,7 @@ export function useWorkspacePageController({
 
   const sessionMutations = useWorkspaceSessionMutations({
     workspaceId,
-    showArchived: false,
+    showArchived,
     sessionRef,
     saveCurrentDraft,
     loadSessions,
@@ -651,7 +656,7 @@ export function useWorkspacePageController({
   // left, an approval waiting there, or an Automation here that hasn't started.
   const elsewhere =
     [
-      activeTurn?.sessionId !== sessionId || (activeTurn?.automated && !active)
+      activeTurn?.sessionId !== sessionId || activeTurn?.automated
         ? activeTurn?.sessionId
         : null,
       submissionOwner?.sessionId !== sessionId
@@ -780,10 +785,11 @@ export function useWorkspacePageController({
       workspaces,
       workspaceId,
       sessions,
+      showArchived,
+      setShowArchived,
       hasOlderSessions: olderSessions.hasOlder,
       loadOlderSessions: olderSessions.loadOlder,
       sessionId,
-      tasksEnabled,
       projectRequest,
       resetRequest,
       destination,

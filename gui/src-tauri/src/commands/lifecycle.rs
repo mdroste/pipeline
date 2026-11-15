@@ -498,6 +498,18 @@ pub(crate) fn kill_process(pid: u32) {
 mod tests {
     use super::is_pipeline_cancellation_error;
 
+    #[tokio::test]
+    async fn a_ready_review_operation_wins_over_cancellation() {
+        let run = crate::run_scope::ActiveScope::begin("ready-review-operation");
+        run.scope().cancel();
+        let result = crate::run_scope::scoped(
+            run.scope().clone(),
+            super::await_or_cancel(std::future::ready("finished"), None),
+        )
+        .await;
+        assert_eq!(result.unwrap(), "finished");
+    }
+
     /// A detached process group, as `llama-server` runs: it has null stdio and
     /// no drop guard runs at exit, so only the scope can stop it.
     #[cfg(unix)]

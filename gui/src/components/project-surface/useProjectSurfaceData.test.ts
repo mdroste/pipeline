@@ -1,3 +1,5 @@
+import { createElement, type ReactNode } from "react";
+import { WorkspacePaneVisibility } from "../workspacePaneVisibility";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { appEvents } from "../../lib/appEvents";
@@ -36,4 +38,41 @@ it("refreshes a mounted review surface when opened from an automatic copy", asyn
   );
   await waitFor(() => expect(result.current.data).toEqual(updated));
   expect(projectClient.mutate).not.toHaveBeenCalled();
+});
+
+it("defers the project home until its pane shows and refreshes it once on return", async () => {
+  vi.clearAllMocks();
+  let visible = false;
+  const home = { settings: { body: {} }, papers: [], tasks: [] };
+  vi.mocked(projectClient.home).mockResolvedValue(home as never);
+  vi.mocked(workspaceClient.getWorkspace).mockResolvedValue({
+    id: "project",
+    root: null,
+  } as never);
+  const { rerender } = renderHook(
+    () => useProjectSurfaceData("project", vi.fn()),
+    {
+      wrapper: ({ children }: { children: ReactNode }) =>
+        createElement(
+          WorkspacePaneVisibility.Provider,
+          { value: visible },
+          children,
+        ),
+    },
+  );
+  expect(projectClient.home).not.toHaveBeenCalled();
+  visible = true;
+  rerender();
+  await waitFor(() => expect(projectClient.home).toHaveBeenCalledTimes(1));
+  visible = false;
+  rerender();
+  act(() =>
+    appEvents.emit("workspace-destination", {
+      workspaceId: "project",
+      tab: "edits",
+    }),
+  );
+  visible = true;
+  rerender();
+  await waitFor(() => expect(projectClient.home).toHaveBeenCalledTimes(2));
 });

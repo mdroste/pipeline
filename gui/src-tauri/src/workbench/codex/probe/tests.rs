@@ -1,3 +1,4 @@
+use super::io::{classify_frame, FrameKind};
 use super::*;
 
 #[test]

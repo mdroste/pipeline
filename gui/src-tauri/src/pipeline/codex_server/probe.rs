@@ -36,6 +36,7 @@ async fn inspect(c: &Connection, root: &std::path::Path) -> Result<Value, String
             runtime_workspace_roots: &[],
             permissions: PROFILE,
             approval_policy: "never",
+            approvals_reviewer: "user",
             developer_instructions: Some("Qualification fixture. No model response requested."),
             base_instructions: None,
             dynamic_tools: &tools.declarations(),

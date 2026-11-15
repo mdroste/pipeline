@@ -17,11 +17,13 @@ import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
+} from "../lib/workbench/sessionTypes";
+import type {
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
   WorkspaceConfig,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/harnessTypes";
 import HarnessPresetPanel, {
   type PresetDraft,
 } from "./harness-editor/HarnessPresetPanel";

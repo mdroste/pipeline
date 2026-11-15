@@ -1,4 +1,4 @@
-import type { PipelineConfig, StepConfig } from "./types";
+import type { PipelineConfig, StepConfig } from "./workflowTypes";
 
 export interface WorkflowGalleryItem {
   id: string;

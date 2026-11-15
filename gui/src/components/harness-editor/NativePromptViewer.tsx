@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { harnessClient } from "../../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import type { NativePromptCatalog } from "../../lib/workbenchTypes";
+import type { NativePromptCatalog } from "../../lib/workbench/harnessTypes";
 import ReportIssueLink from "../ReportIssueLink";
 
 export default function NativePromptViewer({

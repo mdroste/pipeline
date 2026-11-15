@@ -4,7 +4,7 @@ import WorkspaceComposerControls, {
   claudeUsageLine,
   usageLine,
 } from "./WorkspaceComposerControls";
-import type { WorkspaceModel } from "../lib/workbenchTypes";
+import type { WorkspaceModel } from "../lib/workbench/runtimeTypes";
 
 vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
 vi.mock("../lib/workbench/conversationClient", () => ({
@@ -34,6 +34,46 @@ const models: WorkspaceModel[] = [
 const open = () =>
   fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
 
+it.each(["codex", "claude"] as const)(
+  "offers Auto approval for %s",
+  (runtime) => {
+    const change = vi.fn();
+    const view = render(
+      <WorkspaceComposerControls
+        models={models}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={vi.fn()}
+        runtime={runtime}
+        approvalMode="ask"
+        onApprovalModeChange={change}
+      />,
+    );
+    open();
+    const approvals = within(
+      screen.getByRole("radiogroup", { name: "Tool approvals" }),
+    );
+    fireEvent.click(approvals.getByRole("radio", { name: "Auto" }));
+    expect(change).toHaveBeenCalledWith("auto");
+    view.rerender(
+      <WorkspaceComposerControls
+        models={models}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={vi.fn()}
+        runtime="openai-api"
+        approvalMode="auto"
+        onApprovalModeChange={change}
+      />,
+    );
+    expect(
+      screen.queryByRole("radiogroup", { name: "Tool approvals" }),
+    ).toBeNull();
+  },
+);
+
 it("offers only supported efforts and resets effort when changing model", () => {
   const change = vi.fn();
   const view = render(
@@ -53,9 +93,10 @@ it("offers only supported efforts and resets effort when changing model", () => 
     "aria-selected",
     "true",
   );
-  expect(screen.getByRole("radio", { name: "Default" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
   const example = screen.getByRole("option", { name: /Example/ });
-  expect(example).toHaveTextContent("Careful reasoning for research");
+  fireEvent.mouseEnter(example);
+  expect(screen.getByText("Careful reasoning for research")).toBeVisible();
   expect(example).toHaveTextContent("Default");
   fireEvent.click(example);
   expect(change).toHaveBeenLastCalledWith("example", "");
@@ -68,19 +109,21 @@ it("offers only supported efforts and resets effort when changing model", () => 
       onChange={change}
     />,
   );
-  // The popover stays open so thinking can be chosen next.
+  // Thinking stays in reach after a model is chosen.
+  const thinking = screen.getByRole("combobox", { name: "Thinking" });
+  expect(thinking).toHaveTextContent("Default · Medium");
+  fireEvent.click(thinking);
   expect(
-    within(screen.getByRole("radiogroup", { name: "Thinking" }))
-      .getAllByRole("radio")
-      .map((radio) => radio.textContent),
-  ).toEqual(["Default", "Medium", "High"]);
-  expect(screen.getByText("Uses the model's default: Medium.")).toBeVisible();
+    within(screen.getByRole("listbox", { name: "Thinking" }))
+      .getAllByRole("option")
+      .map((option) => option.getAttribute("data-label")),
+  ).toEqual(["Default · Medium", "Medium", "High"]);
   expect(
     screen.getByRole("button", {
       name: "Model and thinking: ChatGPT · Example · Medium",
     }),
   ).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("radio", { name: "High" }));
+  fireEvent.click(screen.getByRole("option", { name: "High" }));
   expect(change).toHaveBeenLastCalledWith("example", "high");
   fireEvent.click(screen.getByRole("option", { name: /Example/ }));
   expect(change).toHaveBeenCalledTimes(2);
@@ -97,7 +140,7 @@ it("describes the chosen level and moves between models with the keyboard", () =
     />,
   );
   open();
-  expect(screen.getByText("Balanced speed and depth")).toBeVisible();
+  expect(screen.getByText("Careful reasoning for research")).toBeVisible();
   expect(screen.getByRole("option", { name: /Example/ })).toHaveFocus();
   fireEvent.keyDown(screen.getByRole("listbox", { name: "Model" }), {
     key: "ArrowUp",
@@ -124,11 +167,9 @@ it("shows saved unavailable settings without silently selecting replacements", (
   open();
   const removed = screen.getByRole("option", { name: /removed-model/ });
   expect(removed).toHaveAttribute("aria-selected", "true");
-  expect(removed).toHaveTextContent("No longer offered");
-  const unavailable = screen.getByRole("radio", {
-    name: "Ultra · unavailable",
-  });
-  expect(unavailable).toBeChecked();
+  expect(removed).toHaveTextContent("Unavailable");
+  const unavailable = screen.getByRole("combobox", { name: "Thinking" });
+  expect(unavailable).toHaveTextContent("Ultra · unavailable");
   expect(unavailable).toBeDisabled();
   expect(change).not.toHaveBeenCalled();
 });
@@ -149,7 +190,7 @@ it("explains why choices are locked while the assistant works", () => {
     "You can change them when the conversation is idle.",
   );
   fireEvent.click(screen.getByRole("option", { name: /Automatic/ }));
-  expect(screen.getByRole("radio", { name: "High" })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toBeDisabled();
   expect(change).not.toHaveBeenCalled();
 });
 
@@ -192,7 +233,10 @@ it("shows the account and remaining usage once the picker opens", async () => {
   );
   expect(load).not.toHaveBeenCalled();
   open();
-  await screen.findByText("researcher@example.edu · Plus");
+  expect(
+    await screen.findByText("researcher@example.edu · Plus"),
+  ).not.toBeVisible();
+  fireEvent.click(screen.getByText("Account & usage"));
   expect(screen.getByText("62% of your 5-hour limit left")).toBeVisible();
 });
 
@@ -212,12 +256,14 @@ it("offers Claude subscription mode and hides ChatGPT account information", asyn
     />,
   );
   open();
-  expect(screen.getByRole("radio", { name: "Claude Code" })).toBeChecked();
   expect(
-    screen.getByText(/Uses your Claude Code subscription sign-in/),
-  ).toBeVisible();
+    screen.getByRole("combobox", { name: "Conversation provider" }),
+  ).toHaveTextContent("Claude Code");
+  fireEvent.click(
+    screen.getByRole("combobox", { name: "Conversation provider" }),
+  );
   expect(load).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("radio", { name: "ChatGPT" }));
+  fireEvent.click(screen.getByRole("option", { name: "ChatGPT" }));
   expect(change).toHaveBeenCalledWith("codex");
 });
 
@@ -244,6 +290,7 @@ it("shows Claude usage once Claude Code has reported it", async () => {
   expect(usage).not.toHaveBeenCalled();
   open();
   await screen.findByText("18% of your 5-hour limit left");
+  fireEvent.click(screen.getByText("Claude usage"));
   expect(screen.getByText(/Reported by Claude Code at/)).toBeVisible();
 });
 
@@ -357,6 +404,7 @@ it("shows each Claude window with its own observation time", async () => {
   );
   open();
   await screen.findByText("60% of your 5-hour limit left");
+  fireEvent.click(screen.getByText("Claude usage"));
   expect(screen.getByText("90% of your weekly limit left")).toBeVisible();
   expect(screen.getAllByText(/Reported by Claude Code at/)).toHaveLength(2);
 });
@@ -376,19 +424,87 @@ it("offers API and custom connections with an editable model ID", () => {
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: /Model and thinking/ }));
+  fireEvent.click(
+    screen.getByRole("combobox", { name: "Conversation provider" }),
+  );
   for (const name of [
     "OpenAI API",
     "Anthropic API",
     "Gemini API",
     "Local / custom",
   ]) {
-    expect(screen.getByRole("radio", { name })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name })).toBeInTheDocument();
   }
-  fireEvent.click(screen.getByRole("radio", { name: "OpenAI API" }));
+  fireEvent.click(screen.getByRole("option", { name: "OpenAI API" }));
   expect(runtimeChange).toHaveBeenCalledWith("openai-api");
   fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), {
     target: { value: "another-model" },
   });
   expect(change).toHaveBeenCalledWith("another-model", "");
   expect(screen.queryByText(/No longer offered/)).not.toBeInTheDocument();
+});
+
+it("filters long catalogs and keeps keyboard selection and dismissal usable", () => {
+  const change = vi.fn();
+  const catalog = Array.from({ length: 20 }, (_, i) => ({
+    ...models[0],
+    id: `model-${i}`,
+    model: `model-${i}`,
+    displayName: `Model ${i}`,
+  }));
+  render(
+    <WorkspaceComposerControls
+      models={catalog}
+      model="model-0"
+      effort="high"
+      disabled={false}
+      onChange={change}
+    />,
+  );
+  open();
+  const search = screen.getByRole("textbox", { name: "Search models" });
+  fireEvent.change(search, { target: { value: "model-19" } });
+  expect(
+    within(screen.getByRole("listbox", { name: "Model" })).getAllByRole(
+      "option",
+    ),
+  ).toHaveLength(1);
+  fireEvent.keyDown(search, { key: "ArrowDown" });
+  const result = screen.getByRole("option", { name: /Model 19/ });
+  expect(result).toHaveFocus();
+  fireEvent.keyDown(result, { key: "Enter" });
+  expect(change).toHaveBeenLastCalledWith("model-19", "");
+  fireEvent.change(search, { target: { value: "no-match" } });
+  expect(screen.getByRole("status")).toHaveTextContent("No matching models.");
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: /^Model and thinking/ }),
+  ).toHaveFocus();
+  open();
+  expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue(
+    "",
+  );
+});
+
+it("closes only the thinking menu on Escape and restores its focus", () => {
+  render(
+    <WorkspaceComposerControls
+      models={models}
+      model="example"
+      effort="medium"
+      disabled={false}
+      onChange={vi.fn()}
+    />,
+  );
+  open();
+  fireEvent.click(screen.getByRole("combobox", { name: "Thinking" }));
+  expect(screen.getByText("Balanced speed and depth")).toBeVisible();
+  fireEvent.keyDown(screen.getByRole("listbox", { name: "Thinking" }), {
+    key: "Escape",
+  });
+  expect(
+    screen.getByRole("dialog", { name: "Model and thinking" }),
+  ).toBeVisible();
+  expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveFocus();
 });

@@ -3,9 +3,8 @@ import type {
   RunSummary,
   RunsDiskUsage,
   TrashedRun,
-  ProjectsResponse,
   PipelineReport,
-} from "./types";
+} from "./reviewTypes";
 export interface PurgePreview {
   delete_count: number;
   delete_bytes: number;
@@ -17,7 +16,10 @@ export interface PurgePreview {
 export const reviewHistoryClient = {
   list: () => invoke<RunSummary[]>("list_runs"),
   usage: () => invoke<RunsDiskUsage>("runs_disk_usage"),
-  projects: () => invoke<ProjectsResponse>("list_projects"),
+  annotations: (args: { runId: string }) =>
+    invoke<string>("get_annotations", args),
+  saveAnnotations: (args: { runId: string; content: string }) =>
+    invoke<void>("save_annotations", args),
   trashed: () => invoke<TrashedRun[]>("list_trashed_runs"),
   updateMeta: (args: { runId: string; title: string; tags: string[] }) =>
     invoke<unknown>("update_run_meta", args),

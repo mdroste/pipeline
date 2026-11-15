@@ -5,7 +5,7 @@
 import { researchClient } from "./workbench/researchClient";
 import { workbenchErrorMessage } from "./workbenchError";
 import type { ContextItem, OpenResearchObject } from "./deskClient";
-import type { PaperWithRevision } from "./workbenchTypes";
+import type { PaperWithRevision } from "./workbench/researchTypes";
 
 export const RESEARCH_FILE_EXTENSIONS = [
   "pdf",

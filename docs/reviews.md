@@ -5,9 +5,13 @@ checks their comments. Pipeline saves the report, each reviewer's response,
 and the source material. Start from **Home → New review**. You don't need a
 project.
 
+Choose your document, workflow, and model on **New review**. Use **Preview**
+below the setup choices to check model calls, estimated use, and data sharing
+before starting.
+
 ## Choose an input
 
-Choose a PDF, a Word `.docx` file, a `.tex` file, or a LaTeX project folder.
+Choose a PDF, Word `.docx`, PowerPoint `.pptx`, `.tex` file, or LaTeX project folder.
 Older `.doc` files aren't supported, so save them as `.docx` first. The
 [command line](cli.md) also accepts Markdown and plain text.
 
@@ -23,8 +27,43 @@ files and 256 MB into a review. Figures past either limit are left out and
 listed in the report's quality notes, and the review continues.
 
 A PDF has to be converted to text first, which can lose equations, tables, or
-reading order. See [PDF extraction](#pdf-extraction). For slides, export the
-deck as PDF and choose **Slide Review**.
+reading order. See [PDF extraction](#pdf-extraction).
+
+For slides, choose **Slide Review** and select a PDF, PowerPoint `.pptx`, or
+Beamer `.tex` file. Use the folder picker for a Beamer project with included
+files. Save older PowerPoint `.ppt` decks as `.pptx` first.
+
+Pipeline automatically renders slide sources to PDF and saves page images
+for reviewers to inspect. The source text and equations remain available too.
+
+PowerPoint rendering uses an installed [LibreOffice](https://www.libreoffice.org/download/download-libreoffice/).
+The PDF includes hidden slides in their original order; speaker notes stay
+separate. Missing fonts or unsupported PowerPoint features can change the
+converted layout.
+
+Beamer compilation uses an installed TeX distribution with Beamer, such as
+[MacTeX](https://www.tug.org/mactex/) or [TeX Live](https://www.tug.org/texlive/).
+Pipeline uses pdfLaTeX by default, or XeLaTeX when the source loads fontspec
+or unicode-math. A `% !TeX program =` line can select pdfLaTeX, XeLaTeX, or
+LuaLaTeX. Linux also needs bubblewrap.
+
+On Windows, install native [TeX Live](https://www.tug.org/texlive/) or
+[MiKTeX](https://miktex.org/download) with Beamer. Pipeline checks PATH and the
+usual installation folders. A missing engine stops the review with an
+installation message. Compilation uses native Windows TeX directly; it does
+not switch to WSL or install missing packages.
+
+macOS and Linux add a filesystem sandbox around TeX. Windows runs the installed
+engine with shell escape disabled, without that filesystem sandbox.
+
+Compilation uses a private source copy with shell commands disabled. Source
+frames and PDF pages have separate references because overlays can change
+pagination. Rendering stops after two minutes or when a review limit is reached.
+Generated PDFs can be up to 64 MiB.
+
+If conversion or compilation fails, the review continues with source content
+and explains the missing visual evidence. Open **Slide rendering log**
+for details. Successful runs include **Rendered slide deck** and page images.
 
 ## Choose a review
 
@@ -62,13 +101,16 @@ replacement, and the reason for the edit. It identifies incomplete coverage
 and wording that needs your judgment. Declaude assesses writing style; it
 does not determine whether AI wrote the document. Your source stays unchanged.
 
-Use the supported document inputs above. Export slides or website pages to
-PDF; the CLI also accepts text and Markdown snapshots.
+Use the supported document inputs above. Export website pages to PDF; the CLI
+also accepts text and Markdown snapshots.
 
 ### How Paper Review picks reviewers
 
 Paper Review first reads the document to identify its field, methods, and
-type. It then runs:
+type. If the document doesn't fit the selected review or is too hard to read
+to identify, the review stops before assigning reviewers and explains why.
+
+When Paper Review recognizes the document, it runs:
 
 - three core assessments: argument, presentation, and contribution;
 - one or two subject specialists, such as labor economics or number theory;
@@ -82,6 +124,22 @@ That makes 7 to 11 review steps. Paper Review (Fast) uses up to two method
 specialists and runs 6 to 8 steps. Slide Review picks reviewers the same way,
 with instructions for slide decks.
 
+**Document bundle preparation** reads the document and supporting inputs,
+records their structure, and chooses reviewers. The planner starts with a
+small set of relevant candidates from the reviewer registry. It can look up
+additional reviewers and read selected passages together, with up to two
+rounds of lookups before returning its plan. Each selected reviewer has a
+paper-specific reason and supporting document locations.
+
+The document bundle is saved before reviewer selection. **Document overview**
+shows the observed structure, which may be incomplete, and **Review plan**
+records the chosen reviewers. Selecting reviewers does not change the
+captured document. Supporting inputs retain their own locations.
+
+When an automatic review inherits High or higher thinking from a ChatGPT
+review, preparation uses Medium thinking on models that support it. You can
+set a different level under **Document bundle preparation** in Settings.
+
 Every reviewer is told what kind of document it's reading. For example,
 reviewers don't expect a published comment or reply to make a new
 contribution, or a null result to find an effect. The document types are research articles, replications,
@@ -89,7 +147,7 @@ comments and replies, surveys, data descriptors, methods and software papers,
 registered reports, null results, case reports, and slide decks.
 
 To see every specialist, open a review in the designer and choose **Browse
-catalog** in the **Auto-filled from orientation** slots. The reviewers chosen
+catalog** in the **Selected for this document** slots. The reviewers chosen
 for your document appear as separate steps when the run starts.
 
 ### Try the example review
@@ -139,13 +197,13 @@ source or another extraction method and run the review again.
 
 ## Add a note from the author
 
-In **New review**, open **Note from the author** below the review design.
+In **New review**, open **Additional instructions** below **Document**.
 Describe what you want reviewers to pay particular attention to, for example:
 “Prioritize critiques of the model, especially its assumptions and potential
 failure cases.” The note is optional and can contain up to 4,000 characters.
 
 Every review agent receives the note at the start of its context, including
-orientation, subject and method specialists, merge, synthesis, and validation.
+document bundle preparation, subject and method specialists, merge, synthesis, and validation.
 It guides emphasis while reviewers still report significant problems elsewhere.
 Extraction and Pipeline checks do not use the note.
 
@@ -178,19 +236,25 @@ reviews to use the new choice.
 
 Steps that don't depend on each other run at the same time. To see each
 step's inputs before anything starts, open **Steps and what each can read** in
-the run preview.
+the run preview. In an automatic Paper Review, specialists can search the web
+when the first enabled parallel model step permits **Web search**. Check the
+**Specialists** row to see whether they have that tool.
 
 You can queue reviews. **Settings → Reviews → Reviews at once** sets how many
 run at once: two by default, four at most. **Activity** at the bottom of the
 sidebar lists running and queued reviews. Stopping one review leaves the others
-running.
+running. A queued re-run keeps the design and settings approved when it was
+queued. Its source report stays available while it waits and runs. If a finished report cannot load, choose **Retry loading report** or
+**Open report** to read the saved copy in Review history.
 
 ## Estimated use and limits
 
 The run preview shows a rough range of model calls and tokens. For API
 connections, it also shows the cost at the provider's list price. The
 estimate comes from the document's length and the planned steps. Retries and
-the specialists Paper Review picks change the actual use.
+the specialists Paper Review picks change the actual use. The estimate uses
+each agent's selected model, including the model that combines results. Each
+repeated item includes its own combine call when several agents review it.
 
 **Settings → Reviews → Review limits** sets a cost, call, or time limit for
 each review. Enter 0 for no limit. When a review reaches a limit:
@@ -199,11 +263,14 @@ each review. Enter 0 for no limit. When a review reaches a limit:
 - the remaining steps are marked as stopped at the limit; and
 - the results so far are saved as a partial report.
 
-The cost limit counts API connections at list prices. Subscription calls count
-toward the call and time limits. The preview warns you when the estimate could
-pass a limit.
+Each provider request uses a call slot, including retries, follow-up tool
+requests, and revision comparison. For a cost limit, Pipeline reserves an
+estimate from the request size and output allowance before sending it, then
+uses the provider's reported usage. If an API model has no known price,
+Pipeline stops before calling it under a cost limit. Subscription calls count
+toward the call and time limits.
 
-Limits cover model extraction, orientation, review steps, and revision
+Limits cover model extraction, review planning, review steps, and revision
 comparison. If a limit stops document preparation, the partial report explains
 what is incomplete. Start a new review with a higher limit to finish it.
 
@@ -231,6 +298,10 @@ review produces findings, you can accept, reject, or annotate each one. A
 decision applied to several selected findings adds its rationale after any
 note already there, and changes only the findings your filters are showing.
 
+The reader typesets equations and recognizes common Greek letters, accents,
+and subscripts in older reports. Ambiguous notation stays as written. Saved
+report files and quoted evidence keep their original text.
+
 Compare runs to see how the reports changed. In a project, a finding stays
 open across drafts until you resolve it, even if a later review doesn't
 repeat it.
@@ -244,6 +315,8 @@ by default:
 | `report.md` | The combined review |
 | `context/document.md` | The text Pipeline extracted from your document |
 | `artifacts/pages/` | Page images, up to 300 pages |
+| `artifacts/document/slides.pdf` | Automatically rendered slide deck |
+| `context/slide-render.log` | Slide conversion or compilation messages |
 | `manifest.json` | The settings, models, and usage for the run |
 
 Each reviewer's response is saved in the run too. Open it from the report.
@@ -255,12 +328,20 @@ Deleting a run moves it to Trash. You can restore it until you empty Trash.
 The report's **Export** menu creates files that open without Pipeline. Your
 saved run and your manuscript stay as they are.
 
+**Print / save as PDF…** opens the report in your browser's print dialog.
+Currency amounts stay as text. Wide equations shrink individually to fit the
+page while the surrounding text keeps its print size.
+
 | Format | What it contains | Notes |
 | --- | --- | --- |
+| **Save as PDF…** | A formatted report with typeset equations, tables, and page numbers | Choose a filename to save directly using native PDF printing |
 | **Export as HTML** | One file with the report, each finding's severity, confidence, category, and quoted evidence, plus filters | Opens offline in any browser. Equations appear as LaTeX source |
-| **Export as Word** | A new `.docx` with the report, findings, and quoted evidence | Works for any input. Simple formatting |
+| **Export as Word** | A new `.docx` with the report, findings, quoted evidence, and any revision comparison | Works for any input. Simple formatting |
 | **Word with comments on the original** | A copy of your `.docx` with each finding as a Word comment on the passage it quotes | For `.docx` inputs. Quotes in footnotes, text boxes, or headers are listed in one comment at the start |
 | **PDF with highlights** | A copy of your PDF with each quoted passage highlighted and a note attached | For PDF inputs. Scanned PDFs get notes only. Highlights are added as a new revision, so the original content and any signatures are left untouched |
+
+**Save as PDF…** shows progress and offers **Show in folder** when the file is ready.
+PDF export works offline on macOS, Windows, and Linux. Use **Print…** to open the browser's print dialog instead.
 
 Pipeline matches quotes while ignoring differences in spacing, letter case,
 quote marks, dashes, and hyphenation. It skips quotes shorter than about a
@@ -323,6 +404,13 @@ With lookups on, the preview shows what's sent: the text of each reference as
 written in your bibliography, and nothing else from the manuscript. Lookups
 run about one reference per second, within Crossref's public limits.
 
+## Find past reviews
+
+In **Reviews → History**, search by name, workflow, or tag. Open **Filters**
+to narrow the list by status, provider, workflow, collection, or date. Active
+filters stay visible when the controls are closed. Choose **Compare** to
+select two reports.
+
 ## Customize a review
 
 The designer lets you edit prompts, choose providers and models, set reasoning
@@ -330,9 +418,11 @@ effort, turn on tools, and choose what each step can read. A saved review can
 include conditional steps, structured responses, and steps that repeat over a
 set of files.
 
-Export a review as JSON to share it. Import one from a file or URL. The file
-is called a **workflow**. It contains steps and settings, never API keys. Before
-you run an imported review, check its prompts, providers, tools, and file access.
+In **Designer**, open **Review actions** to duplicate, rename, delete, or
+import a review, or to open the gallery. Use **Export** to share a step or
+review as JSON. A saved **workflow** contains steps and settings, never API
+keys. Before you run an imported review, check its prompts, providers, tools,
+and file access.
 
 For batches, workflow files, and scripting, see the
 [command-line guide](cli.md).
@@ -348,3 +438,15 @@ For batches, workflow files, and scripting, see the
 | The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers. **Resume** always runs the review design saved with that run. **Regenerate** does too, unless that design is the one selected now, in which case your edits apply. Both use the agents you chose for that run, and Pipeline names them first. If the run used a secret variable, Pipeline asks for it again, because a run never keeps secret values |
 
 To report a bug, see [Support](../.github/SUPPORT.md).
+
+Resume and Regenerate compare the saved instructions, selected inputs, and
+upstream results before reusing work. A changed step and its dependents run
+again. A step that uses a secret variable runs again when you re-enter the
+secret. Under **Sources**, the effective workflow record lists reused steps
+and their parent run. Older runs without this record reuse the captured
+document and recompute the review.
+
+A missing or changed figure is listed in the rerun's quality notes. A
+workflow that promises findings can report an empty findings list. If its
+producer skips the step or returns an incompatible result, the report names
+the missing product and the step responsible.

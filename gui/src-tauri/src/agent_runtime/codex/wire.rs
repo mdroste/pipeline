@@ -5,8 +5,28 @@
 //! Server-request IDs may be numbers or strings: keep the raw JSON value and echo
 //! it back unchanged, never coerced.
 
+use super::transport::RequestError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub(crate) fn required_string(
+    value: &Value,
+    path: &[&str],
+    context: &str,
+) -> Result<String, RequestError> {
+    let mut cursor = value;
+    for key in path {
+        cursor = cursor.get(key).ok_or_else(|| {
+            RequestError::unavailable(format!("{context} omitted {}", path.join(".")))
+        })?;
+    }
+    cursor.as_str().map(str::to_string).ok_or_else(|| {
+        RequestError::unavailable(format!(
+            "{context} field {} was not a string",
+            path.join(".")
+        ))
+    })
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -273,6 +293,27 @@ fn normalize_item(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn required_strings_distinguish_missing_fields_from_wrong_types() {
+        let value = json!({"thread": {"id": "thread-1", "model": null}});
+        assert_eq!(
+            required_string(&value, &["thread", "id"], "response").unwrap(),
+            "thread-1"
+        );
+        assert_eq!(
+            required_string(&value, &["thread", "missing"], "response")
+                .unwrap_err()
+                .message,
+            "response omitted thread.missing"
+        );
+        assert_eq!(
+            required_string(&value, &["thread", "model"], "response")
+                .unwrap_err()
+                .message,
+            "response field thread.model was not a string"
+        );
+    }
 
     #[test]
     fn response_and_server_request_ids_remain_distinct() {

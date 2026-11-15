@@ -5,7 +5,7 @@ import type {
   PrimaryArtifactPart,
   StepConfig,
   StepContext,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { stepDependencies } from "../../lib/pipelineHelpers";
 

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import useModalDialog from "../hooks/useModalDialog";
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 
 export default function ExportDialog({
   onClose,
@@ -18,19 +20,15 @@ export default function ExportDialog({
         aria-modal="true"
         aria-label="Export report"
         tabIndex={-1}
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-raised text-ink shadow-ui-3"
+        className="ui-overlay-frame flex max-h-[85vh] w-full max-w-2xl flex-col"
       >
-        <header className="flex items-center justify-between border-b border-line p-5">
-          <h2 className="text-lg font-semibold">Export report</h2>
-          <button
-            aria-label="Close export"
-            onClick={onClose}
-            className="rounded px-2 py-1"
-          >
-            ✕
-          </button>
+        <header className="ui-overlay-header">
+          <h2 className="text-ui-title font-semibold">Export report</h2>
+          <IconButton label="Close export" onClick={onClose}>
+            <Icon name="close" className="h-4 w-4" />
+          </IconButton>
         </header>
-        <div className="min-h-0 overflow-auto p-5">{children}</div>
+        <div className="ui-overlay-body min-h-0 overflow-auto">{children}</div>
       </div>
     </div>,
     document.body,

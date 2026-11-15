@@ -79,6 +79,23 @@ it("typesets a conditional bar in a survey table, in its own column", () => {
 });
 
 describe("InlineMathText", () => {
+  it("typesets bare notation in finding titles without interpreting their Markdown", () => {
+    const { container } = render(
+      <InlineMathText text="1. *Check* β₁ ≈ −1.3" />,
+    );
+    expect(container.querySelectorAll(".katex")).toHaveLength(1);
+    expect(container.querySelector("annotation")).toHaveTextContent(
+      "β_{1} ≈ −1.3",
+    );
+    expect(container.querySelector("ol, em, p")).toBeNull();
+    expect(container).toHaveTextContent("1. *Check*");
+  });
+
+  it("keeps undelimited evidence quotes verbatim", () => {
+    const { container } = render(<InlineMathText text="β₁ ≈ −1.3" verbatim />);
+    expect(container.textContent).toBe("β₁ ≈ −1.3");
+    expect(container.querySelector(".katex")).toBeNull();
+  });
   it("typesets math and leaves the rest of a title as written", () => {
     const { container } = render(
       <InlineMathText text={"1. SEs_for *x* and $\\hat\\beta$ cost $5"} />,
@@ -98,6 +115,16 @@ describe("InlineMathText", () => {
     expect(container.textContent).toBe("Costs of $5 to $8 here");
     expect(container.children).toHaveLength(0);
   });
+});
+
+it("typesets Unicode notation in finding explanations", () => {
+  const { container } = render(
+    <CompactMarkdown markdown="The coefficient β₁ ≈ −1.3 changes." />,
+  );
+  expect(container.querySelector("annotation")).toHaveTextContent(
+    "β_{1} ≈ −1.3",
+  );
+  expect(container.querySelector(".math-fallback, .katex-error")).toBeNull();
 });
 
 it("never makes a link of a label, even with math in it", () => {

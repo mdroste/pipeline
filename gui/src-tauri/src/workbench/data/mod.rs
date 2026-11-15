@@ -3,9 +3,6 @@
 //! `catalog` owns capture, previews and samples; `csv`, `dta` and `xlsx` are
 //! the bounded format readers. `file_table` and `delimited_table` show live files in the viewer.
 mod catalog;
-// Earlier captures retain their provenance. Connector qualification runs only in tests.
-#[cfg(test)]
-mod connectors;
 mod csv;
 mod delimited_table;
 mod dta;
@@ -15,11 +12,11 @@ mod profile;
 mod tests;
 mod xlsx;
 
+#[cfg(test)]
+pub(crate) use catalog::import_bytes;
 pub use catalog::{
     commit, import, import_metadata, prepare_local, preview_rows, save_sample, PreparedDataset,
 };
-#[cfg(test)]
-pub(crate) use catalog::{import_bytes, import_capture};
 pub use delimited_table::{delimited_table, TableResume};
 pub use file_table::{file_table, FileTable};
 pub use profile::{MissingCell, RowPreview};

@@ -1,7 +1,7 @@
 //! Shared types and the tool-use loop for direct API calls.
 
+use crate::commands::await_or_cancel;
 use serde::Serialize;
-use std::future::Future;
 
 /// Maximum tool-call round-trips before giving up.
 const MAX_TOOL_ITERATIONS: usize = 15;
@@ -96,27 +96,6 @@ pub fn verbose_log(app: &crate::emit::EventBus, line: impl Into<String>) {
     if crate::settings::load().verbose_logging {
         log(app, line);
     }
-}
-
-async fn await_or_cancel<F, T>(future: F, pass_key: Option<&str>) -> Result<T, String>
-where
-    F: std::future::Future<Output = T>,
-{
-    let mut operation = std::pin::pin!(future);
-    let mut cancellation = std::pin::pin!(crate::commands::wait_for_cancellation(pass_key));
-    std::future::poll_fn(|cx| {
-        if let std::task::Poll::Ready(value) = operation.as_mut().poll(cx) {
-            return std::task::Poll::Ready(Ok(value));
-        }
-        if cancellation.as_mut().poll(cx).is_ready() {
-            return std::task::Poll::Ready(Err(match pass_key {
-                Some(key) => format!("Pass '{key}' cancelled"),
-                None => "Pipeline cancelled".to_string(),
-            }));
-        }
-        std::task::Poll::Pending
-    })
-    .await
 }
 
 fn append_api_chunk(buffer: &mut Vec<u8>, chunk: &[u8], limit: usize) -> Result<(), String> {

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
 import { appEvents } from "../lib/appEvents";
 import { makeProjectHome as home } from "../test/projectSurfaceFixtures";
-import type { WorkbenchSession } from "../lib/workbenchTypes";
+import type { WorkbenchSession } from "../lib/workbench/sessionTypes";
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
   mutate: vi.fn(),

@@ -7,7 +7,7 @@ import {
   readGetStarted,
 } from "../../lib/getStarted";
 import { router } from "../../lib/router";
-import type { DepStatus, DepsReport } from "../../lib/types";
+import type { DepStatus, DepsReport } from "../../lib/settingsTypes";
 import { makeSettings } from "../../test/settingsFixtures";
 import GetStartedHost from "./GetStartedHost";
 

@@ -1,4 +1,4 @@
-import type { ArtifactSelector, StepContext } from "../../lib/types";
+import type { ArtifactSelector, StepContext } from "../../lib/workflowTypes";
 
 import { primaryPartsForMode } from "./utils";
 

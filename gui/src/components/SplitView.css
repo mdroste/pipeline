@@ -10,10 +10,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.3125rem 0.5rem;
-  border-bottom: 1px solid #d4d4d4;
-  font-size: 0.75rem;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-1) var(--ui-space-3);
+  border-bottom: 1px solid var(--ui-border);
+  font-size: var(--ui-text-label);
   flex-shrink: 0;
 }
 .split-view-toolbar label {
@@ -21,15 +21,14 @@
   align-items: center;
   gap: 0.375rem;
 }
-.split-view-toolbar button,
-.split-view-toolbar select {
-  border: 1px solid #d4d4d4;
-  border-radius: 0.3125rem;
-  padding: 0.25rem 0.4375rem;
-  background: transparent;
+.split-view-toolbar button {
+  min-height: var(--ui-control-height-sm);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  padding: var(--ui-space-1) var(--ui-space-2);
 }
 .split-view-toolbar button[aria-pressed="true"] {
-  background: #e5e5e5;
+  background: var(--ui-sunken);
 }
 .split-view-body {
   display: flex;
@@ -66,12 +65,4 @@
 .split-view-pane .file-source-editor {
   min-height: 0;
   flex: 1;
-}
-.dark .split-view-toolbar,
-.dark .split-view-toolbar button,
-.dark .split-view-toolbar select {
-  border-color: #404040;
-}
-.dark .split-view-toolbar button[aria-pressed="true"] {
-  background: #262626;
 }

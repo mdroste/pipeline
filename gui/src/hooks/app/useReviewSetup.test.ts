@@ -6,7 +6,7 @@ import {
   useReviewSetupLifecycle,
   type ReviewSetup,
 } from "./useReviewSetup";
-import type { PipelineConfig } from "../../lib/types";
+import type { PipelineConfig } from "../../lib/workflowTypes";
 
 const client = vi.hoisted(() => ({
   executionPlan: vi.fn(),

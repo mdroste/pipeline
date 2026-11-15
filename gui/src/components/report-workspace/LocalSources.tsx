@@ -5,7 +5,7 @@ import {
   renderStructuredMarkdown,
 } from "../../lib/issues";
 import { renderSurvey } from "../../lib/surveyMarkdown";
-import type { PipelineReport } from "../../lib/types";
+import type { PipelineReport } from "../../lib/reviewTypes";
 
 const pageHeading = (page: number) => `Page ${page}`;
 
@@ -32,7 +32,7 @@ export default function LocalSources({
     { id: "extracted", label: "Extracted text", markdown: extractedText },
     {
       id: "orientation",
-      label: "Orientation map",
+      label: "Document overview",
       markdown: renderSurvey(report.orientation),
     },
     ...report.step_outputs.map((step) => ({

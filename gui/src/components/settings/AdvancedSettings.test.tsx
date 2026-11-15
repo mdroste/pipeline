@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import AdvancedSettings from "./AdvancedSettings";
 import { version as appVersion } from "../../../package.json";
 import { makeSettings } from "../../test/settingsFixtures";
-import type { UpdateInfo, UpdateStatus } from "../../lib/types";
+import type { UpdateInfo, UpdateStatus } from "../../lib/updateTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());

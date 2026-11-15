@@ -35,6 +35,13 @@ pub struct FileListing {
     pub entries: Vec<FileListEntry>,
     pub truncated: bool,
 }
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationFileListing {
+    pub scope_root: String,
+    /// Shared project folders are represented by transcript links in the UI.
+    pub listing: Option<FileListing>,
+}
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileStatRequest {
@@ -96,18 +103,41 @@ pub fn list_workspace_directory(
     folder: &Path,
     request: FileListRequest,
 ) -> WorkbenchResult<FileListing> {
-    if !request.directory.is_empty() {
-        files::relative(&request.directory)?;
+    list_directory(folder, request.directory)
+}
+
+pub fn list_conversation_directory(
+    store: &Store,
+    session_id: &str,
+    directory: String,
+) -> WorkbenchResult<ConversationFileListing> {
+    let (folder, owner) = store.runtime_file_scope(session_id)?;
+    let listing = if matches!(owner, crate::workbench::store::RuntimeFileOwner::Private) {
+        let _guard = lock(store, session_id)?;
+        super::conversation_edit::recover_private_edits(store, session_id, &folder)?;
+        Some(list_directory(&folder, directory)?)
+    } else {
+        None
+    };
+    Ok(ConversationFileListing {
+        scope_root: folder.to_string_lossy().into_owned(),
+        listing,
+    })
+}
+
+fn list_directory(folder: &Path, directory: String) -> WorkbenchResult<FileListing> {
+    if !directory.is_empty() {
+        files::relative(&directory)?;
     }
-    let (entries, truncated) = SafeRoot::open(folder)?.list(&request.directory, MAX_LISTED)?;
+    let (entries, truncated) = SafeRoot::open(folder)?.list(&directory, MAX_LISTED)?;
     Ok(FileListing {
         entries: entries
             .into_iter()
             .map(|(name, stat)| {
-                let path = if request.directory.is_empty() {
+                let path = if directory.is_empty() {
                     name.clone()
                 } else {
-                    format!("{}/{name}", request.directory)
+                    format!("{directory}/{name}")
                 };
                 FileListEntry {
                     ignored: ignored(&path, &[]),
@@ -120,7 +150,7 @@ pub fn list_workspace_directory(
                 }
             })
             .collect(),
-        directory: request.directory,
+        directory,
         truncated,
     })
 }

@@ -3,7 +3,7 @@ import type {
   ApprovalDetails as Approval,
   RequestQuestion,
   WorkbenchEvent,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/runtimeTypes";
 
 /** Long diffs stay inspectable without letting one approval flood the page. */
 const DIFF_PREVIEW_CHARACTERS = 20_000;
@@ -82,7 +82,7 @@ function ApprovalDetails({
   const isFileChange = approval?.type === "fileChange";
   const changes = isFileChange ? fileChanges(item) : null;
   const pre =
-    "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-300 bg-white/70 p-2 font-mono text-xs text-amber-950 dark:border-amber-800 dark:bg-neutral-950/60 dark:text-amber-100";
+    "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-ui-sm border border-line bg-surface p-3 font-mono text-ui-meta leading-relaxed text-ink";
   if (
     !reason &&
     !command &&
@@ -245,13 +245,15 @@ export default function RequestCard({
     (isApproval && (unknownGrant || !approval?.allowOffered)) ||
     (isPermission && !permission);
   return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
-      <div className="font-semibold text-amber-950 dark:text-amber-100">
+    <div className="min-w-0 break-words ui-notice ui-notice--warning">
+      <div className="text-ui-title font-semibold">
         {isQuestion
           ? "ChatGPT has a question"
           : isPermission
             ? "Permission requested"
-            : "Approval requested"}
+            : event.method === "claude/bash/requestApproval"
+              ? "Approve sandboxed command"
+              : "Approval requested"}
       </div>
       {isApproval && <ApprovalDetails approval={approval} item={item} />}
       {permission && (
@@ -265,7 +267,7 @@ export default function RequestCard({
           <p>Duration: this turn</p>
           <p>Working directory: {permission.cwd ?? "Not specified"}</p>
           <p>Requested permissions (including all paths and network access):</p>
-          <pre className="whitespace-pre-wrap break-all rounded border p-2">
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-ui-sm border border-line bg-surface p-3 font-mono text-ui-meta text-ink">
             {JSON.stringify(permission.permissions ?? {}, null, 2)}
           </pre>
         </div>
@@ -356,7 +358,7 @@ export default function RequestCard({
             : "Allow once is not available for this request."}
         </p>
       )}
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         {!withheld && (
           <button
             type="button"
@@ -380,13 +382,24 @@ export default function RequestCard({
                 void resolve({ decision: "accept" });
               }
             }}
-            className="rounded bg-amber-900 px-3 py-1.5 font-medium text-white dark:bg-amber-100 dark:text-amber-950"
+            className="ui-button ui-button--primary"
           >
             {isQuestion
               ? "Submit"
               : isPermission
                 ? "Allow for this turn"
                 : "Allow once"}
+          </button>
+        )}
+        {isApproval && event.canRemember && !withheld && (
+          <button
+            type="button"
+            disabled={resolving}
+            title="Allow this command again in this conversation"
+            onClick={() => void resolve({ decision: "alwaysAllow" })}
+            className="ui-button"
+          >
+            Always allow
           </button>
         )}
         <button
@@ -401,7 +414,7 @@ export default function RequestCard({
                 decision: approval?.declineDecision ?? "decline",
               });
           }}
-          className="rounded border border-amber-400 px-3 py-1.5"
+          className="ui-button"
         >
           Decline
         </button>

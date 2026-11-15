@@ -3,7 +3,7 @@ import type {
   PipelineConfig,
   PrimaryArtifactPart,
   StepConfig,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
 
 function naturalList(items: string[]): string {
   if (items.length === 0) return "";
@@ -60,7 +60,7 @@ function inputDescriptions(step: StepConfig, config: PipelineConfig): string[] {
       if (selector.parts.includes("source"))
         descriptions.push("the original source");
     }
-    if (selector.kind === "survey") descriptions.push("the orientation map");
+    if (selector.kind === "survey") descriptions.push("the document overview");
     if (selector.kind === "named_input")
       descriptions.push(`the “${selector.key}” input`);
     if (selector.kind === "step") {
@@ -97,7 +97,7 @@ export function describeStep(
     step.run_if?.kind === "output_matches"
       ? " when an upstream report matches its condition"
       : step.run_if?.kind === "survey_path"
-        ? " when the orientation map matches its condition"
+        ? " when the document overview matches its condition"
         : "";
   const inputs = inputDescriptions(step, config);
   const receives = inputs.length

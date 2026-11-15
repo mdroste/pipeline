@@ -9,7 +9,7 @@ import { createRoot } from "react-dom/client";
 import App from "../src/App";
 import ErrorBoundary from "../src/components/ErrorBoundary";
 import DialogService from "../src/components/DialogService";
-import type { QueuedRun } from "../src/lib/types";
+import type { QueuedRun } from "../src/lib/reviewTypes";
 import { makeSettings } from "../src/test/settingsFixtures";
 import "katex/dist/katex.min.css";
 import "../src/App.css";
@@ -131,6 +131,26 @@ const result = {
   },
 };
 
+// Saved evidence and report content for the no-model Review journey.
+const reviewArtifacts = [
+  {
+    rel_path: "report.md",
+    label: "Referee report",
+    kind: "markdown",
+    bytes: result.markdown.length,
+    sha256: "fixture",
+    group: "report",
+  },
+  {
+    rel_path: "context/document.md",
+    label: "Extracted document",
+    kind: "markdown",
+    bytes: result.extracted_text.length,
+    sha256: "fixture",
+    group: "context",
+  },
+];
+
 internals.invoke = async (command: string, args?: any) => {
   switch (command) {
     case "plugin:event|listen": {
@@ -146,6 +166,31 @@ internals.invoke = async (command: string, args?: any) => {
       return structuredClone(queue);
     case "get_queued_run_result":
       return args.key === "run-health" ? structuredClone(result) : null;
+    case "get_run_report":
+      return structuredClone(result.report);
+    case "get_run_manifest":
+      return {
+        run_id: args.runId,
+        created: "2026-09-28T21:14:00Z",
+        input_path: "/fixtures/review-layout-paper.pdf",
+        input_mode: "document",
+        profile_name: "Auto Paper Review",
+        provider: "claude",
+        status: "done",
+        artifacts: reviewArtifacts,
+      };
+    case "read_artifact": {
+      const text =
+        args.relPath === "report.md" ? result.markdown : result.extracted_text;
+      return {
+        kind: "markdown",
+        bytes: text.length,
+        text,
+        base64: null,
+        truncated: false,
+        abs_path: `/fixtures/${args.relPath}`,
+      };
+    }
     case "enqueue_run":
       return enqueue(args.paperPath);
     case "enqueue_batch":
@@ -230,8 +275,8 @@ function replay() {
   stage("extracting", "extracting", "Extract document");
   log("Extracting document from /Users/mike/Papers/monetary-policy-draft.pdf");
   log("Extracted via paddleocr-vl-full (184,220 chars, 212s)");
-  stage("orienting", "orientation", "Orientation map");
-  log("Orientation map ready", 1, "Orientation map");
+  stage("orienting", "orientation", "Document bundle preparation");
+  log("Document overview ready", 1, "Document bundle preparation");
   emit("pipeline:routing", {
     primaryDomain: "Economics",
     subject: "Monetary economics",

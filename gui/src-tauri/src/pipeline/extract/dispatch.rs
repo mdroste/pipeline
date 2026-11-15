@@ -197,6 +197,8 @@ pub async fn extract(
                 paper_hash: hash,
                 quality_notes: vec![],
             })
+        } else if ext_eq(&path, "pptx") {
+            extract_pptx(&path)
         } else if ext_eq(&path, "docx") {
             extract_docx(&path)
         } else {

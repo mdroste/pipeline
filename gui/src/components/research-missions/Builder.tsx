@@ -1,5 +1,6 @@
+/** Full-width, tabbed setup keeps draft state and validation shared across sections. */
 import { useEffect, useId, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { workflowProfileClient } from "../../lib/workflowProfileClient";
 import { taskClient } from "../../lib/taskClient";
 import { type SessionChoice } from "../../lib/taskTypes";
 import {
@@ -12,6 +13,12 @@ import {
   type MissionMode,
 } from "../../lib/missionClient";
 import ReportIssueLink from "../ReportIssueLink";
+import useTabList from "../../hooks/useTabList";
+import { BudgetFields, ToolFields } from "./BuilderOptions";
+import "./Builder.css";
+
+const sections = ["research", "limits", "tools"] as const;
+type Section = (typeof sections)[number];
 
 const draftKey = "pipeline.researchMission.draft.v1";
 interface MissionDraft {
@@ -54,17 +61,20 @@ function recover(sessionId?: string | null): MissionDraft {
     operationId: crypto.randomUUID(),
   };
 }
-const toggle = (values: string[], id: string) =>
-  values.includes(id) ? values.filter((v) => v !== id) : [...values, id];
 export default function MissionBuilder({
   initialSessionId,
+  onChooseType,
   onPrepared,
   onClose,
 }: {
   initialSessionId?: string | null;
+  onChooseType?: () => void;
   onPrepared: (m: Mission) => void;
   onClose: () => void;
 }) {
+  const [section, setSection] = useState<Section>("research");
+  const tabs = useTabList(sections, section, setSection);
+  const heading = useRef<HTMLHeadingElement>(null);
   const [draft, setDraft] = useState(() => recover(initialSessionId));
   const [sessions, setSessions] = useState<SessionChoice[]>([]);
   const [choices, setChoices] = useState<MissionChoices | null>(null);
@@ -75,11 +85,12 @@ export default function MissionBuilder({
   const choiceVersion = useRef(0);
   const blockedId = useId();
   useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+    heading.current?.scrollIntoView?.({ block: "nearest" });
+  }, []);
+  useEffect(() => {
     let live = true;
-    void Promise.all([
-      taskClient.sessions(),
-      invoke<{ id: string; name: string }[]>("list_profiles"),
-    ])
+    void Promise.all([taskClient.sessions(), workflowProfileClient.profiles()])
       .then(([s, p]) => {
         if (live) {
           setSessions(s.filter((v) => v.workspaceName !== null));
@@ -127,9 +138,6 @@ export default function MissionBuilder({
       operationId: crypto.randomUUID(),
     }));
   }
-  function policy(update: Partial<MissionDefinition["policy"]>) {
-    patch({ policy: { ...draft.definition.policy, ...update } });
-  }
   const d = draft.definition;
   // Criteria keep their raw lines while typing; blank lines are not criteria.
   const criteria = d.criteria.map((c) => c.trim()).filter(Boolean);
@@ -147,7 +155,7 @@ export default function MissionBuilder({
             ? "Add at least one completion criterion."
             : "";
   async function prepare() {
-    if (blocked) return;
+    if (blocked || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -166,409 +174,231 @@ export default function MissionBuilder({
   }
   return (
     <form
-      className="task-detail mission-builder"
+      className="mission-builder"
+      noValidate
       aria-label="New research automation"
       onSubmit={(e) => {
         e.preventDefault();
+        // Reveal an invalid field before asking the browser to focus it.
+        const invalid = e.currentTarget.querySelector<HTMLInputElement>(
+          "input:invalid, select:invalid, textarea:invalid",
+        );
+        if (invalid) {
+          const target = invalid.closest<HTMLElement>("[data-builder-section]")
+            ?.dataset.builderSection;
+          if (target) setSection(target as Section);
+          requestAnimationFrame(() => {
+            invalid.focus();
+            invalid.reportValidity();
+          });
+          return;
+        }
         void prepare();
       }}
     >
-      <div className="task-section-heading">
-        <h2>New research automation</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close research automation builder"
-        >
-          ×
-        </button>
+      <div className="task-section-heading mission-builder-heading">
+        <h2 ref={heading} tabIndex={-1}>
+          New research automation
+        </h2>
+        <div className="automation-heading-actions">
+          {onChooseType && (
+            <button
+              type="button"
+              className="ui-button ui-button--sm"
+              onClick={onChooseType}
+            >
+              Change type
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close research automation builder"
+          >
+            ×
+          </button>
+        </div>
       </div>
-      <p className="task-muted">
-        Set the question, available tools, and criteria for completing the
-        research.
-      </p>
       <fieldset disabled={busy} className="mission-fields">
-        <label>
-          Source conversation
-          <select
-            value={draft.sessionId}
-            onChange={(e) => {
-              const sessionId = e.target.value;
-              setError("");
-              setDraft((old) => forSession(old, sessionId));
-            }}
-          >
-            <option value="">Choose a project conversation</option>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title} · {s.workspaceName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Starting point
-          <select
-            value={d.mode}
-            onChange={(e) => {
-              const next = newMission(e.target.value as MissionMode);
-              patch({
-                mode: next.mode,
-                name: next.name,
-                objective: next.objective,
-                criteria: next.criteria,
-              });
-            }}
-          >
-            {(
-              [
-                "theory",
-                "empirical",
-                "quantitative",
-                "literature",
-                "discovery",
-                "maintenance",
-              ] as const
-            ).map((v) => (
-              <option key={v} value={v}>
-                {
+        <div className="mission-builder-context">
+          <label>
+            Source conversation
+            <select
+              value={draft.sessionId}
+              onChange={(e) => {
+                const sessionId = e.target.value;
+                setError("");
+                setDraft((old) => forSession(old, sessionId));
+              }}
+            >
+              <option value="">Choose a project conversation</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} · {s.workspaceName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Starting point
+            <select
+              value={d.mode}
+              onChange={(e) => {
+                const next = newMission(e.target.value as MissionMode);
+                patch({
+                  mode: next.mode,
+                  name: next.name,
+                  objective: next.objective,
+                  criteria: next.criteria,
+                });
+              }}
+            >
+              {(
+                [
+                  "theory",
+                  "empirical",
+                  "quantitative",
+                  "literature",
+                  "discovery",
+                  "maintenance",
+                ] as const
+              ).map((v) => (
+                <option key={v} value={v}>
                   {
-                    theory: "Theory investigation",
-                    empirical: "Empirical investigation",
-                    quantitative: "Quantitative model",
-                    literature: "Literature investigation",
-                    discovery: "Research discovery",
-                    maintenance: "Project maintenance",
-                  }[v]
-                }
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Automation name
-          <input
-            maxLength={160}
-            value={d.name}
-            onChange={(e) => patch({ name: e.target.value })}
-          />
-        </label>
-        <label>
-          Research question and scope
-          <textarea
-            rows={5}
-            value={d.objective}
-            onChange={(e) => patch({ objective: e.target.value })}
-            maxLength={8000}
-          />
-        </label>
-        <label>
-          Current understanding
-          <textarea
-            rows={3}
-            value={d.background}
-            onChange={(e) => patch({ background: e.target.value })}
-            placeholder="What is known, what has failed, and any important constraints"
-            maxLength={16000}
-          />
-        </label>
-        <label>
-          Completion criteria <span className="task-muted">One per line</span>
-          <textarea
-            rows={5}
-            value={d.criteria.join("\n")}
-            onChange={(e) => patch({ criteria: e.target.value.split("\n") })}
-          />
-        </label>
-        <div className="mission-budget-grid">
-          <label>
-            Investigation rounds
-            <input
-              type="number"
-              min={1}
-              max={32}
-              value={d.budget.maxRounds}
-              onChange={(e) =>
-                patch({
-                  budget: { ...d.budget, maxRounds: Number(e.target.value) },
-                })
-              }
-            />
+                    {
+                      theory: "Theory investigation",
+                      empirical: "Empirical investigation",
+                      quantitative: "Quantitative model",
+                      literature: "Literature investigation",
+                      discovery: "Research discovery",
+                      maintenance: "Project maintenance",
+                    }[v]
+                  }
+                </option>
+              ))}
+            </select>
           </label>
           <label>
-            Maximum actions
+            Automation name
             <input
-              type="number"
-              min={3}
-              max={256}
-              value={d.budget.maxActions}
-              onChange={(e) =>
-                patch({
-                  budget: { ...d.budget, maxActions: Number(e.target.value) },
-                })
-              }
-            />
-          </label>
-          <label>
-            Active hours
-            <input
-              type="number"
-              min={0.1}
-              max={168}
-              step={0.1}
-              value={d.budget.activeSeconds / 3600}
-              onChange={(e) =>
-                patch({
-                  budget: {
-                    ...d.budget,
-                    activeSeconds: Math.round(Number(e.target.value) * 3600),
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            Minutes per action
-            <input
-              type="number"
-              min={0.5}
-              max={120}
-              step={0.5}
-              value={d.budget.actionTimeoutSeconds / 60}
-              onChange={(e) =>
-                patch({
-                  budget: {
-                    ...d.budget,
-                    actionTimeoutSeconds: Math.round(
-                      Number(e.target.value) * 60,
-                    ),
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            Deadline in hours
-            <input
-              type="number"
-              min={1}
-              max={720}
-              value={d.budget.deadlineHours}
-              onChange={(e) =>
-                patch({
-                  budget: {
-                    ...d.budget,
-                    deadlineHours: Number(e.target.value),
-                  },
-                })
-              }
-            />
-          </label>
-          <label>
-            Stop after this many rounds without progress
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={d.budget.maxStagnantRounds}
-              onChange={(e) =>
-                patch({
-                  budget: {
-                    ...d.budget,
-                    maxStagnantRounds: Number(e.target.value),
-                  },
-                })
-              }
+              maxLength={160}
+              value={d.name}
+              onChange={(e) => patch({ name: e.target.value })}
             />
           </label>
         </div>
-        {choices && (
-          <>
-            <p className="task-muted">Project folder: {choices.root}</p>
-            <label className="mission-check">
-              <input
-                type="checkbox"
-                disabled={!choices.canEdit}
-                checked={d.policy.allowEdits}
-                onChange={(e) => policy({ allowEdits: e.target.checked })}
-              />
-              Allow edits in the working copy
-            </label>
-            {!choices.canEdit && (
-              <p className="task-muted">
-                To allow edits, choose a conversation with a working copy and
-                Edit access.
-              </p>
-            )}
-            <label className="mission-check">
-              <input
-                type="checkbox"
-                disabled={!choices.commandNetwork}
-                checked={d.policy.commandNetwork}
-                onChange={(e) => policy({ commandNetwork: e.target.checked })}
-              />
-              Use the conversation’s existing command network access
-            </label>
-            <details>
-              <summary>Computation and project changes</summary>
-              <p className="task-muted">
-                Choose which checks and saved analysis variants the automation
-                may run. Each keeps its existing permissions and input checks.
-              </p>
-              {!choices.canHostCompute && (
-                <p className="task-muted">
-                  This conversation runs code in its task’s restricted working
-                  area. To use configured local checks, choose a project
-                  conversation that is not linked to a task.
-                </p>
-              )}
-              <fieldset>
-                <legend>Configured local checks</legend>
-                {choices.checks.length ? (
-                  choices.checks.map((c) => (
-                    <label className="mission-check" key={c.id}>
-                      <input
-                        type="checkbox"
-                        disabled={!choices.canHostCompute}
-                        checked={d.policy.checkProfileIds.includes(c.id)}
-                        onChange={() =>
-                          policy({
-                            checkProfileIds: toggle(
-                              d.policy.checkProfileIds,
-                              c.id,
-                            ),
-                          })
-                        }
-                      />
-                      {c.name}
-                    </label>
-                  ))
-                ) : (
-                  <p className="task-muted">
-                    Configure and authorize checks in Analyze.
-                  </p>
-                )}
-              </fieldset>
-              <fieldset>
-                <legend>Captured plans and experiment grids</legend>
-                {choices.experiments.length ? (
-                  choices.experiments.map((c) => (
-                    <label className="mission-check" key={c.id}>
-                      <input
-                        type="checkbox"
-                        disabled={!choices.canHostCompute}
-                        checked={d.policy.experimentIds.includes(c.id)}
-                        onChange={() =>
-                          policy({
-                            experimentIds: toggle(d.policy.experimentIds, c.id),
-                          })
-                        }
-                      />
-                      {c.title}{" "}
-                      <small>
-                        {c.kind === "experiment_plan"
-                          ? "parameter grid"
-                          : "captured plan"}
-                      </small>
-                    </label>
-                  ))
-                ) : (
-                  <p className="task-muted">
-                    Prepare a captured analysis or parameter grid in Analyze.
-                  </p>
-                )}
-              </fieldset>
-              <fieldset>
-                <legend>Wake on changes from these monitors</legend>
-                {choices.monitors.length ? (
-                  choices.monitors.map((c) => (
-                    <label className="mission-check" key={c.id}>
-                      <input
-                        type="checkbox"
-                        checked={d.policy.monitorIds.includes(c.id)}
-                        onChange={() =>
-                          policy({
-                            monitorIds: toggle(d.policy.monitorIds, c.id),
-                          })
-                        }
-                      />
-                      {c.title}
-                    </label>
-                  ))
-                ) : (
-                  <p className="task-muted">
-                    Create project monitors in Automate to enable
-                    change-triggered work.
-                  </p>
-                )}
-              </fieldset>
-            </details>
-          </>
-        )}
-        <label>
-          Additional review
-          <select
-            value={d.policy.reviewProfileId ?? ""}
-            onChange={(e) =>
-              policy({ reviewProfileId: e.target.value || null })
-            }
-          >
-            <option value="">Separate project challenge only</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {!!methods.length && (
-          <details>
-            <summary>Saved research methods</summary>
-            <p className="task-muted">
-              Choose methods to reuse. Their evidence and limitations are
-              included.
-            </p>
-            {methods.map((method) => (
-              <label className="mission-check" key={method.id}>
-                <input
-                  type="checkbox"
-                  checked={d.methodIds.includes(method.id)}
-                  onChange={() =>
-                    patch({ methodIds: toggle(d.methodIds, method.id) })
+        <div
+          className="ui-page-tabs mission-builder-tabs"
+          role="tablist"
+          aria-label="Research automation settings"
+        >
+          {sections.map((id) => (
+            <button key={id} {...tabs.tabProps(id)}>
+              {
+                {
+                  research: "Research",
+                  limits: "Limits",
+                  tools: "Tools & review",
+                }[id]
+              }
+            </button>
+          ))}
+        </div>
+        <div
+          {...tabs.panelProps("research")}
+          hidden={section !== "research"}
+          data-builder-section="research"
+        >
+          <div className="mission-builder-columns">
+            <section className="mission-builder-card mission-builder-stack">
+              <label>
+                Research question and scope
+                <textarea
+                  rows={4}
+                  value={d.objective}
+                  onChange={(e) => patch({ objective: e.target.value })}
+                  maxLength={8000}
+                />
+              </label>
+              <label>
+                Current understanding
+                <textarea
+                  rows={2}
+                  value={d.background}
+                  onChange={(e) => patch({ background: e.target.value })}
+                  placeholder="What is known, what has failed, and any important constraints"
+                  maxLength={16000}
+                />
+              </label>
+            </section>
+            <section className="mission-builder-card mission-builder-stack">
+              <label className="mission-builder-criteria">
+                Completion criteria{" "}
+                <span className="task-muted">One per line</span>
+                <textarea
+                  rows={9}
+                  value={d.criteria.join("\n")}
+                  onChange={(e) =>
+                    patch({ criteria: e.target.value.split("\n") })
                   }
                 />
-                <span>
-                  {method.name}
-                  <small>{method.whenToUse}</small>
-                </span>
               </label>
-            ))}
-          </details>
-        )}
+            </section>
+          </div>
+        </div>
+        <div
+          {...tabs.panelProps("limits")}
+          hidden={section !== "limits"}
+          data-builder-section="limits"
+        >
+          <BudgetFields definition={d} onChange={patch} />
+        </div>
+        <div
+          {...tabs.panelProps("tools")}
+          hidden={section !== "tools"}
+          data-builder-section="tools"
+        >
+          <ToolFields
+            definition={d}
+            onChange={patch}
+            choices={choices}
+            methods={methods}
+            profiles={profiles}
+          />
+        </div>
       </fieldset>
-      {error && (
-        <p role="alert" className="task-error">
-          {error}
-          <ReportIssueLink />
-        </p>
-      )}
-      <button
-        className="task-primary"
-        disabled={busy || Boolean(blocked)}
-        aria-describedby={blocked ? blockedId : undefined}
-      >
-        {busy ? "Preparing…" : "Preview research automation →"}
-      </button>
-      {blocked && (
-        <p id={blockedId} className="task-muted">
-          {blocked}
-        </p>
-      )}
-      <p className="task-muted">
-        Review the preview before starting. Starting allows the automation to
-        run actions within the limits above. Keep Pipeline running and this
-        computer awake.
-      </p>
+      <footer className="automation-builder-footer mission-builder-footer">
+        <div className="mission-builder-status">
+          {error && (
+            <p role="alert" className="task-error">
+              {error}
+              <ReportIssueLink />
+            </p>
+          )}
+          {blocked ? (
+            <p id={blockedId} className="task-muted">
+              {blocked}
+            </p>
+          ) : (
+            <p className="task-muted">
+              {d.budget.maxRounds} rounds · {d.budget.maxActions} actions ·{" "}
+              {d.budget.activeSeconds / 3600} active hours
+            </p>
+          )}
+          <p className="task-muted">
+            Review the plan and permissions before starting. Keep Pipeline
+            running and this computer awake.
+          </p>
+        </div>
+        <button
+          type="submit"
+          className="ui-button ui-button--primary"
+          disabled={busy || Boolean(blocked)}
+          aria-describedby={blocked ? blockedId : undefined}
+        >
+          {busy ? "Preparing…" : "Preview research automation →"}
+        </button>
+      </footer>
     </form>
   );
 }

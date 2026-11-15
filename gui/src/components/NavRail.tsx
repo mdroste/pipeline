@@ -19,7 +19,7 @@ import useNavSections, { type NavSection } from "./nav-rail/useNavSections";
 import "./nav-rail/NavRail.css";
 import ResizeHandle from "./ResizeHandle";
 
-export const NAV_RAIL_WIDTH = { default: 240, min: 208, max: 320 };
+export const NAV_RAIL_WIDTH = { default: 216, min: 208, max: 320 };
 
 export type { AppPage };
 
@@ -293,7 +293,7 @@ export default function NavRail({
     {
       label: string;
       icon: "assistant" | "project" | "review";
-      page: AppPage;
+      onOpenPage?: () => void;
       current: boolean;
       suffix?: ReactNode;
       children: ReactNode;
@@ -302,7 +302,7 @@ export default function NavRail({
     projects: {
       label: "Projects",
       icon: "project",
-      page: "project-index",
+      onOpenPage: () => onNavigate("project-index"),
       current: activePage === "project-index",
       suffix: projectStatus,
       children: projectChildren,
@@ -310,7 +310,6 @@ export default function NavRail({
     reviews: {
       label: "Reviews",
       icon: "review",
-      page: "history",
       current: false,
       suffix: reviewStatus,
       children: reviewChildren,
@@ -326,7 +325,7 @@ export default function NavRail({
         active={section === id}
         open={isOpen(id)}
         onToggle={() => toggle(id)}
-        onClick={() => onNavigate(entry.page)}
+        onOpenPage={entry.onOpenPage}
         suffix={entry.suffix}
       >
         {entry.children}
@@ -356,6 +355,7 @@ export default function NavRail({
       </NavIcon>
     );
   };
+  const flyoutEntry = flyout ? sections[flyout] : null;
   const newMenu = (
     <NewMenu
       compact={collapsed}
@@ -425,7 +425,7 @@ export default function NavRail({
       <aside
         ref={asideRef}
         style={{ width: 56 }}
-        className="relative flex shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
+        className="relative flex shrink-0 flex-col items-center border-r border-line bg-sunken px-2 pb-2.5 pt-2 [color-scheme:light] dark:[color-scheme:dark]"
       >
         <nav
           aria-label="Primary"
@@ -451,7 +451,7 @@ export default function NavRail({
           {groupIcon("reviews")}
           <NavIcon
             icon="tasks"
-            label="All automations"
+            label="Automations"
             tooltip="Schedule and run research automations"
             current={activePage === "tasks"}
             onClick={() => onNavigate("tasks")}
@@ -461,7 +461,7 @@ export default function NavRail({
             )}
           </NavIcon>
         </nav>
-        <div className="flex shrink-0 flex-col items-center gap-0.5 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
+        <div className="flex shrink-0 flex-col items-center gap-0.5 border-t border-line pt-2">
           {activity}
           <NavIcon
             icon="settings"
@@ -477,14 +477,16 @@ export default function NavRail({
           />
           {systemDot}
         </div>
-        {flyout && (
+        {flyout && flyoutEntry && (
           <NavFlyout
-            label={sections[flyout].label}
+            label={flyoutEntry.label}
             anchorRef={flyoutAnchors[flyout]}
             onClose={() => setFlyout(null)}
-            onOpenPage={pick(() => onNavigate(sections[flyout].page))}
+            onOpenPage={
+              flyoutEntry.onOpenPage ? pick(flyoutEntry.onOpenPage) : undefined
+            }
           >
-            {sections[flyout].children}
+            {flyoutEntry.children}
           </NavFlyout>
         )}
       </aside>
@@ -494,9 +496,9 @@ export default function NavRail({
     <aside
       ref={asideRef}
       style={{ width }}
-      className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-2.5 pb-2.5 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
+      className="relative flex shrink-0 flex-col border-r border-line bg-sunken px-2.5 pb-2.5 [color-scheme:light] dark:[color-scheme:dark]"
     >
-      <div className="flex h-9 shrink-0 items-center pl-2 text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
+      <div className="flex h-9 shrink-0 items-center pl-2 text-sm font-semibold tracking-[-0.01em] text-ink">
         Pipeline
       </div>
 
@@ -507,7 +509,7 @@ export default function NavRail({
             label="Search"
             tooltip="Search (⌘/Ctrl K)"
             tooltipSide="bottom"
-            className="!h-[34px] !w-[34px] border border-gray-200/80 dark:border-neutral-800"
+            className="nav-search"
             onClick={onSearch}
           >
             <Icon name="search" className="h-[17px] w-[17px]" />
@@ -529,7 +531,7 @@ export default function NavRail({
         {group("reviews")}
         <NavRow
           icon="tasks"
-          label="All automations"
+          label="Automations"
           current={activePage === "tasks"}
           onClick={() => onNavigate("tasks")}
           suffix={automationStatus}
@@ -537,7 +539,7 @@ export default function NavRail({
         />
       </nav>
 
-      <div className="mt-2 shrink-0 space-y-1 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
+      <div className="mt-2 shrink-0 space-y-1 border-t border-line pt-2">
         {needsSetup && (
           <button
             type="button"
@@ -553,7 +555,7 @@ export default function NavRail({
           </button>
         )}
         {activity}
-        <div className="flex items-center gap-0.5">
+        <div className="nav-preferences">
           <span className="min-w-0 flex-1">
             <NavRow
               icon="settings"

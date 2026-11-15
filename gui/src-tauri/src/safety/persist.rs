@@ -47,6 +47,17 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    #[cfg(windows)]
+    fn reader_without_delete_sharing(path: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+            .unwrap()
+    }
+
     #[test]
     fn replacement_publishes_the_complete_candidate() {
         let dir = tempfile::tempdir().unwrap();
@@ -67,11 +78,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("manifest.json");
         std::fs::write(&target, "old").unwrap();
-        let reader = std::fs::File::open(&target).unwrap();
+        let reader = reader_without_delete_sharing(&target);
         let mut file = NamedTempFile::new_in(dir.path()).unwrap();
         file.write_all(b"new").unwrap();
         // First prove that the primitive encounters this host's reader lock.
         let error = file.persist(&target).unwrap_err();
+        assert!(matches!(error.error.raw_os_error(), Some(5 | 32 | 33)));
         let (release, released) = std::sync::mpsc::channel();
         let holder = std::thread::spawn(move || {
             released.recv().unwrap();
@@ -90,7 +102,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("manifest.json");
         std::fs::write(&target, "old").unwrap();
-        let reader = std::fs::File::open(&target).unwrap();
+        let reader = reader_without_delete_sharing(&target);
         let mut file = NamedTempFile::new_in(dir.path()).unwrap();
         file.write_all(b"new").unwrap();
         let failed =
@@ -99,5 +111,30 @@ mod tests {
         assert_eq!(std::fs::read_to_string(failed.file.path()).unwrap(), "new");
         drop(reader);
         persist_file(failed.file, &target).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_ordinary_reader_never_loses_the_original_or_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("manifest.json");
+        std::fs::write(&target, "old").unwrap();
+        let reader = std::fs::File::open(&target).unwrap();
+        let mut file = NamedTempFile::new_in(dir.path()).unwrap();
+        file.write_all(b"new").unwrap();
+        // Delete sharing permits rename/delete access, but replacing an open
+        // destination also depends on the filesystem's rename semantics.
+        // Either immediate success or a recoverable refusal must keep data.
+        match file.persist(&target) {
+            Ok(_) => drop(reader),
+            Err(error) => {
+                assert!(matches!(error.error.raw_os_error(), Some(5 | 32 | 33)));
+                assert_eq!(std::fs::read_to_string(&target).unwrap(), "old");
+                assert_eq!(std::fs::read_to_string(error.file.path()).unwrap(), "new");
+                drop(reader);
+                persist_file(error.file, &target).unwrap();
+            }
+        }
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "new");
     }
 }

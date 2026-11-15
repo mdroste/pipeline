@@ -5,7 +5,7 @@ import {
   provenanceMarkdown as renderProvenanceMarkdown,
   type RunProvenance,
 } from "../../lib/runProvenance";
-import type { PipelineReport } from "../../lib/types";
+import type { PipelineReport } from "../../lib/reviewTypes";
 import type { RunManifest } from "../../lib/artifactTypes";
 import { reportStatusDisplay } from "../../lib/reportPresentation";
 
@@ -37,8 +37,8 @@ export default function ReportHeader({
 }: Props) {
   const display = reportStatusDisplay(status, report?.quality);
   return (
-    <header className="shrink-0 border-b border-gray-200/80 bg-white px-6 pb-4 pt-5 dark:border-gray-800 dark:bg-gray-950">
-      <div className="flex min-w-0 items-start gap-4">
+    <header className="shrink-0 border-b border-line bg-surface px-[var(--ui-page-gutter)] py-3">
+      <div className="flex min-w-0 flex-wrap items-start gap-3">
         {onBack && (
           <button
             type="button"
@@ -63,8 +63,8 @@ export default function ReportHeader({
             </svg>
           </button>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-[1_1_16rem]">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 display.tone === "good"
@@ -76,22 +76,22 @@ export default function ReportHeader({
                       : "bg-red-500"
               }`}
             />
-            <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+            <span className="text-ui-meta font-semibold text-ink">
               {display.heading}
             </span>
             {display.notes.length > 0 && (
-              <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+              <span className="min-w-0 break-words text-ui-meta text-ink-muted">
                 {display.notes.join(" · ")}
               </span>
             )}
           </div>
           <h1
-            className="mt-1 truncate text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50"
+            className="mt-1 line-clamp-2 break-words text-xl font-semibold tracking-tight text-ink"
             title={title}
           >
             {title}
           </h1>
-          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+          <p className="mt-1 truncate text-ui-meta text-ink-muted">
             {provenance ? (
               <>
                 {provenance.workflow}
@@ -129,7 +129,7 @@ export default function ReportHeader({
                     automatePath: runManifest.input_path,
                   })
                 }
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800"
+                className="ui-button ui-button--sm"
               >
                 Automate follow-up
               </button>

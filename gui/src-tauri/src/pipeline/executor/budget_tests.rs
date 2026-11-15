@@ -1,6 +1,7 @@
 use super::*;
 use crate::models::StepCallRecord;
-use crate::pipeline_config::StepConfig;
+use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
+use crate::settings::ModelSelection;
 
 fn step(id: &str, phase: Phase, agents: &[&str]) -> StepConfig {
     StepConfig {
@@ -350,6 +351,29 @@ fn fan_out_and_multi_agent_steps_widen_the_range() {
     // Orientation 1 + (2 agents + merge) low; (2 agents + merge) x 8 units high.
     assert_eq!(estimate.calls_low, 1 + 3);
     assert_eq!(estimate.calls_high, 1 + 24);
+}
+
+#[test]
+fn adaptive_estimate_counts_the_configured_specialists_on_each_provider() {
+    let settings = Settings {
+        default_orientation_agent: "codex".into(),
+        ..Default::default()
+    };
+    let mut workflow = config(vec![step("core", Phase::Parallel, &["claude", "codex"])]);
+    workflow.merge.enabled = true;
+    let mut schema = crate::auto_review::quick_orientation_schema();
+    schema[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] = 3.into();
+    workflow.orientation_schema = Some(schema);
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    // Orientation plus three calls (two providers and one merge) per reviewer.
+    assert_eq!((estimate.calls_low, estimate.calls_high), (13, 14));
 }
 
 #[test]

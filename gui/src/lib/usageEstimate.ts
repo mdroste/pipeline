@@ -11,6 +11,7 @@ export interface UsageEstimate {
   apiCostHigh?: number | null;
   unpricedCalls: number;
   subscriptionCallsHigh: number;
+  localCallsHigh?: number;
   maxCostUsd?: number | null;
   maxCalls?: number | null;
   maxMinutes?: number | null;

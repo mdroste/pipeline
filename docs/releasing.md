@@ -193,17 +193,29 @@ Before you publish, test the candidate by hand:
   them. Check that concurrent changes are preserved. Run an automation with a
   saved model, and confirm discovery authors can edit their paper folders
   while referees remain read-only.
-- Let Pipeline prepare command tools on macOS and Linux. Verify read-only and
-  working-copy access, protected-file denial, and child-process cleanup after
-  interruption and normal completion. On Windows, confirm its unavailable
-  state leaves project, research, web, and browser tools usable.
-- Check web search, downloads, and each command internet setting. Verify that
-  allowed sites work, denied sites fail, and commands cannot bypass the site
-  restriction. Enable **Browser interaction** and let setup finish. Sign in
-  directly, and confirm that stopping the turn closes it. Check private-address
-  and redirect denial.
+- Check native commands on macOS, Linux, and supported Windows 11. Verify
+  read-only and working-copy access, protected-file denial, and child-process
+  cleanup after interruption, timeout, and normal completion. On unsupported Windows
+  systems, confirm that project, research, and web tools remain usable.
+- Check web search, page reading, downloads, and each command internet setting.
+- On macOS, Linux, and supported Windows 11, run the native command probes:
+  `cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1`.
+  Confirm restricted reads and writes, allowed and blocked sites, direct-network
+  denial, and descendant cancellation. Windows Server CI checks compilation
+  and refusal on unsupported hosts; it does not qualify Windows 11 isolation.
+  On macOS, also check children detached through `posix_spawn` with `SETSID`,
+  including children that close their output pipes. They must stop with the command.
+  Confirm Python and subprocess commands work, and cleanup preserves unrelated commands.
+  Verify that allowed sites work, denied sites fail, and commands cannot bypass
+  the site restriction. Check private-address and redirect denial in web tools.
 - On Windows, choose **Reveal in folder** on a file whose path has a space, and
   confirm Explorer opens that folder with the file selected.
+- On macOS, Windows, and Linux, use **Save as PDF…** offline with no
+  command tools installed. Export a long report with inline and display equations,
+  a wide equation, and a table spanning pages. Check searchable text, complete
+  rows, page numbers, and consistent margins. Only the save dialog should appear.
+  Repeat with a destination containing spaces and Unicode, replace an existing
+  export, and cancel the save dialog. Check **Show in folder** and **Print…**.
 - On Windows, open a project on a mapped network drive. **Move to Trash** and
   **Discard changes** should refuse and leave the file in place. On a local
   project, check **Open externally** and **Reveal in folder** on a file in a
@@ -211,6 +223,11 @@ Before you publish, test the candidate by hand:
 - On Windows, test Claude inside WSL2 with paths containing spaces and Unicode,
   a separate Linux sign-in, and cancellation that stops Linux child processes.
   Check native ChatGPT commands and native research jobs separately.
+- On Windows with native TeX Live and MiKTeX, review a Beamer project from a path
+  containing spaces and Unicode. Check pdfLaTeX, XeLaTeX, and LuaLaTeX, included
+  files, overlays, and saved page images. Cancel compilation and quit Pipeline
+  during a build; confirm the compiler and its children stop. Check missing-engine
+  errors and that MiKTeX does not install missing packages or open prompts.
 - Restart the app and switch accounts to check saved usage reports. Check both
   usage windows, their reporting times, and the display after a window resets.
 - Run the 20 tasks in

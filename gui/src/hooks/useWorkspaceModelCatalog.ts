@@ -5,7 +5,7 @@ import {
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { WorkspaceModel } from "../lib/workbenchTypes";
+import type { WorkspaceModel } from "../lib/workbench/runtimeTypes";
 
 function loadCatalog(
   runtime: ConversationProvider,

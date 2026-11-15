@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isMessage, payloadText, roleFor } from "./workspaceTranscript";
-import type { TranscriptItem } from "./workbenchTypes";
+import type { TranscriptItem } from "./workbench/sessionTypes";
 
 function item(
   payload: TranscriptItem["payload"],

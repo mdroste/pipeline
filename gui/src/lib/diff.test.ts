@@ -1,11 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { lineDiff, hasChanges } from "./diff";
+import { lineDiff } from "./diff";
 
 describe("lineDiff", () => {
   it("marks identical text as all same", () => {
     const ops = lineDiff("a\nb\nc", "a\nb\nc");
     expect(ops.every((o) => o.type === "same")).toBe(true);
-    expect(hasChanges(ops)).toBe(false);
   });
 
   it("detects an inserted line", () => {
@@ -15,7 +14,6 @@ describe("lineDiff", () => {
       { type: "add", text: "b" },
       { type: "same", text: "c" },
     ]);
-    expect(hasChanges(ops)).toBe(true);
   });
 
   it("detects a deleted line", () => {
@@ -50,13 +48,12 @@ describe("lineDiff", () => {
     const ops = lineDiff(before, after);
     expect(ops).toHaveLength(3);
     expect(ops[1].text).toContain("omitted");
-    expect(hasChanges(ops)).toBe(true);
   });
 
   it("does not allocate per-line state for a huge identical output", () => {
     const text = "same line\n".repeat(100_000);
     const ops = lineDiff(text, text);
     expect(ops).toHaveLength(1);
-    expect(hasChanges(ops)).toBe(false);
+    expect(ops[0].type).toBe("same");
   });
 });

@@ -17,10 +17,8 @@ import {
   stataUsesLauncher,
 } from "../../lib/workbench/toolchains";
 import type { useResearchPanelController } from "./useResearchPanelController";
-import type {
-  ConversationSnapshot,
-  ExecutionProfile,
-} from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
+import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 
 type Panel = ReturnType<typeof useResearchPanelController>;
 type Props = Pick<

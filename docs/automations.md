@@ -1,28 +1,37 @@
 # Automations
 
-An automation runs a sequence of steps: conversation turns, reviews, checks,
-and pauses for your input. Use one for repeated work, such as drafting a
-paper, reviewing it, and revising it a set number of times.
+An automation runs project work now, later, or over several research rounds.
+Use one to follow up on a conversation, review and revise a paper, investigate
+a question, or develop research proposals.
 
 ## Start an automation
 
 1. Choose **Automations** in the sidebar. From a conversation, you can instead
    choose **+** (**Add to message**), then **Run an automation**.
-2. Choose **+ New automation**, then a template:
+2. Choose **+ New automation** from any automation tab, then a starting point:
    - **Review and revise** drafts or loads a paper, reviews it, and revises it.
    - **Follow up** sends a message to a conversation now or later.
    - **Wait for input** waits for your answer, then continues the
      conversation with it.
    - **Start empty** lets you add every step yourself.
+   - **Investigate a question** opens [research automation setup](#research-automations).
+   - **Discover research projects** opens [research discovery setup](#research-discovery).
 3. Choose the **Conversation**, fill in the template's fields, and choose
-   when it runs under **When**.
+   when it runs under **When** on **Setup & schedule**.
 4. Choose **Preview automation →**. Check the conversation, folder, reviews,
    limits, and start time, then choose **Start automation**.
 
-The **Active**, **Scheduled**, and **History** tabs list current work,
-schedules, and finished runs. Finished runs leave **History** 30 days after they
-end, once you've opened them, or if they saved no result. Their scheduled
-conversations move to the archive. Assistant steps use the conversation's
+Setup uses the full page width. **Steps & limits** holds the step editor,
+budget, and saved templates. **Change type** returns to the starting points.
+
+The **Active** and **History** tabs include regular automations, research
+investigations, and discovery runs. Each row identifies its type and opens its
+results and controls. **Scheduled** lists recurring schedules.
+
+Finished runs built from steps leave **History** 30 days after they end,
+once you've opened them, or if they saved no result. Their scheduled
+conversations move to the archive. Investigation and discovery results stay
+available in **History**. Assistant steps use the conversation's
 provider, saved model, thinking level, tools, and file permissions. This
 applies to subscription, API, and local connections. A step can choose another
 model; in that case, set its thinking level for that model.
@@ -47,7 +56,7 @@ final paper is always the last version reviewed. **Save paper…** saves it.
 
 If a revision leaves the paper unchanged, the automation asks for your
 attention. The revision step can include the manuscript text only up to
-about 20,000 words. For a longer paper, open **Definition (advanced)** and
+about 20,000 words. For a longer paper, open **Steps & limits** and
 have the step revise the file in the conversation's folder instead.
 
 ## Set a schedule
@@ -103,7 +112,39 @@ the notice appears the next time you open Pipeline:
   **Wait for input** step. A check whose inputs changed runs only after you
   approve it again in the project's **Results** view.
 
-**Activity log** keeps every earlier attempt and its output.
+**Activity log** keeps every earlier attempt and its output. If a step times out
+while its result is being saved, the automation stops advancing. **Check saved
+results and update status** can adopt the original result. An action that is
+still running cannot be submitted a second time.
+
+A group’s deadline starts when the run enters that group. Pausing the run or
+closing Pipeline does not stop the clock. Each step uses the shortest active
+timeout and the time left in its enclosing groups. A retry uses another action
+and does not extend a group’s deadline; start a new run if more time is needed.
+
+**Budget preview** in Research discovery gives the minimum actions needed for
+the requested shortlist and ranked papers. It also shows how many actions
+extra research rounds, reviews and replacements could take. You can start a
+smaller budget and retain partial work. Reaching the minimum does not
+guarantee eligible proposals, sound papers, or completion by the deadline.
+
+Set **API allowance (USD)** to limit estimated list-price spending across the
+run, including model calls inside Reviews and retries. Leave it blank for no
+dollar limit, or enter zero to prevent paid calls. With an allowance, a model
+without a known price cannot start a paid request. **Recorded usage** separates
+priced requests, unpriced requests, subscription work and local calls. A
+request with no confirmed usage keeps its reservation. The allowance uses
+estimated tokens before dispatch and reported tokens afterward; the provider’s
+invoice can differ.
+
+### Retrieve delivered files
+
+When a step delivers a file to a conversation, the conversation keeps its own
+copy. Open the conversation’s actions menu in the chat list and choose **Files
+from automations…**, then choose the file to save. A delivered folder saves as
+a ZIP. These copies stay available after the automation leaves **History** and
+travel with a research backup. Earlier deliveries can be copied when their source files and original delivery
+records are still available. The file list explains when a copy could not be recovered.
 
 ## Research automations
 
@@ -111,20 +152,23 @@ A research automation investigates a question over several rounds, with
 separate conversations to plan, investigate, and challenge the findings. Use
 one when the next step depends on what the investigation finds.
 
-1. Open **Automations → Research** and choose **+ New research automation**.
+1. Open **Automations**, choose **+ New automation**, then **Investigate a question**.
 2. Choose a **Source conversation** from a project.
 3. Choose a **Starting point**: **Theory investigation**, **Empirical
    investigation**, **Quantitative model**, **Literature investigation**,
    **Research discovery**, or **Project maintenance**.
-4. Edit the **Research question and scope**, **Current understanding**, and
-   **Completion criteria**, one per line.
-5. Set the limits. Every round and action draws on this one budget. See
+4. On **Research**, edit the **Research question and scope**, **Current
+   understanding**, and **Completion criteria**, one per line.
+5. Open **Limits** to set the shared budget for every round and action. See
    [Limits](#limits) for the defaults.
-6. Under **Computation and project changes**, choose the local checks and
-   saved analysis plans it may run. For project maintenance, choose scheduled
-   checks that wake it when something changes.
+6. Open **Tools & review** to choose project permissions, local checks, saved
+   analysis plans, and an additional review. For project maintenance, choose
+   monitors under **Wake on changes from these monitors**.
 7. Choose **Preview research automation →**, check **Plan and permissions**,
    then choose **Start research automation**.
+
+Setup uses the full page width. Switch between the settings tabs while keeping
+your entries; the preview button stays within reach as you scroll.
 
 | Tab | What it shows |
 | --- | --- |
@@ -134,6 +178,17 @@ one when the next step depends on what the investigation finds.
 | Methods | Proposed methods you can **Save for reuse** in this project |
 | Activity | Role conversations, checks, and other actions |
 | Brief | A report with evidence links, limitations, and open questions |
+
+Under **Claims and inspected evidence**, each assessment names the claim,
+its scope, the records inspected, and any objections that remain. A proof
+needs stated assumptions and a checked derivation. A numerical result needs
+the data version, procedure, checked output, and the location and precision
+of the reported number. A sourced interpretation needs an inspected passage.
+A null result or counterexample can meet a criterion within its tested scope.
+
+**Accept this assessment** records your decision about that round. It does
+not accept manuscript edits. Earlier assessments remain available, with no
+claim-level support or acceptance inferred from their original status.
 
 **Export brief…** saves the brief as Markdown. **Export complete automation
 record…** on the Activity tab saves everything as JSON.
@@ -160,24 +215,42 @@ edits** on. Edits stay in the working copy until you accept them in
 
 Research discovery turns a topic into proposals, investigations, and reviewed
 paper drafts. It uses the same provider as the project conversation you
-choose, or ChatGPT for a new project. Open **Automations → Research** and
-choose:
+choose, or ChatGPT for a new project. Choose **+ New automation**, then
+**Discover research projects**. Under **Mode**, choose:
 
-- **Research discovery — choose projects yourself** pauses at a shortlist.
-  Pick proposals under **Choose projects to develop**, then choose **Develop
-  selected projects**. It waits as long as you need, and **Finish within
-  (hours)** doesn't count that time.
-- **Research discovery — let Pipeline choose projects** picks proposals itself
-  and continues without questions.
+Under **Who chooses the projects?**, choose one of two options:
 
-Describe your topic under **Research topics and questions**. Under **Project
-context**, choose a project conversation or **Create a project for this
-research**. Then choose **Start research discovery**.
+- **I’ll choose** pauses at the shortlist. Pick proposals under **Choose
+  projects to develop**, then choose **Develop selected projects**. Time
+  spent waiting for your selection does not count toward **Finish within
+  (hours)**.
+- **Let Pipeline choose** selects proposals and continues without questions.
+
+Use **Portfolio plan** to set how many projects to explore, shortlist, and
+develop into papers. Under **Optional settings**, expand **Sources & tools**,
+**Research & review**, **Models & ranking**, or **Resource limits** to change
+the defaults. Choose **Start research discovery** when ready. **Portfolio
+history** opens earlier runs; **Return to setup** brings you back to your draft.
+
+For a ChatGPT or Claude Code conversation, **Research & review → Idea
+subagents** lets you request 1–8 native subagents for the idea stage. For
+example, request four subagents and 100 candidate projects. The lead gives
+the four children different angles on the topic, waits for their results,
+and combines their sketches into 100 starting points. Pipeline develops and
+screens those proposals in batches. The team runs once per portfolio and
+uses one action per requested child plus one for the lead. Set the count to
+zero to use the usual proposal batches. A provider shortfall appears under
+**Needs attention**.
 
 Each chosen proposal gets its own author conversation and folder. Authors
 can create and edit drafts there using project file tools with any connection.
 Referees have read-only access to the research record and manuscript, without
 the author’s chat. The original project folder stays separate.
+
+While a run is open, **Activity feed** shows recent milestones, assistant updates,
+and tool activity. **Last activity** shows how recently work was observed.
+**Current step** shows elapsed time, and agent status lists each idea agent as
+it starts and finishes. Open proposals and papers refresh as results arrive.
 
 | Setting | Default | Range |
 | --- | --- | --- |
@@ -200,6 +273,16 @@ the author’s chat. The original project folder stays separate.
 
 These counts are targets. Missing data or unresolved objections can leave
 fewer papers. The final report compares the papers and lists unfinished work.
+
+A delivered draft can still have unresolved claims. **Evidence requirements
+met** means the assessor supplied the required inspections for the frozen
+version. Open **Claims and inspected evidence** to see what was checked. The
+record distinguishes an investigator’s account, a source version, a captured
+file and a completed check. Pipeline compares the number read from the cited execution with the value the
+assessor read from the table. It does not independently verify a proof or
+interpret a table. **Accept this
+assessment** records your decision about that paper version. The report and
+research export keep delivery, assessment, and acceptance separate.
 
 Each manuscript includes Markdown, LaTeX, BibTeX, evidence references, and a
 response to reviewers. **Export papers and research** saves a ZIP. **Export
@@ -239,8 +322,8 @@ A project keeps its to-do list under **Notes → Action items**. See
 
 Every automation is a JSON definition. Open **Definition (advanced)** in the
 builder to **Copy definition**, **Import automation** from a file up to
-0.25 MB, use **Saved automations…**, or **Save as template**. **Named inputs**
-supplies values that steps can use. A started automation offers **Export
+0.25 MB, or set **Named inputs** that steps can use. **Steps & limits** holds
+**My templates** and **Save as template**. A started automation offers **Export
 definition…** under **Steps and limits**.
 
 **+ Add step…** adds these steps:

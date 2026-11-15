@@ -24,6 +24,12 @@ Each conversation remembers its provider. New conversations start on your
 Switching providers gives the next provider recent conversation history. Automations use the conversation’s provider and saved model unless
 a step selects another model.
 
+In a conversation, open the model picker beside the message field. Choose a
+connection from the dropdown at the top, then select a model. Longer lists
+include **Search models**. Point to a model or use the arrow keys to read its
+description. Choose an effort level from **Thinking**. Expand **Account & usage**
+for ChatGPT account details, or **Claude usage** for Claude's usage reports.
+
 ChatGPT and Claude Code use your subscription. If you're signed out,
 Pipeline asks you to sign in again instead of switching to an API key.
 
@@ -115,7 +121,7 @@ on in your Claude account.
 ### What Claude can do in a conversation
 
 Claude uses the assistant instructions, selected project context, and research
-tools enabled for the conversation. File, web, and browser access use the same
+tools enabled for the conversation. File, web, and command access use the same
 settings as ChatGPT; see [Conversation access](#conversation-access).
 
 On macOS, Claude uses the system command sandbox. On Linux, install
@@ -160,7 +166,6 @@ conversation: **Read only** is **Inspect**, and **Allow edits** is **Edit**.
 | **Internet access for commands** | Let commands reach the internet, for example to download data or install packages. |
 | **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. In ChatGPT and Claude Code conversations, blank means public internet. API and local or custom server conversations need at least one site: while **Internet access for commands** is on and this is blank, commands don't run. |
 | **Web search** | Search the web and read public pages. With Edit access and a project, download files into new project paths. |
-| **Browser interaction** | Open and operate a separate, visible browser for this conversation. |
 
 The assistant checks that a file has not changed since it read it before
 saving an edit. Creating a file never replaces an existing one. Changes in
@@ -184,31 +189,16 @@ The shared web search tool sends queries to Bing and returns links and
 snippets. Subscription providers can also use their native search tools. Read
 the original pages before relying on search results.
 
-Turning on **Web search** lets the assistant find and read public pages without
-installing a browser. It does not give commands internet access or let the
-assistant click and type on websites. Enable those separately with
-**Internet access for commands** and **Browser interaction**.
+Turning on **Web search** lets the assistant find and read public pages.
+**Internet access for commands** controls command access separately.
 **Allowed command sites** applies to commands; it does not restrict web search
-or the browser. Web downloads are limited to 32 MB per file. Pipeline keeps
+or page reading. Web downloads are limited to 32 MB per file. Pipeline keeps
 the source URL, retrieval time, and file fingerprint with the download result.
 Web page reads return up to 128 KB of text from a response of up to 2 MB.
 These web tools accept public HTTP and HTTPS addresses on standard ports.
 
-Enabling **Browser interaction** starts browser setup. Pipeline downloads and
-manages the required software; you do not need to install Node.js separately.
-Setup also runs automatically the first time a browser tool is used.
-**Access & inheritance** shows progress, **Cancel setup**, and a retry button if
-setup fails. Linux may also need
-[Playwright's browser system dependencies](https://playwright.dev/docs/browsers#install-system-dependencies).
-Each conversation has its own browser profile, which remembers its sign-ins.
-Enter passwords and complete CAPTCHA prompts directly in the visible window.
-When the assistant asks you to sign in, the window stays open for 10 minutes
-after its reply. Finish in the window, then send a message, and the assistant
-continues there. The browser then closes after 10 idle minutes; its profile
-stays on this device.
-Browser downloads use the conversation's file download tool.
-Pages can redirect to other sites, but images, scripts, and other parts of a
-page that redirect to a different site don't load.
+For pages that require signing in or interacting with a website, use your
+browser and bring downloaded material into the project.
 
 The ChatGPT model picker shows both usage windows when available. If refresh
 fails, it shows a saved report for the signed-in account, with its time. Expired
@@ -280,29 +270,31 @@ for a remote server. Model requirements are described below.
 ## API conversations
 
 API conversations use your assistant instructions and recent history. They can
-use enabled project, research, web search, and browser tools when the model
-supports function calling. Browser screenshots and paper images require a
-model that accepts images.
+use enabled project, research, web search, and page-reading tools when the model
+supports function calling. Paper images require a model that accepts images.
 
 In a conversation with no project, OpenAI, Anthropic, and Gemini models can run
 commands in the conversation's [private working folder](projects.md#work-with-files-outside-a-project).
 **Local / custom** models get commands there once you choose **Allow edits** or
 enable a tool. Until then they can chat without function calling.
 
-Pipeline prepares command software automatically when an API or local model
-first runs a command, or when you open **Access & inheritance** for that
-conversation. The first setup needs internet access. Later use works offline once setup is complete.
-Pipeline supplies its own runtime and restricts which files and websites commands
-can access. General commands require macOS, or Linux with `bubblewrap` and `socat`.
+Commands are included with Pipeline and work offline. They run in Bash on macOS
+and Linux, and PowerShell on Windows. Pipeline restricts access to the selected
+folder and a temporary folder, and limits commands to two minutes.
 
-Commands follow **Internet access for commands** and its allowed sites. With
-**Access mode → Edit** and **File changes → Review copy**, commands can change
+Linux needs `bubblewrap`. Command internet access also needs `slirp4netns`,
+`iproute2`, `iptables`, and `util-linux`. Windows needs an updated Windows 11
+installation with native ProcessContainer support. **Access & inheritance**
+shows whether commands are available. Unsupported systems can still use
+research commands configured in [Command settings](analysis-and-writing.md#command-settings).
+
+Commands follow **Internet access for commands** and **Allowed command sites**.
+API and local models need named sites when command internet access is enabled.
+Direct connections outside those sites are blocked.
+
+With **Access mode → Edit** and **File changes → Review copy**, commands can change
 files in the automatically prepared copy. **Direct edits** uses Pipeline's
 file tools for changes to the main project and lets you undo those changes.
-
-On Windows, API and local models can run research commands you configure in
-[Command settings](analysis-and-writing.md#command-settings), but cannot run general commands.
-Project, research, web, and browser tools remain available.
 
 Replies stream as they arrive; a custom server that returns a complete reply
 shows it when the call finishes. Available **Thinking** choices depend on the

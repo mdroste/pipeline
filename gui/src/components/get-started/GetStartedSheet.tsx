@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import useModalDialog from "../../hooks/useModalDialog";
-import type { DepsReport } from "../../lib/types";
+import type { DepsReport } from "../../lib/settingsTypes";
 import { Button, IconButton } from "../../ui";
 import { Icon } from "../../ui/icons";
 import ConnectionsStep from "./ConnectionsStep";
@@ -57,7 +57,7 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="flex max-h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-ui-lg border border-line bg-raised text-ink shadow-ui-3 outline-none sm:max-h-[calc(100vh-3rem)]"
+        className="ui-overlay-frame flex max-h-[calc(100vh-1rem)] w-full max-w-2xl flex-col overflow-hidden outline-none sm:max-h-[calc(100vh-3rem)]"
       >
         <header className="shrink-0 border-b border-line px-4 pb-3 pt-4 sm:px-5">
           <div className="flex items-start gap-3">
@@ -84,7 +84,7 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
                   type="button"
                   aria-current={index === step ? "step" : undefined}
                   onClick={() => onStepChange(index)}
-                  className={`rounded-full px-2.5 py-1 text-ui-meta font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                  className={`rounded-ui-sm px-2.5 py-1 text-ui-meta font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                     index === step
                       ? "bg-inverse text-on-inverse"
                       : "bg-sunken text-ink-muted hover:text-ink"
@@ -162,7 +162,7 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
           )}
         </div>
 
-        <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-line px-4 py-3 sm:px-5">
+        <footer className="ui-overlay-footer !mt-0 shrink-0 items-center border-t border-line px-4 py-3 sm:px-5">
           <Button variant="link" onClick={onClose}>
             Skip for now
           </Button>

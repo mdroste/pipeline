@@ -1,6 +1,6 @@
-//! What the API and Claude turn loops have in common and nothing more: a clock
-//! that keeps model time apart from host time, and the sink for live events.
-//! Neither carries runtime state, so each turn loop keeps its own lifecycle.
+//! Shared timing, partial text, and event projection for API and Claude turns.
+
+use super::commands::run_store;
 use crate::agent_runtime::events::NormalizedEvent;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -86,11 +86,35 @@ impl UnsavedText {
 /// Where a turn's live events go once they are saved.
 pub(crate) trait TurnEvents: Send + Sync {
     fn publish(&self, event: &NormalizedEvent) -> Result<(), String>;
+
+    fn publish_request(&self, event: NormalizedEvent) -> Result<(), String> {
+        self.publish(&event)
+    }
+}
+
+/// Persist the event before exposing it to the live transcript.
+pub(crate) async fn persist_and_publish(
+    binding: &str,
+    sink: &impl TurnEvents,
+    event: NormalizedEvent,
+) -> Result<(), String> {
+    let binding = binding.to_owned();
+    let persisted = event.clone();
+    run_store(move |store| store.project_codex_event(&binding, &persisted))
+        .await
+        .map_err(|error| error.message)?;
+    sink.publish(&event)
 }
 
 impl TurnEvents for tauri::AppHandle {
     fn publish(&self, event: &NormalizedEvent) -> Result<(), String> {
+        super::tasks::activity::observe(event);
         self.emit("workbench:event", event)
+            .map_err(|error| error.to_string())
+    }
+
+    fn publish_request(&self, event: NormalizedEvent) -> Result<(), String> {
+        self.emit("workbench:event", super::commands::with_session(event))
             .map_err(|error| error.to_string())
     }
 }

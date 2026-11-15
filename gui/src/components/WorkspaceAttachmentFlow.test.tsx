@@ -7,7 +7,7 @@ import type {
   ConversationSnapshot,
   WorkbenchSession,
   Workspace,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 
 const mocks = vi.hoisted(() => ({
   modelCatalog: vi.fn(),

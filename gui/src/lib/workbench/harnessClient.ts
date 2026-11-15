@@ -6,7 +6,7 @@ import type {
   EffectiveHarness,
   WorkspaceConfig,
   HarnessPreset,
-} from "../workbenchTypes";
+} from "./harnessTypes";
 
 export const harnessClient = {
   harnessCatalog(workspaceId: string | null) {

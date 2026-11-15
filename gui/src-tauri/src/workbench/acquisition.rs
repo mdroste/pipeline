@@ -106,22 +106,6 @@ async fn bytes(request: reqwest::RequestBuilder, max: usize) -> WorkbenchResult<
     }
     body(response, max).await
 }
-/// A bounded response of any status, so connectors can report service errors.
-#[cfg(test)]
-pub(crate) struct Fetched {
-    pub status: u16,
-    pub body: Vec<u8>,
-}
-#[cfg(test)]
-pub(crate) async fn fetch(
-    request: reqwest::RequestBuilder,
-    max: usize,
-) -> WorkbenchResult<Fetched> {
-    let response = send(request).await?;
-    let status = response.status().as_u16();
-    let (body, _) = body(response, max).await?;
-    Ok(Fetched { status, body })
-}
 const CROSSREF_CONTACT: &str = "crossref_contact";
 /// The researcher's own Crossref contact, sent as `mailto` when set.
 pub fn crossref_contact(store: &Store) -> WorkbenchResult<Option<String>> {

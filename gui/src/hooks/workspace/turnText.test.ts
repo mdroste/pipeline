@@ -5,7 +5,7 @@ import {
   unsavedTurnText,
   type TurnText,
 } from "./turnText";
-import type { ConversationSnapshot } from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 
 type Item = ConversationSnapshot["items"][number];
 type Turn = ConversationSnapshot["turns"][number];

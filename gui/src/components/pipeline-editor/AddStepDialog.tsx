@@ -1,10 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   AutoReviewCatalog,
   AutoReviewCatalogRole,
-  Phase,
-} from "../../lib/types";
+} from "../../lib/reviewCatalogTypes";
+import type { Phase } from "../../lib/workflowTypes";
 import useModalDialog from "../../hooks/useModalDialog";
 import { MAX_STEP_LABEL_CHARS } from "./editorState";
 import AnalyzerChoice, { type AnalyzerSelection } from "./AnalyzerChoice";
@@ -162,7 +162,8 @@ function AddStepDialog({
     let stale = false;
     setCatalogLoading(true);
     setCatalogError(null);
-    invoke<AutoReviewCatalog>("get_auto_review_catalog")
+    workflowSchemaClient
+      .catalog()
       .then((value) => {
         if (stale) return;
         setCatalog(value);
@@ -543,8 +544,8 @@ function AddStepDialog({
                         title="Recommended context"
                         description={
                           phase === "parallel"
-                            ? "Primary input and orientation map."
-                            : "Earlier reports and orientation map."
+                            ? "Primary input and document overview."
+                            : "Earlier reports and document overview."
                         }
                         onChange={() => setContextPreset("standard")}
                       />
@@ -553,7 +554,7 @@ function AddStepDialog({
                         value="input"
                         checked={contextPreset === "input"}
                         title="Primary input only"
-                        description="Read the selected document or folder, without the orientation map."
+                        description="Read the selected document or folder, without the document overview."
                         onChange={() => setContextPreset("input")}
                       />
                       <ChoiceCard

@@ -382,7 +382,7 @@ export default function ResizeHandle({
       >
         <span
           aria-hidden="true"
-          className={`absolute bg-gray-400 opacity-40 group-hover:opacity-100 group-focus-visible:opacity-100 dark:bg-gray-500 ${vertical ? "inset-x-0 top-1/2 h-px" : "inset-y-0 left-1/2 w-px"}`}
+          className={`absolute bg-[var(--ui-muted)] opacity-40 group-hover:opacity-100 group-focus-visible:bg-[var(--ui-focus)] group-focus-visible:opacity-100 ${vertical ? "inset-x-0 top-1/2 h-px" : "inset-y-0 left-1/2 w-px"}`}
         />
       </div>
       {options && (

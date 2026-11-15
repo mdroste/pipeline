@@ -60,6 +60,7 @@ function restoredExpanded(id: string): Set<string> {
 }
 export default function FileBrowser({
   adapter,
+  label = "Project files",
   paths,
   activePath,
   onOpen,
@@ -71,6 +72,7 @@ export default function FileBrowser({
   searchRef,
 }: {
   adapter: FileAdapter;
+  label?: string;
   paths: string[];
   activePath?: string;
   onOpen: (location: FileLocation) => void;
@@ -625,11 +627,7 @@ export default function FileBrowser({
           )}
         </div>
       ) : (
-        <ul
-          role="tree"
-          aria-label="Project files"
-          className="file-browser-tree"
-        >
+        <ul role="tree" aria-label={label} className="file-browser-tree">
           {rows.map(({ entry, depth }, index) => {
             const folder = entry.kind === "folder";
             const open = expanded.has(entry.path);

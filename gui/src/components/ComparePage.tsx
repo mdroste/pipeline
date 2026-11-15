@@ -3,7 +3,7 @@ import { reportExportClient } from "../lib/reportExportClient";
 import { artifactClient } from "../lib/artifactClient";
 import { useState, useEffect, useMemo } from "react";
 import { lineDiff, type DiffOp } from "../lib/diff";
-import type { PipelineReport, StepOutput } from "../lib/types";
+import type { PipelineReport, StepOutput } from "../lib/reviewTypes";
 import type { RunManifest } from "./ArtifactExplorer";
 import CompactMarkdown from "./report-viewer/CompactMarkdown";
 
@@ -206,7 +206,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-6 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
+      <div className="flex flex-wrap items-center gap-3 px-6 py-2.5 border-b border-line bg-surface shrink-0">
         <button
           onClick={onBack}
           className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
@@ -219,14 +219,14 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
         <button
           onClick={() => void exportDiff()}
           disabled={loading || !canExport}
-          className="ml-auto px-3 py-1 text-xs rounded-lg border border-gray-300 dark:border-gray-700 disabled:opacity-40"
+          className="ui-button ui-button--sm ml-auto"
         >
           Export diff…
         </button>
         <button
           onClick={runReconcile}
           disabled={reconciling || loading || !reportsLoaded}
-          className="px-3 py-1 text-xs rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
+          className="ui-button ui-button--sm ui-button--primary"
           title="Ask AI which concerns were addressed, which remain, and which are new. Uses one model call."
         >
           {reconciling ? "Reconciling…" : "Compare findings with AI"}
@@ -240,11 +240,9 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
           </div>
         )}
         {loading ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
-            Loading both reports…
-          </p>
+          <p className="text-sm text-ink-muted px-2">Loading both reports…</p>
         ) : !reportsLoaded ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
+          <p className="text-sm text-ink-muted px-2">
             These reports cannot be compared because one of them could not be
             opened.
           </p>
@@ -279,7 +277,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                       manifest?.profile_name ||
                       "Untitled report"}
                   </p>
-                  <p className="mt-1 break-all font-mono text-[0.6875rem] text-gray-500 dark:text-gray-400">
+                  <p className="mt-1 break-all font-mono text-[0.6875rem] text-ink-muted">
                     {id}
                   </p>
                   <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -300,7 +298,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
               ))}
             </div>
             {stepKeys.length === 0 && (
-              <p className="px-2 text-sm text-gray-500 dark:text-gray-400">
+              <p className="px-2 text-sm text-ink-muted">
                 Neither report has any step output, so there is no difference to
                 show or export.
               </p>
@@ -310,7 +308,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
               {comparisonSummary.changed} changed · {comparisonSummary.added}{" "}
               added · {comparisonSummary.removed} removed ·{" "}
               {comparisonSummary.unchanged} unchanged.
-              <span className="ml-2 text-gray-500 dark:text-gray-400">
+              <span className="ml-2 text-ink-muted">
                 Diffs show{" "}
                 <span className="text-red-700 dark:text-red-400">− older</span>{" "}
                 and{" "}
@@ -362,11 +360,11 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                       </span>
                     )}
                     <span
-                      className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-gray-500 dark:text-gray-400"}`}
+                      className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-ink-muted"}`}
                     >
                       {changed ? "changed" : "unchanged"}
                     </span>
-                    <span className="text-gray-500 dark:text-gray-400 text-xs">
+                    <span className="text-ink-muted text-xs">
                       {isOpen ? "▾" : "▸"}
                     </span>
                   </button>

@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import useDraftText from "../../hooks/useDraftText";
-import type { InputSlot, StepConfig } from "../../lib/types";
+import type { InputSlot, StepConfig } from "../../lib/workflowTypes";
 import ArtifactContextEditor from "./ArtifactContextEditor";
 
 /** A condition value as typed. A string that would read as JSON keeps its
@@ -274,7 +274,7 @@ function AdvancedStepOptions({
                     An upstream step's output matches a pattern
                   </option>
                   <option value="survey_path">
-                    The survey (orientation) JSON matches
+                    The document overview JSON matches
                   </option>
                 </select>
                 {cond?.kind === "output_matches" && (

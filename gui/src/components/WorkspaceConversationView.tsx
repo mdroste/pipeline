@@ -1,3 +1,4 @@
+import { useWorkspacePaneVisible } from "./workspacePaneVisibility";
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
 import {
@@ -15,9 +16,9 @@ import {
   useSyncExternalStore,
 } from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
-import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
 import { conversationClient } from "../lib/workbench/conversationClient";
+import type { FileLocation } from "../lib/fileLinks";
 import { turnFailures } from "../lib/workspaceTurnLabels";
 import type { MutableRefObject, ReactNode, RefObject } from "react";
 import TranscriptMessage, {
@@ -35,7 +36,7 @@ import "../ui/page.css";
 import type {
   ConversationSnapshot,
   TranscriptItem,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 import ReportIssueLink from "./ReportIssueLink";
 interface Props {
   assistantName?: string;
@@ -47,6 +48,7 @@ interface Props {
   /** A file drag is over the conversation, or dropped files are importing. */
   dropState?: FileDropState;
   header: ReactNode;
+  onOpenFile?: (location: FileLocation) => void;
   requests: ReactNode;
   composerMenu: ReactNode;
   contextTray: ReactNode;
@@ -120,6 +122,7 @@ function LiveMessage({
     </article>
   );
 }
+
 export default function WorkspaceConversationView({
   assistantName = "ChatGPT",
   taskCards,
@@ -129,6 +132,7 @@ export default function WorkspaceConversationView({
   composerSetup,
   dropState = "idle",
   header,
+  onOpenFile,
   requests,
   composerMenu,
   contextTray,
@@ -162,6 +166,7 @@ export default function WorkspaceConversationView({
   onNewer,
   followLatestRef,
 }: Props) {
+  const visible = useWorkspacePaneVisible();
   const streaming = useSyncExternalStore(streamStore.subscribe, () =>
     Boolean(streamStore.get()),
   );
@@ -188,35 +193,17 @@ export default function WorkspaceConversationView({
   const fileNavigation = useMemo(() => {
     const sessionId = snapshot?.session.id;
     if (!sessionId) return null;
-    const workspaceId = snapshot?.workspace?.id;
     const checkpointId = snapshot.session.overrides?.projectCheckpointId;
-    const adapter = workspaceId
-      ? workspaceFileAdapter({
-          workspaceId,
-          checkpointId: typeof checkpointId === "string" ? checkpointId : null,
-        })
-      : null;
     return {
       path: "conversation.md",
-      root: snapshot.workspace?.root ?? undefined,
-      open: (location: import("../lib/fileLinks").FileLocation) => {
-        if (!workspaceId || !snapshot.workspace?.root || checkpointId)
-          return conversationClient.openConversationFile(
-            sessionId,
-            location.path,
-          );
-        sessionStorage.setItem(
-          `pipeline.openFile.${workspaceId}`,
-          JSON.stringify(location),
-        );
-        appEvents.emit("open-file", { workspaceId, location });
-      },
-      openAbsolute: (path: string) =>
-        conversationClient.openConversationFile(sessionId, path),
+      root: checkpointId ? undefined : (snapshot.workspace?.root ?? undefined),
+      open: onOpenFile ?? (() => {}),
+      openAbsolute: onOpenFile ?? (() => {}),
       image: async (path: string) => {
-        const file = adapter
-          ? await adapter.read(path)
-          : await conversationClient.readConversationFile(sessionId, path);
+        const file = await conversationClient.readConversationFile(
+          sessionId,
+          path,
+        );
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("Image unavailable");
         return `data:${file.mime};base64,${file.base64}`;
@@ -224,9 +211,9 @@ export default function WorkspaceConversationView({
     };
   }, [
     snapshot?.session.id,
-    snapshot?.workspace?.id,
     snapshot?.workspace?.root,
     snapshot?.session.overrides?.projectCheckpointId,
+    onOpenFile,
   ]);
   const { sendShortcut } = useAppPreferences();
   const shortcut =
@@ -362,11 +349,13 @@ export default function WorkspaceConversationView({
               </div>
             </article>
           )}
-          <LiveMessage
-            store={streamStore}
-            assistantName={assistantName}
-            active={active}
-          />
+          {visible && (
+            <LiveMessage
+              store={streamStore}
+              assistantName={assistantName}
+              active={active}
+            />
+          )}
           {taskCards}
           {transcriptEnd < totalItems && (
             <button

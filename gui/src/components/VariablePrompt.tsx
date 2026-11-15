@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { inputSlotExtensions } from "../lib/pipelineHelpers";
-import type { VarSpec, InputSlot } from "../lib/types";
+import type { VarSpec, InputSlot } from "../lib/workflowTypes";
 import useModalDialog from "../hooks/useModalDialog";
 import ReportIssueLink from "./ReportIssueLink";
 

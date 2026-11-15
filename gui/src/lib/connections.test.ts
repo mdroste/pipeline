@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { connectionAvailability, providerAvailability } from "./connections";
-import type { DepsReport, DepStatus, Settings } from "./types";
+import type { DepsReport, DepStatus, Settings } from "./settingsTypes";
 
 const settings = {
   claude_access_mode: "subscription",

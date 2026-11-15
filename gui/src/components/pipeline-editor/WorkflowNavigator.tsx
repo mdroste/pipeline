@@ -1,4 +1,9 @@
-import { useState } from "react";
+import "./WorkflowNavigator.css";
+import { useId, useRef, useState } from "react";
+import useTabList from "../../hooks/useTabList";
+import Button from "../../ui/Button";
+import { Menu, MenuItem, MenuSeparator } from "../../ui/Menu";
+import { Icon } from "../../ui/icons";
 
 import { lintCrossStepReferences } from "../../lib/pipelineHelpers";
 import WaveDiagram from "../WaveDiagram";
@@ -77,7 +82,25 @@ export function WorkflowNavigator({
     setEditorMode,
     setAddStepOpen,
   } = view;
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileTrigger = useRef<HTMLButtonElement>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportTrigger = useRef<HTMLButtonElement>(null);
+  const exportId = useId();
+  const navigatorIds =
+    editorMode === "advanced"
+      ? (["steps", "overview", "schemas"] as const)
+      : (["steps", "overview"] as const);
+  const navigatorTabs = useTabList(
+    navigatorIds,
+    navigatorView,
+    (next) => {
+      setNavigatorView(next);
+      if (next === "schemas" && editing !== "orientation" && !editingStep)
+        setEditing("orientation");
+    },
+    "manual",
+  );
   const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
     "pipeline.ui.workflowPanelWidth",
     420,
@@ -115,7 +138,8 @@ export function WorkflowNavigator({
             Review designer
           </h2>
           <div
-            className="mt-2 inline-flex rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
+            className="ui-segmented mt-2"
+            role="group"
             aria-label="Editor detail level"
           >
             {(["basic", "advanced"] as const).map((mode) => (
@@ -128,7 +152,6 @@ export function WorkflowNavigator({
                   if (mode === "basic" && navigatorView === "schemas")
                     setNavigatorView("steps");
                 }}
-                className={`rounded-md px-2.5 py-1 text-[0.6875rem] font-medium ${editorMode === mode ? "bg-white shadow-sm dark:bg-gray-700" : "text-gray-500 dark:text-gray-400"}`}
               >
                 {mode === "basic" ? "Basic" : "Advanced"}
               </button>
@@ -194,43 +217,11 @@ export function WorkflowNavigator({
           </button>
         </div>
         {activeInvalid && (
-          <p
-            role="alert"
-            className="rounded-lg bg-amber-50 px-2 py-1.5 text-[0.6875rem] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-          >
+          <p role="alert" className="ui-notice ui-notice--warning">
             This saved review design can't run until it is repaired. Fix it here
             and save, or export it to keep a copy. Reason: {activeInvalid}
           </p>
         )}
-        <div className="flex gap-1">
-          <button
-            onClick={handleDuplicateProfile}
-            disabled={profileMutationPending}
-            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
-          >
-            Duplicate
-          </button>
-          <button
-            onClick={handleRenameProfile}
-            disabled={profileMutationPending}
-            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
-          >
-            Rename
-          </button>
-          <button
-            onClick={handleDeleteProfile}
-            disabled={
-              profileMutationPending ||
-              profiles.find((profile) => profile.id === activeProfile)?.builtin
-            }
-            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-red-600 hover:bg-red-50
-                         dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-950/40
-                         rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
-                         disabled:hover:bg-transparent"
-          >
-            Delete
-          </button>
-        </div>
       </div>
 
       <WorkflowWarnings
@@ -249,33 +240,10 @@ export function WorkflowNavigator({
         <div
           role="tablist"
           aria-label="Review navigator view"
-          className="grid grid-cols-3 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
+          className="ui-tabs"
         >
-          {(editorMode === "advanced"
-            ? (["steps", "overview", "schemas"] as const)
-            : (["steps", "overview"] as const)
-          ).map((view) => (
-            <button
-              key={view}
-              type="button"
-              role="tab"
-              aria-selected={navigatorView === view}
-              onClick={() => {
-                setNavigatorView(view);
-                if (
-                  view === "schemas" &&
-                  editing !== "orientation" &&
-                  !editingStep
-                ) {
-                  setEditing("orientation");
-                }
-              }}
-              className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                navigatorView === view
-                  ? "bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-              }`}
-            >
+          {navigatorIds.map((view) => (
+            <button key={view} {...navigatorTabs.tabProps(view)}>
               {view === "steps"
                 ? "Steps"
                 : view === "overview"
@@ -287,7 +255,15 @@ export function WorkflowNavigator({
       </div>
 
       {/* Primary workflow navigator. The overview replaces rather than duplicates the list. */}
-      <div className="flex-1 overflow-y-auto">
+      {navigatorIds
+        .filter((id) => id !== navigatorView)
+        .map((id) => (
+          <div key={id} {...navigatorTabs.panelProps(id)} hidden />
+        ))}
+      <div
+        {...navigatorTabs.panelProps(navigatorView)}
+        className="flex-1 overflow-y-auto"
+      >
         {navigatorView === "overview" ? (
           <WaveDiagram
             compact
@@ -319,7 +295,7 @@ export function WorkflowNavigator({
             </div>
             <button
               type="button"
-              aria-label="Orientation schema"
+              aria-label="Document overview schema"
               onClick={() => setEditing("orientation")}
               className={`w-full border-b border-gray-100 px-4 py-3 text-left transition-colors dark:border-gray-800 ${
                 !editingStep
@@ -330,7 +306,7 @@ export function WorkflowNavigator({
               <span className="flex items-center justify-between gap-3">
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
-                    Orientation map
+                    Document overview
                   </span>
                   <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     Preprocessing JSON survey
@@ -423,11 +399,7 @@ export function WorkflowNavigator({
               </button>
               <button
                 type="button"
-                aria-label={
-                  autoReview
-                    ? "Orientation & classification"
-                    : "Orientation map"
-                }
+                aria-label="Document bundle preparation"
                 onClick={() =>
                   setEditing(editing === "orientation" ? null : "orientation")
                 }
@@ -438,13 +410,11 @@ export function WorkflowNavigator({
                 }`}
               >
                 <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
-                  {autoReview
-                    ? "Orientation & classification"
-                    : "Orientation map"}
+                  Document bundle preparation
                 </span>
                 <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   {autoReview
-                    ? "Maps the paper and picks reviewers"
+                    ? "Prepares the document and chooses reviewers"
                     : "Maps the input before review"}
                 </span>
               </button>
@@ -452,8 +422,8 @@ export function WorkflowNavigator({
 
             {/* Parallel section */}
             <div>
-              <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950 sticky top-0 z-[1]">
-                <span className="text-[0.625rem] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
+              <div className="px-4 py-1.5 bg-surface sticky top-0 z-[1]">
+                <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted font-medium">
                   Parallel
                 </span>
               </div>
@@ -473,9 +443,9 @@ export function WorkflowNavigator({
                 </div>
               ))}
               {autoReview && (
-                <div className="border-t border-blue-100 dark:border-blue-950/60">
-                  <div className="bg-blue-50/60 px-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
-                    Auto-filled from orientation
+                <div className="border-t border-line">
+                  <div className="bg-sunken px-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-blue-700 dark:bg-sunken dark:text-blue-300">
+                    Selected for this document
                   </div>
                   <AdaptiveAgentsRow
                     count={adaptiveAgentCount}
@@ -511,8 +481,8 @@ export function WorkflowNavigator({
 
             {/* Sequential section */}
             <div>
-              <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950 sticky top-0 z-[1]">
-                <span className="text-[0.625rem] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
+              <div className="px-4 py-1.5 bg-surface sticky top-0 z-[1]">
+                <span className="text-[0.625rem] uppercase tracking-wider text-ink-muted font-medium">
                   Sequential
                 </span>
               </div>
@@ -631,68 +601,86 @@ export function WorkflowNavigator({
         </div>
         {/* Export/Import */}
         <div className="flex gap-2 relative">
-          <div className="flex-1 relative">
-            <button
+          <div className="flex-1">
+            <Button
+              ref={exportTrigger}
+              size="sm"
+              className="w-full"
+              aria-haspopup="menu"
+              aria-expanded={exportMenuOpen}
+              aria-controls={exportId}
               onClick={() => setExportMenuOpen(!exportMenuOpen)}
-              className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
-                           hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >
-              Export {exportMenuOpen ? "\u25B2" : "\u25BC"}
-            </button>
-            {exportMenuOpen && (
-              <div
-                className="absolute bottom-full left-0 right-0 mb-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700
-                                rounded-lg shadow-lg overflow-hidden z-10"
-              >
-                <button
-                  onClick={() => {
-                    handleExportItem();
-                    setExportMenuOpen(false);
-                  }}
-                  disabled={!editingStep}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800
-                               disabled:text-gray-300 dark:disabled:text-gray-600 disabled:hover:bg-white dark:disabled:hover:bg-gray-900 transition-colors"
-                >
-                  Export selected step
-                </button>
-                <button
-                  onClick={() => {
-                    handleExportProfile();
-                    setExportMenuOpen(false);
-                  }}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  Export review &ldquo;{activeProfileName}&rdquo;
-                </button>
-                <button
-                  onClick={() => {
-                    handleExportBundle();
-                    setExportMenuOpen(false);
-                  }}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                >
-                  Export all (reviews + settings)
-                </button>
-              </div>
-            )}
+              Export <Icon name="chevron-down" className="h-3.5 w-3.5" />
+            </Button>
+            <Menu
+              id={exportId}
+              open={exportMenuOpen}
+              onClose={() => setExportMenuOpen(false)}
+              anchorRef={exportTrigger}
+              label="Export review design"
+              side="top"
+              align="start"
+              width={288}
+            >
+              <MenuItem onSelect={handleExportItem} disabled={!editingStep}>
+                Export selected step
+              </MenuItem>
+              <MenuItem onSelect={handleExportProfile}>
+                Export review &ldquo;{activeProfileName}&rdquo;
+              </MenuItem>
+              <MenuItem onSelect={handleExportBundle}>
+                Export all (reviews + settings)
+              </MenuItem>
+            </Menu>
           </div>
-          <button
-            onClick={handleImport}
-            className="flex-1 py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
-                         hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          <Button
+            ref={profileTrigger}
+            size="sm"
+            className="flex-1"
+            aria-haspopup="menu"
+            aria-expanded={profileMenuOpen}
+            onClick={() => setProfileMenuOpen((open) => !open)}
           >
-            Import
-          </button>
-          {onOpenGallery && (
-            <button
-              onClick={onOpenGallery}
-              title="Browse curated review templates"
-              className="flex-1 py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
-                           hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            Review actions <Icon name="chevron-down" className="h-3.5 w-3.5" />
+          </Button>
+          <Menu
+            open={profileMenuOpen}
+            onClose={() => setProfileMenuOpen(false)}
+            anchorRef={profileTrigger}
+            label="Review actions"
+            side="top"
+            width={256}
+          >
+            <MenuItem
+              onSelect={handleDuplicateProfile}
+              disabled={profileMutationPending}
             >
-              Gallery
-            </button>
-          )}
+              Duplicate
+            </MenuItem>
+            <MenuItem
+              onSelect={handleRenameProfile}
+              disabled={profileMutationPending}
+            >
+              Rename
+            </MenuItem>
+            <MenuItem
+              onSelect={handleDeleteProfile}
+              disabled={
+                profileMutationPending ||
+                profiles.find((profile) => profile.id === activeProfile)
+                  ?.builtin
+              }
+              danger
+            >
+              Delete
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem onSelect={handleImport}>Import</MenuItem>
+            {onOpenGallery && (
+              <MenuItem onSelect={onOpenGallery}>Gallery</MenuItem>
+            )}
+          </Menu>
         </div>
         {saved && (
           <p className="text-xs text-green-700 dark:text-green-400 text-center">

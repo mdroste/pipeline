@@ -2,11 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PipelinePage from "./PipelinePage";
-import type {
-  AutoReviewCatalog,
-  PipelineConfig,
-  ProfileSummary,
-} from "../lib/types";
+import type { AutoReviewCatalog } from "../lib/reviewCatalogTypes";
+import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const confirmDialog = vi.hoisted(() => vi.fn());
@@ -194,7 +191,7 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "Browse catalog" }),
     ).toBeVisible();
     const editor = screen.getByRole("textbox", {
-      name: "Orientation output JSON schema",
+      name: "Document overview output JSON schema",
     });
     expect((editor as HTMLTextAreaElement).value).toContain(
       '"x-pipeline-catalog": "auto-review.subjects"',
@@ -207,7 +204,7 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "View resolved provider schema" }),
     );
     const resolvedPreview = await screen.findByLabelText(
-      "Resolved orientation provider schema",
+      "Resolved document overview schema",
     );
     expect(resolvedPreview).toHaveTextContent("subject_economics_macro");
     expect(invoke).toHaveBeenCalledWith("resolve_orientation_schema_catalogs", {
@@ -248,7 +245,7 @@ describe("PipelinePage", () => {
 
     await user.click(
       await screen.findByRole("button", {
-        name: "Orientation & classification",
+        name: "Document bundle preparation",
       }),
     );
     await user.click(
@@ -265,7 +262,7 @@ describe("PipelinePage", () => {
       expect(
         (
           screen.getByRole("textbox", {
-            name: "Orientation map prompt",
+            name: "Document overview prompt",
           }) as HTMLTextAreaElement
         ).value,
       ).toBe("This document is a slide deck."),
@@ -306,7 +303,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const orientation = await screen.findByRole("button", {
-      name: "Orientation & classification",
+      name: "Document bundle preparation",
     });
     expect(
       screen.getByRole("button", {
@@ -314,18 +311,18 @@ describe("PipelinePage", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText("Auto-filled from orientation").length,
+      screen.getAllByText("Selected for this document").length,
     ).toBeGreaterThan(0);
 
     await user.click(orientation);
     expect(
-      screen.getByRole("heading", { name: "Orientation & Classification" }),
+      screen.getByRole("heading", { name: "Document bundle preparation" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/One LLM call builds the paper orientation map/),
+      screen.getByText(/Prepares the document.s text and structure/),
     ).toBeInTheDocument();
     const promptEditor = screen.getByRole("textbox", {
-      name: "Orientation map prompt",
+      name: "Document overview prompt",
     });
     expect((promptEditor as HTMLTextAreaElement).value).toContain(
       "{subject_catalog}",
@@ -376,7 +373,7 @@ describe("PipelinePage", () => {
 
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(
-      screen.getByRole("button", { name: "Orient + classify" }),
+      screen.getByRole("button", { name: "Choose reviewers" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Adaptive agents (4)" }),

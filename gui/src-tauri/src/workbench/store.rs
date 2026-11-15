@@ -4,12 +4,11 @@ use fs2::FileExt as _;
 use rusqlite::{params, Connection, OptionalExtension as _, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-#[cfg(not(unix))]
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 20;
+pub const CURRENT_SCHEMA_VERSION: u32 = 24;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -36,6 +35,8 @@ pub use records::{
     TranscriptItem, UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchSession, Workspace,
     WorkspaceList,
 };
+#[cfg(test)]
+pub(super) use schema::historical_test_database;
 use schema::{
     configure_connection, configure_database, configure_timeout, database_has_objects,
     schema_version,
@@ -213,6 +214,13 @@ fn validate_overrides(overrides: &Value) -> WorkbenchResult<String> {
             ));
         }
     }
+    if let Some(mode) = overrides.get("approvalMode") {
+        if super::chat_approval::Mode::parse(mode).is_none() {
+            return Err(WorkbenchError::invalid(
+                "Choose Ask, Auto, or Sandbox only for tool approvals",
+            ));
+        }
+    }
     super::capabilities::ConversationCapabilities::resolve(overrides.as_object().unwrap(), false)?;
     let encoded = serde_json::to_string(overrides)
         .map_err(|error| WorkbenchError::invalid(format!("Invalid session overrides: {error}")))?;
@@ -271,6 +279,12 @@ fn default_root() -> WorkbenchResult<PathBuf> {
 static IDLE_CONNECTION: std::sync::Mutex<Option<Connection>> = std::sync::Mutex::new(None);
 
 impl Store {
+    pub(crate) fn default_exists() -> WorkbenchResult<bool> {
+        default_root()?
+            .join("research.sqlite3")
+            .try_exists()
+            .map_err(|e| WorkbenchError::storage("Cannot inspect Workspace library", e))
+    }
     /// The first open creates, secures, and migrates the store. Later opens only
     /// confirm the data folder: its location is fixed for the process, and
     /// `connection()` checks the schema version every time.
@@ -287,6 +301,19 @@ impl Store {
                 .unwrap_or_else(|error| error.into_inner()) = store.connection().ok();
         }
         Ok(store)
+    }
+
+    /// Compare on the same keeper connection across checks. Commits by any
+    /// writer, including another Pipeline instance, change its data version.
+    pub(super) fn scheduling_version(&self) -> Option<i64> {
+        let idle = IDLE_CONNECTION.lock().ok()?;
+        let connection = idle.as_ref()?;
+        if connection.path()? != self.database.to_str()? {
+            return None;
+        }
+        connection
+            .pragma_query_value(None, "data_version", |row| row.get(0))
+            .ok()
     }
 
     /// Lets the last close fold the log into the database, so `research.sqlite3`
@@ -375,6 +402,9 @@ impl Store {
 
     fn initialize(&self) -> WorkbenchResult<()> {
         self.initialize_with(migrate)?;
+        if let Err(error) = self.retry_session_cleanup() {
+            eprintln!("{}", error.message);
+        }
         // A store that can't be repaired must still open. Its references stay
         // as they were, and Disk use refuses cleanup while any lies elsewhere.
         if let Err(error) = self.rebase_references() {
@@ -478,8 +508,11 @@ fn map_constraint(context: &str, error: rusqlite::Error) -> WorkbenchError {
 mod tests;
 
 mod runtime;
+mod session_cleanup;
 mod sessions;
+pub use sessions::IndexCursor;
 mod views;
+pub(crate) use views::RuntimeFileOwner;
 mod workspaces;
 
 mod roots;

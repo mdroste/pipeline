@@ -6,11 +6,11 @@ import {
   type ReactNode,
 } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { studioClient } from "../../lib/studioClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { confirmDialog } from "../DialogService";
 import type { ProjectHome } from "../../lib/projectClient";
-import type { ReviewHandoff } from "../../lib/workbenchTypes";
+import type { ReviewHandoff } from "../../lib/workbench/releaseTypes";
 import { button, input } from "../../ui/classes";
 import "../project-surface/ProjectPage.css";
 import ReportIssueLink from "../ReportIssueLink";
@@ -186,8 +186,7 @@ export const lines = (s: string) =>
     .filter(Boolean);
 export async function exportText(text: string, filename: string) {
   const path = await save({ defaultPath: filename });
-  if (path)
-    await invoke("workbench_studio_export_file", { path, content: text });
+  if (path) await studioClient.exportFile({ path, content: text });
 }
 export function Inspect({
   value,

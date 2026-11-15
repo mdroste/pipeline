@@ -3,6 +3,27 @@
 use crate::models::PipelineReport;
 use crate::pipeline::executor;
 
+/// A saved discovery snapshot describes the modules used for that plan.
+/// Replan when an installed catalog changes instead of carrying old discovery
+/// evidence into a run that will materialize new reviewer instructions.
+pub(super) fn registry_compatible(saved: &str, current: &str) -> Result<(), String> {
+    if !saved.is_empty() && !current.is_empty() && saved != current {
+        Err("The reviewer registry has changed since this plan was prepared.".into())
+    } else {
+        // Legacy runs may have no recorded catalog revision.
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn registry_changes_require_replanning_but_legacy_runs_remain_readable() {
+    assert!(registry_compatible("old", "new").is_err());
+    assert!(registry_compatible("same", "same").is_ok());
+    assert!(registry_compatible("", "new").is_ok());
+    assert!(registry_compatible("old", "").is_ok());
+}
+
 pub(in crate::commands) fn base_step_id(step_id: &str) -> String {
     step_id.split('/').next().unwrap_or(step_id).to_string()
 }
@@ -152,6 +173,7 @@ pub(in crate::commands) fn select_reusable_outputs(
     execution_config: &crate::pipeline_config::PipelineConfig,
     parent_report: &PipelineReport,
     orientation_rebuilt: bool,
+    changed: &std::collections::HashSet<String>,
     from_step: Option<String>,
     only_failed: bool,
 ) -> std::collections::HashMap<String, Vec<crate::models::StepOutput>> {
@@ -171,8 +193,8 @@ pub(in crate::commands) fn select_reusable_outputs(
                 // by dependency graph, so a dependent of a re-run step can sit
                 // earlier in the list. Extend the positional set with graph
                 // dependents so no step is preloaded with stale upstream output.
-                let seeds: std::collections::HashSet<String> =
-                    enabled_ids[k..].iter().cloned().collect();
+                let mut seeds = resume_seed_ids(&enabled_ids, parent_report);
+                seeds.extend(enabled_ids[k..].iter().cloned());
                 let mut set = seeds.clone();
                 set.extend(crate::pipeline::executor::dependents_of(
                     execution_config,
@@ -198,6 +220,12 @@ pub(in crate::commands) fn select_reusable_outputs(
     // artifact produced under a different output mode or one that fails the
     // step's current schema. Its graph dependents are stale as well.
     let mut incompatible = incompatible_reuse_ids(execution_config, &parent_report.step_outputs);
+    incompatible.extend(changed.iter().cloned());
+    if !changed.is_empty() {
+        let mut ids: Vec<_> = changed.iter().collect();
+        ids.sort();
+        let _ = app.emit_event("pipeline:log", serde_json::json!({"line":format!("Re-run: inputs or execution instructions require recomputing {ids:?} and their dependents.")}));
+    }
     let skipped = skipped_step_ids(&parent_report.step_outputs);
     // Missing retained producer trees cannot satisfy a downstream file selector.
     // A skipped producer never had one, so nothing was lost.

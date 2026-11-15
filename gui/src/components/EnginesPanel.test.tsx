@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import EnginesPanel from "./EnginesPanel";
-import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
+import type { EngineDownloadProgress, EngineStatus } from "../lib/engineTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const confirmDialog = vi.hoisted(() => vi.fn());

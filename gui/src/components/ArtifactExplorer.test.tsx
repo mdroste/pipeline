@@ -54,7 +54,7 @@ const manifest = {
     },
     {
       rel_path: "context/orientation.json",
-      label: "Orientation map",
+      label: "Document overview",
       kind: "json",
       bytes: 50,
       sha256: "bb",

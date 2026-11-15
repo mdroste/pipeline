@@ -1,3 +1,4 @@
+import type { ClaimRecord } from "./claimRecord";
 import { invoke } from "@tauri-apps/api/core";
 import type { Json, TaskEvent } from "./taskTypes";
 
@@ -31,6 +32,7 @@ export interface DiscoveryDefinition {
   mode: DiscoveryMode;
   prompt: string;
   candidateCount: number;
+  ideaAgents?: number;
   shortlistCount: number;
   paperCount: number;
   proposalReviewers: number;
@@ -40,6 +42,7 @@ export interface DiscoveryDefinition {
   researchRounds: number;
   challengeResearch: boolean;
   maxReplacements: number;
+  maxApiCostCents?: number;
   maxActions: number;
   activeSeconds: number;
   actionTimeoutSeconds: number;
@@ -59,6 +62,7 @@ export const newDiscovery = (
   mode,
   prompt: "",
   candidateCount: 75,
+  ideaAgents: 0,
   shortlistCount: 10,
   paperCount: 5,
   proposalReviewers: 2,
@@ -130,6 +134,8 @@ export interface PaperAssessment {
   remainingWork: string[];
 }
 export interface PaperSummary {
+  draftDelivered?: boolean | null;
+  claimRecord?: ClaimRecord | null;
   candidateId: number;
   title: string | null;
   state: string;
@@ -141,6 +147,7 @@ export interface PaperSummary {
   assessment: PaperAssessment | null;
 }
 export interface DiscoveryRun {
+  completedIdeaAgents?: number;
   id: string;
   revision: number;
   definition: DiscoveryDefinition;
@@ -177,6 +184,21 @@ export interface DiscoveryRun {
   workspaceId: string;
   sourceSessionId: string;
   papers: PaperSummary[];
+}
+
+export interface DiscoveryActivity {
+  revision: number;
+  observedAt: number;
+  lastActivityAt: number | null;
+  step: {
+    id: string;
+    label: string;
+    state: string;
+    startedAt: number | null;
+    finishedAt: number | null;
+  } | null;
+  entries: { id: string; at: number; label: string; state: string }[];
+  agents: { id: string; label: string; state: string; updatedAt: number }[];
 }
 export interface DiscoveryPaper {
   candidateId: number;
@@ -227,6 +249,15 @@ export const discoveryClient = {
   list: (offset = 0, workspaceId: string | null = null) =>
     invoke<DiscoverySummary[]>("discovery_list", { offset, workspaceId }),
   get: (id: string) => invoke<DiscoveryRun>("discovery_get", { id }),
+  accept: (run: DiscoveryRun, candidateId: number, subjectVersion: string) =>
+    invoke<DiscoveryRun>("discovery_accept_assessment", {
+      id: run.id,
+      revision: run.revision,
+      candidateId,
+      subjectVersion,
+    }),
+  activity: (id: string) =>
+    invoke<DiscoveryActivity>("discovery_activity", { id }),
   candidates: (id: string, offset = 0) =>
     invoke<Candidate[]>("discovery_candidates", { id, offset }),
   paper: (id: string, candidateId: number) =>

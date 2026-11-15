@@ -10,6 +10,7 @@ pub(super) struct NamedInputs {
     pub(super) extra_tmps: Vec<tempfile::NamedTempFile>,
     pub(super) runtime_extra_sources: HashMap<String, String>,
     pub(super) extra_sources: HashMap<String, String>,
+    pub(super) planning_inputs: Vec<crate::pipeline::orient::SupportingInput>,
 }
 
 pub(super) async fn capture_named_inputs(
@@ -23,6 +24,7 @@ pub(super) async fn capture_named_inputs(
     // Extra named inputs: extract each declared slot's file through the
     // same cascade, write the text to a temp file, and expose its path to
     // prompts as {input:key}. Temp files are held alive until the run finishes.
+    let mut planning_inputs = Vec::new();
     let mut resolved_inputs: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut persisted_inputs: std::collections::HashMap<String, String> =
@@ -117,6 +119,10 @@ pub(super) async fn capture_named_inputs(
         app.emit_event("pipeline:log", serde_json::json!({
             "line": format!("Extra input '{}' extracted via {} ({} chars)", slot.key, ex.method, ex.text.len())
         })).ok();
+        planning_inputs.push(crate::pipeline::orient::SupportingInput {
+            key: slot.key.clone(),
+            text: ex.text,
+        });
     }
     Ok(NamedInputs {
         resolved_inputs,
@@ -124,6 +130,7 @@ pub(super) async fn capture_named_inputs(
         extra_tmps,
         runtime_extra_sources,
         extra_sources,
+        planning_inputs,
     })
 }
 

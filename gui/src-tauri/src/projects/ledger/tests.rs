@@ -195,41 +195,13 @@ fn run_annotations_can_mark_an_automatic_regression() {
 }
 
 #[test]
-fn unsafe_evidence_paths_are_not_retained() {
-    let value = serde_json::json!({
-        "artifact_path": "../outside.txt",
-        "page": 4,
-        "description": "Relevant source"
-    });
-    let evidence = parse_evidence(&value, &HashSet::new()).unwrap();
-    assert_eq!(evidence.page, Some(4));
-    assert!(evidence.artifact_path.is_empty());
-}
-
-#[test]
-fn source_tree_evidence_resolves_saved_paths_and_retains_lines() {
-    let value = serde_json::json!({
-        "file": "src/worker.rs",
-        "line": 41,
-        "line_end": 45,
-        "label": "Retry branch"
-    });
-    let paths = HashSet::from(["artifacts/source/src/worker.rs"]);
-    let evidence = parse_evidence(&value, &paths).unwrap();
-    assert_eq!(evidence.artifact_path, "artifacts/source/src/worker.rs");
-    assert_eq!(evidence.line_start, Some(41));
-    assert_eq!(evidence.line_end, Some(45));
-    assert_eq!(evidence.description, "Retry branch");
-}
-
-#[test]
 fn generic_issue_aliases_and_duplicate_ids_match_run_annotations() {
     let report: crate::models::PipelineReport = serde_json::from_value(serde_json::json!({
         "step_outputs": [{
             "step_id": "audit",
             "step_label": "Source audit",
             "raw_text": r#"{"issues":[
-                {"issue_id":"issue-1","message":"Retry loop has no bound","priority":"critical","file":"src/worker.rs","explanation":"Terminal failures retry forever.","line":41},
+                {"issue_id":"issue-1","message":"Retry loop has no bound","priority":"critical","file":"src/worker.rs","explanation":"Terminal failures retry forever.","evidence":[{"file":"src/worker.rs","line":41,"line_end":45,"label":"Retry branch"},{"artifact_path":"../outside.txt","page":4,"description":"Relevant source"}]},
                 {"issue_id":"issue-1","summary":"Missing authorization check","level":"medium","path":"src/api.rs","detail":"The handler trusts the caller."}
             ]}"#
         }]
@@ -269,6 +241,12 @@ fn generic_issue_aliases_and_duplicate_ids_match_run_annotations() {
         "artifacts/source/src/worker.rs"
     );
     assert_eq!(occurrences[0].evidence[0].line_start, Some(41));
+    assert_eq!(occurrences[0].evidence[0].line_end, Some(45));
+    assert_eq!(occurrences[0].evidence[0].description, "Retry branch");
+    let outside = &occurrences[0].evidence[1];
+    assert_eq!(outside.page, Some(4));
+    assert!(outside.artifact_path.is_empty());
+    assert!(outside.source_path.is_empty());
     assert_eq!(occurrences[1].issue_id, "issue-1#2");
     assert_eq!(occurrences[1].annotation_status, "done");
 }

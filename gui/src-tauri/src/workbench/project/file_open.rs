@@ -4,14 +4,18 @@
 //! Text and PDF files within `MAX_FILE` keep their content hash, which saves and
 //! passages check; other files use their stamp and are not read here at all.
 use super::file_browser::base;
-use super::file_workspace::{editable_source, read_workspace_source, FilePreview, FileReadRequest};
+use super::file_workspace::{
+    conversation_relative_path, editable_source, read_workspace_source, FilePreview,
+    FileReadRequest,
+};
 use super::files::SafeRoot;
 use super::*;
 use crate::file_stream::{self, FileSource, OpenedSource, Presentation};
+use crate::workbench::store::RuntimeFileOwner;
 use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 
-const TEXT_LIMIT: usize = 2 * 1024 * 1024;
+pub(super) const TEXT_LIMIT: usize = 2 * 1024 * 1024;
 const HEAD: u64 = 8 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +139,35 @@ impl FileSource for WorkspaceSource {
         }))
     }
 }
+/// Hold the authorized immutable file itself so unlinking or replacing its
+/// name cannot break a long-open reader. Cloned descriptors share a cursor.
+pub(super) struct CapturedPdf {
+    pub file: fs::File,
+    pub modified: std::time::SystemTime,
+    pub size: u64,
+    pub hash: String,
+    pub reads: std::sync::Mutex<()>,
+}
+impl FileSource for CapturedPdf {
+    fn open(&self) -> Result<Option<OpenedSource>, String> {
+        let meta = self.file.metadata().map_err(|e| e.to_string())?;
+        let unchanged = meta.len() == self.size && meta.modified().ok() == Some(self.modified);
+        Ok(Some(OpenedSource {
+            file: self.file.try_clone().map_err(|e| e.to_string())?,
+            size: meta.len(),
+            stamp: if unchanged {
+                self.hash.clone()
+            } else {
+                String::new()
+            },
+        }))
+    }
+    fn read(&self, file: &mut fs::File, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
+        let _guard = self.reads.lock().unwrap_or_else(|e| e.into_inner());
+        file_stream::read_part(file, start, length)
+    }
+}
+
 /// Plain UTF-8 stays editable. Anything else is decoded for reading only, and
 /// the caller reports that the text is approximate.
 fn decode_text(bytes: &[u8]) -> (String, bool) {
@@ -154,20 +187,15 @@ fn utf8_prefix(bytes: &[u8]) -> &[u8] {
 /// A captured PDF reaches the reader over the file scheme, not as base64 in IPC.
 /// Reading the revision has just checked its bytes against the recorded hash.
 fn captured_preview(store: &Store, request: FileReadRequest) -> WorkbenchResult<FilePreview> {
-    let (mut preview, source) = read_workspace_source(store, request)?;
-    if let (true, Some((folder, path))) = (preview.kind == "pdf", source) {
-        let stat = SafeRoot::open(&folder)?
-            .stat(&path)?
-            .ok_or_else(|| WorkbenchError::invalid("The captured file is unavailable"))?;
-        let token = file_stream::issue(
-            Arc::new(WorkspaceSource { folder, path }),
-            "application/pdf",
-            stat.stamp(),
-            Presentation::Bytes,
-        )
-        .map_err(err)?;
+    let (mut preview, source) = read_workspace_source(store, request, true)?;
+    if let Some(source) = source {
+        let local =
+            crate::storage::local_root().is_ok_and(|local| store.root_path().starts_with(local));
+        let (token, pinned) =
+            file_stream::issue_capture(Arc::new(source), preview.hash.clone(), local)
+                .map_err(err)?;
         preview.stream_token = Some(token);
-        preview.base64 = None;
+        preview.range_capture = pinned;
     }
     Ok(preview)
 }
@@ -188,22 +216,77 @@ pub fn open_workspace_file(
         &request.workspace_id,
         request.checkpoint_id.as_deref(),
     )?;
-    let (mut file, stat) = SafeRoot::open(&folder)?
-        .open_read(&request.path)?
-        .ok_or_else(|| {
-            let mut error = WorkbenchError::invalid(format!("Missing file: {}", request.path));
-            error.code = "file_missing".into();
-            error
-        })?;
+    open_scoped_file(folder, request.path, true)
+}
+
+/// Conversation files use the same viewers but resolve against the runtime
+/// folder, including private folders and working copies.
+pub fn preview_conversation_file(
+    store: &Store,
+    session_id: &str,
+    value: &str,
+) -> WorkbenchResult<FilePreview> {
+    let (folder, owner) = store.runtime_file_scope(session_id)?;
+    let path = conversation_relative_path(&folder, value)?;
+    let _private_lock = if matches!(owner, RuntimeFileOwner::Private) {
+        let guard = lock(store, session_id)?;
+        super::conversation_edit::recover_private_edit(
+            store,
+            session_id,
+            &SafeRoot::open(&folder)?,
+            &path,
+        )?;
+        Some(guard)
+    } else {
+        None
+    };
+    let mut preview = open_scoped_file(folder, path, false)?;
+    preview.editable = !matches!(owner, RuntimeFileOwner::Discovery)
+        && files::REPLACEMENT
+        && !preview.truncated
+        && !preview.approximate_text
+        && preview
+            .text
+            .as_ref()
+            .is_some_and(|text| !text.contains('\0'))
+        && editable_source(&preview.path)
+        && !ignored(&preview.path, &[]);
+    Ok(preview)
+}
+
+fn textual_format(found: Format, include_delimited: bool) -> bool {
+    matches!(found.kind, "text" | "html" | "notebook")
+        || found.mime == "image/svg+xml"
+        || (include_delimited && found == DELIMITED)
+}
+
+pub(super) fn is_editor_text(path: &str, bytes: &[u8]) -> bool {
+    bytes.len() <= TEXT_LIMIT
+        && textual_format(
+            classify(path, &bytes[..bytes.len().min(HEAD as usize)]),
+            true,
+        )
+        && std::str::from_utf8(bytes).is_ok_and(|text| !text.contains('\0'))
+}
+
+fn open_scoped_file(
+    folder: PathBuf,
+    path: String,
+    allow_edit: bool,
+) -> WorkbenchResult<FilePreview> {
+    let (mut file, stat) = SafeRoot::open(&folder)?.open_read(&path)?.ok_or_else(|| {
+        let mut error = WorkbenchError::invalid(format!("Missing file: {path}"));
+        error.code = "file_missing".into();
+        error
+    })?;
     let mut head = Vec::new();
     Read::by_ref(&mut file)
         .take(HEAD)
         .read_to_end(&mut head)
         .map_err(err)?;
     file.seek(SeekFrom::Start(0)).map_err(err)?;
-    let found = classify(&request.path, &head);
-    let textual =
-        matches!(found.kind, "text" | "html" | "notebook") || found.mime == "image/svg+xml";
+    let found = classify(&path, &head);
+    let textual = textual_format(found, !allow_edit);
     let whole = ((textual || found.kind == "pdf") && stat.size <= MAX_FILE)
         .then(|| {
             let mut bytes = Vec::with_capacity(stat.size as usize);
@@ -250,7 +333,7 @@ pub fn open_workspace_file(
             file_stream::issue(
                 Arc::new(WorkspaceSource {
                     folder: folder.clone(),
-                    path: request.path.clone(),
+                    path: path.clone(),
                 }),
                 found.mime,
                 stat.stamp(),
@@ -259,17 +342,19 @@ pub fn open_workspace_file(
             .map_err(err)
         })
         .transpose()?;
-    let editable = files::REPLACEMENT
+    let editable = allow_edit
+        && files::REPLACEMENT
         && !truncated
         && !lossy
         && text.is_some()
-        && editable_source(&request.path)
-        && !ignored(&request.path, &[]);
+        && editable_source(&path)
+        && !ignored(&path, &[]);
     Ok(FilePreview {
-        external_path: Some(folder.join(&request.path).to_string_lossy().into_owned()),
+        range_capture: false,
+        external_path: allow_edit.then(|| folder.join(&path).to_string_lossy().into_owned()),
         scope_root: Some(folder.to_string_lossy().into_owned()),
         bytes: stat.size as usize,
-        path: request.path,
+        path,
         hash,
         text,
         base64: None,

@@ -82,17 +82,21 @@ pub async fn anthropic_tool_loop(
         )
         .timeout(std::time::Duration::from_secs(request_timeout))
         .json(&request);
-        let resp = send_with_status_retry(
+        let (resp, receipt) = send_with_status_retry(
             app,
             "Anthropic",
             label,
             request_builder,
             pass_key.as_deref(),
+            &request.model,
+            u64::from(request.max_tokens),
+            iteration == 0,
         )
         .await?;
 
         let status = resp.status();
         if !status.is_success() {
+            receipt.settle(&request.model, 0, 0, 0, 0);
             let bytes =
                 response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
             return Err(format_api_error(
@@ -114,6 +118,7 @@ pub async fn anthropic_tool_loop(
             let inp = uncached.saturating_add(cached).saturating_add(cache_write);
             let out = u.output_tokens.unwrap_or(0);
             let web_searches = anthropic_hosted_search_count(u);
+            receipt.settle(&request.model, inp, out, cached, cache_write);
             usage.add(inp, out, cached, cache_write);
             usage
                 .tool_calls
@@ -269,10 +274,21 @@ pub async fn openai_tool_loop(
             .json(&request);
         req = authorize(ApiProvider::OpenAi, req, api_key);
         let pass_key = crate::pipeline::logging::current_pass();
-        let resp = send_with_status_retry(app, provider, label, req, pass_key.as_deref()).await?;
+        let (resp, receipt) = send_with_status_retry(
+            app,
+            provider,
+            label,
+            req,
+            pass_key.as_deref(),
+            &request.model,
+            u64::from(request.max_completion_tokens.unwrap_or(4096)),
+            iteration == 0,
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
+            receipt.settle(&request.model, 0, 0, 0, 0);
             let bytes =
                 response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
             let body = String::from_utf8_lossy(&bytes);
@@ -328,6 +344,7 @@ pub async fn openai_tool_loop(
                 .as_ref()
                 .and_then(|details| details.cache_write_tokens)
                 .unwrap_or(0);
+            receipt.settle(&request.model, inp, out, cached, cache_write);
             usage.add(inp, out, cached, cache_write);
             verbose_log(
                 app,
@@ -493,12 +510,25 @@ pub async fn google_tool_loop(
         let request_builder = authorize(ApiProvider::Google, client.post(&url), api_key)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request);
-        let resp =
-            send_with_status_retry(app, "Google", label, request_builder, pass_key.as_deref())
-                .await?;
+        let (resp, receipt) = send_with_status_retry(
+            app,
+            "Google",
+            label,
+            request_builder,
+            pass_key.as_deref(),
+            model,
+            request
+                .generation_config
+                .as_ref()
+                .and_then(|v| v["maxOutputTokens"].as_u64())
+                .unwrap_or(4096),
+            iteration == 0,
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
+            receipt.settle(model, 0, 0, 0, 0);
             let bytes =
                 response_bytes_limited(resp, MAX_API_ERROR_BYTES, pass_key.as_deref()).await?;
             return Err(format_api_error(
@@ -541,6 +571,7 @@ pub async fn google_tool_loop(
                 .get("cachedContentTokenCount")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
+            receipt.settle(model, inp, out, cached, 0);
             usage.add(inp, out, cached, 0);
             verbose_log(
                 app,

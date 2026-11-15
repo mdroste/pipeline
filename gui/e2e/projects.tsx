@@ -7,7 +7,7 @@ import WorkspaceProjectSurface from "../src/components/WorkspaceProjectSurface";
 import NavRail from "../src/components/NavRail";
 import type { ProjectHome } from "../src/lib/projectClient";
 import type { ProjectIndexItem } from "../src/lib/projectIndex";
-import type { WorkbenchSession, Workspace } from "../src/lib/workbenchTypes";
+import type { WorkbenchSession, Workspace } from "../src/lib/workbench/sessionTypes";
 import type { WorkspaceDestination } from "../src/lib/workspaceNavigation";
 import "../src/App.css";
 import "../src/components/WorkspaceDesk.css";
@@ -204,6 +204,7 @@ Object.assign(window, {
         return {
           workspaces: projects.map((project) => ({ ...workspace, ...project })),
         };
+      if (command === "workbench_conversation_index") return {items:sessions.filter(chat=>Boolean(chat.archivedAt)===args.archived).map(session=>({session,projectName:projects.find(p=>p.id===session.workspaceId)?.name ?? null})),nextCursor:null};
       if (command === "workbench_list_sessions")
         return {
           sessions: sessions.filter(

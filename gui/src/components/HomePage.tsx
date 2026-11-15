@@ -78,13 +78,13 @@ export default function HomePage({
   ];
 
   return (
-    <div className="min-h-full bg-white text-gray-950 dark:bg-neutral-950 dark:text-neutral-50">
-      <div className="mx-auto w-full max-w-6xl px-6 py-10 sm:px-10 lg:px-14 lg:py-14">
+    <div className="min-h-full bg-surface text-ink [container-type:inline-size]">
+      <div className="mx-auto w-full max-w-6xl px-[var(--ui-page-gutter)] py-[var(--ui-space-8)]">
         {hasCurrentReview && (
           <button
             type="button"
             onClick={onContinueReview}
-            className="flex w-full items-center gap-4 rounded-2xl border border-blue-200/80 bg-blue-50/70 px-5 py-4 text-left transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-blue-900/80 dark:bg-blue-950/25 dark:hover:border-blue-800 dark:hover:bg-blue-950/40"
+            className="flex w-full items-center gap-3 rounded-ui-md border border-blue-200/80 bg-blue-50/70 px-4 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-blue-900/80 dark:bg-blue-950/25 dark:hover:border-blue-800 dark:hover:bg-blue-950/40"
           >
             <span
               className={`h-2.5 w-2.5 shrink-0 rounded-full ${reviewRunning ? "animate-pulse bg-blue-500" : "bg-emerald-500"}`}
@@ -117,13 +117,13 @@ export default function HomePage({
           <h1 id="start-heading" className="text-base font-semibold">
             What would you like to do?
           </h1>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="mt-4 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr))]">
             {actions.map((action) => (
               <button
                 key={action.title}
                 type="button"
                 onClick={action.onClick}
-                className="group relative min-h-52 overflow-hidden rounded-2xl border border-gray-200 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition duration-200 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-neutral-800 dark:bg-neutral-900/70 dark:hover:border-neutral-700 dark:hover:shadow-black/30"
+                className="group relative min-h-48 overflow-hidden rounded-ui-lg border border-gray-200 bg-white p-5 text-left shadow-ui-1 transition duration-200 hover:border-gray-300 hover:shadow-ui-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-neutral-800 dark:bg-neutral-900/70 dark:hover:border-neutral-700 dark:hover:shadow-black/30"
               >
                 <span
                   className={`absolute inset-0 bg-gradient-to-br ${action.accent}`}
@@ -133,7 +133,7 @@ export default function HomePage({
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-current/15 bg-white/75 shadow-sm backdrop-blur dark:bg-neutral-950/60">
                     <Icon name={action.icon} />
                   </span>
-                  <span className="mt-8 block text-base font-semibold tracking-[-0.01em] text-gray-950 dark:text-neutral-50">
+                  <span className="mt-5 block text-base font-semibold tracking-[-0.01em] text-gray-950 dark:text-neutral-50">
                     {action.title}
                   </span>
                   <span className="mt-2 block text-sm leading-6 text-gray-500 dark:text-neutral-400">
@@ -189,7 +189,7 @@ export default function HomePage({
                 View all
               </button>
             </div>
-            <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 dark:border-neutral-800">
+            <div className="mt-4 overflow-hidden rounded-ui-md border border-line">
               {projects.slice(0, 4).map((project, index) => (
                 <button
                   key={project.id}
@@ -201,11 +201,14 @@ export default function HomePage({
                     <Icon name="project" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">
+                    <span
+                      className="block truncate text-sm font-semibold"
+                      title={project.name}
+                    >
                       {project.name}
                     </span>
                     <span
-                      className={`mt-1 block truncate text-xs ${project.missingRootAt ? "text-amber-600 dark:text-amber-400" : "text-gray-500 dark:text-neutral-500"}`}
+                      className={`mt-1 block truncate text-xs ${project.missingRootAt ? "text-amber-600 dark:text-amber-400" : "text-ink-muted"}`}
                     >
                       {projectLocation(project)}
                     </span>
@@ -226,7 +229,7 @@ export default function HomePage({
                       ? "Loading projects…"
                       : "Start your first project"}
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-500">
+                  <p className="mt-1 text-xs leading-5 text-ink-muted">
                     Projects keep conversations, files, and research decisions
                     together.
                   </p>

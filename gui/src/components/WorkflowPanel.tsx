@@ -5,9 +5,10 @@ import {
   adaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
+import { useSetupReads } from "./reviewSetupReads";
 import { useState, useEffect, useId } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import { workflowProfileClient } from "../lib/workflowProfileClient";
+import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
@@ -32,15 +33,13 @@ export default function WorkflowPanel({
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
+  const reads = useSetupReads(refreshKey);
   useEffect(() => {
     let stale = false;
     setLoading(true);
     setError(null);
-    Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
-    ])
+    reads
+      .workflow()
       .then(([c, p, active]) => {
         if (stale) return;
         setConfig(c);
@@ -57,13 +56,13 @@ export default function WorkflowPanel({
     return () => {
       stale = true;
     };
-  }, [refreshKey, loadAttempt]);
+  }, [reads, loadAttempt]);
 
   const handleSwitch = async (id: string) => {
     setSwitching(true);
     setError(null);
     try {
-      const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
+      const newConfig = await workflowProfileClient.switch({ id });
       setConfig(newConfig);
       setActiveId(id);
       onProfileChange(newConfig);
@@ -79,7 +78,7 @@ export default function WorkflowPanel({
     return (
       <div
         role="status"
-        className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+        className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-line dark:text-gray-400"
       >
         Loading workflow…
       </div>
@@ -89,7 +88,7 @@ export default function WorkflowPanel({
     return (
       <div
         role="alert"
-        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-gray-700 dark:text-red-400"
+        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-line dark:text-red-400"
       >
         <p>Workflow unavailable{error ? `: ${error}` : "."}</p>
         <button
@@ -105,7 +104,7 @@ export default function WorkflowPanel({
   }
 
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+    <div className="border-t border-line pt-4">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
         <label
           htmlFor={selectId}
@@ -128,10 +127,7 @@ export default function WorkflowPanel({
         onChange={(e) => handleSwitch(e.target.value)}
         disabled={disabled || switching}
         title={switching ? "Switching workflow" : undefined}
-        className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                   text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
-                   focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent
-                   transition-colors disabled:opacity-50"
+        className="w-full"
       >
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>
@@ -140,7 +136,7 @@ export default function WorkflowPanel({
         ))}
       </select>
       {profiles.find((p) => p.id === activeId) && (
-        <div className="mt-3 space-y-1 text-ui-meta text-ink-muted">
+        <div className="mt-2.5 space-y-1.5 text-ui-meta leading-5 text-ink-muted">
           <p>
             {
               workflowDescription(profiles.find((p) => p.id === activeId)!)
@@ -165,15 +161,10 @@ export default function WorkflowPanel({
                 " specialists"
               : ""}
           </p>
-          <p>
-            Preview shows the model calls and estimated use for your choices.
-          </p>
         </div>
       )}
       <details className="mt-3 text-ui-meta">
-        <summary className="cursor-pointer font-medium">
-          Compare workflows
-        </summary>
+        <summary className="review-disclosure">Compare workflows</summary>
         {Array.from(
           new Set(profiles.map((p) => workflowDescription(p).category)),
         ).map((category) => (

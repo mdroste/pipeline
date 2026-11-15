@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { StepConfig } from "./types";
+import type { StepConfig } from "./workflowTypes";
 
 /** A host check a workflow step can run (mirrors the Rust registry). */
 export interface AnalyzerInfo {
@@ -30,10 +30,6 @@ export function listAnalyzers(): Promise<AnalyzerInfo[]> {
     throw error;
   });
   return cached;
-}
-
-export function isAnalyzerStep(step: StepConfig): boolean {
-  return step.kind === "analyzer";
 }
 
 export function analyzerNetworkEnabled(step: StepConfig): boolean {

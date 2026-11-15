@@ -5,6 +5,24 @@ use super::{
 use crate::orchestration::{state::Progress, triggers::Trigger};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
+struct ScheduleRow {
+    id: String,
+    revision: i64,
+    due: Option<i64>,
+    enabled: bool,
+    body: String,
+}
+
+fn schedule_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduleRow> {
+    Ok(ScheduleRow {
+        id: row.get(0)?,
+        revision: row.get(1)?,
+        due: row.get(2)?,
+        enabled: row.get(3)?,
+        body: row.get(4)?,
+    })
+}
+
 impl Store {
     pub fn save_schedule(&self, mut schedule: Schedule, expected: Option<i64>) -> Result<Schedule> {
         schedule.trigger.validate()?;
@@ -121,37 +139,59 @@ impl Store {
 
     pub fn schedules(&self) -> Result<Vec<Schedule>> {
         let c = self.connection()?;
-        let mut s = c
-            .prepare("SELECT body FROM schedules ORDER BY id LIMIT 1000")
-            .map_err(err)?;
-        let bodies = s
-            .query_map([], |r| r.get::<_, String>(0))
+        let mut s = c.prepare("SELECT id,revision,next_due_at,enabled,body FROM schedules WHERE id NOT IN (SELECT id FROM damaged_records WHERE kind='schedule') ORDER BY id LIMIT 1000").map_err(err)?;
+        let rows = s.query_map([], schedule_row).map_err(err)?;
+        let mut schedules = Vec::new();
+        for row in rows {
+            if let Some(schedule) = self.decode_schedule(&row.map_err(err)?)? {
+                schedules.push(schedule);
+            }
+        }
+        Ok(schedules)
+    }
+
+    fn decode_schedule(&self, row: &ScheduleRow) -> Result<Option<Schedule>> {
+        let decoded = serde_json::from_str::<Schedule>(&row.body)
+            .map_err(err)
+            .and_then(|s| {
+                if s.id != row.id
+                    || s.revision != row.revision
+                    || s.next_due_at != row.due
+                    || s.enabled != row.enabled
+                    || !s.trigger.recurring()
+                    || row
+                        .due
+                        .is_some_and(|at| chrono::DateTime::from_timestamp(at, 0).is_none())
+                {
+                    return Err("Invalid schedule identity or trigger".into());
+                }
+                s.trigger.validate()?;
+                crate::orchestration::definition::validate(&s.chain)?;
+                Ok(s)
+            });
+        match decoded {
+            Ok(s) => Ok(Some(s)),
+            Err(e) => {
+                self.quarantine("schedule", &row.id, &e)?;
+                Ok(None)
+            }
+        }
+    }
+
+    pub fn fire_schedules(&self, time: i64) -> Result<()> {
+        let c = self.connection()?;
+        let mut q=c.prepare("SELECT s.id,s.revision,s.next_due_at,s.enabled,s.body FROM schedules s WHERE s.enabled=1 AND s.next_due_at<=?1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')) ORDER BY s.next_due_at,s.id LIMIT 32").map_err(err)?;
+        let rows = q
+            .query_map([time], schedule_row)
             .map_err(err)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(err)?;
-        bodies
-            .iter()
-            .map(|v| serde_json::from_str(v).map_err(err))
-            .collect()
-    }
-
-    /// A schedule that can't be read or started waits on its own; the rest fire.
-    pub fn fire_schedules(&self, time: i64) -> Result<()> {
-        let due = {
-            let c = self.connection()?;
-            let mut q=c.prepare("SELECT s.body FROM schedules s WHERE s.enabled=1 AND s.next_due_at<=?1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')) ORDER BY s.next_due_at,s.id LIMIT 32").map_err(err)?;
-            let rows = q
-                .query_map([time], |r| r.get::<_, String>(0))
-                .map_err(err)?
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(err)?;
-            rows
-        };
         let mut outcome = Ok(());
-        for body in due {
-            let fired = serde_json::from_str::<Schedule>(&body)
-                .map_err(err)
-                .and_then(|schedule| self.fire_schedule(schedule, time));
+        for row in rows {
+            let fired = self.decode_schedule(&row).and_then(|s| match s {
+                Some(schedule) => self.fire_schedule(schedule, time),
+                None => Err(format!("Unreadable schedule {} was disabled", row.id)),
+            });
             outcome = outcome.and(fired);
         }
         outcome

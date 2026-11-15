@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { EngineStatus } from "../../lib/types";
+import { engineClient } from "../../lib/engineClient";
 import { NO_PARSER_CONTROLS, parserControls } from "./search";
 
 /**
@@ -13,7 +12,7 @@ export function useParserControls(searching: boolean) {
   useEffect(() => {
     if (!searching) return;
     let current = true;
-    void invoke<EngineStatus[]>("list_engines").then(
+    void engineClient.list().then(
       (engines) => {
         if (current) setControls(parserControls(engines));
       },

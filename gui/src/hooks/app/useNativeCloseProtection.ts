@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { appClient } from "../../lib/appClient";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirmDialog, notify } from "../../components/DialogService";
 import type { AppNavigation } from "./useAppNavigation";
+import { flushDrafts } from "../../lib/flushDrafts";
 
 export function useNativeCloseProtection(
   unsavedRef: AppNavigation["unsavedRef"],
@@ -19,7 +20,7 @@ export function useNativeCloseProtection(
       if (disposed || pending) return;
       pending = true;
       try {
-        const hide = !quit && (await invoke<boolean>("app_close_hides"));
+        const hide = !quit && (await appClient.closeHides());
         if (disposed) return;
         const unsaved = unsavedRef.current;
         if (
@@ -39,7 +40,8 @@ export function useNativeCloseProtection(
         )
           return;
         if (!disposed) {
-          await invoke("complete_app_close", {
+          if (!hide) flushDrafts();
+          await appClient.completeClose({
             action: hide ? "hide" : "quit",
           });
         }
@@ -66,9 +68,8 @@ export function useNativeCloseProtection(
         if (disposed) return;
         keep(await listen("app:quit-requested", () => requestClose(true)));
         if (disposed) return;
-        await invoke("set_app_close_guard", { id, active: true });
-        if (disposed)
-          await invoke("set_app_close_guard", { id, active: false });
+        await appClient.setCloseGuard({ id, active: true });
+        if (disposed) await appClient.setCloseGuard({ id, active: false });
       } catch (error) {
         console.warn("Unable to register close protection:", error);
         if (!disposed) setCloseProtectionUnavailable(true);
@@ -78,9 +79,7 @@ export function useNativeCloseProtection(
     return () => {
       disposed = true;
       unlisten.forEach((stop) => stop());
-      void invoke("set_app_close_guard", { id, active: false }).catch(
-        console.warn,
-      );
+      void appClient.setCloseGuard({ id, active: false }).catch(console.warn);
     };
   }, []);
 

@@ -1,4 +1,4 @@
-import type { RosterEntry } from "../lib/types";
+import type { RosterEntry } from "../lib/reviewModelTypes";
 import { PROVIDER_LABELS, type Provider } from "../lib/providers";
 import { rosterSourceLabel } from "../lib/modelChoice";
 
@@ -10,9 +10,11 @@ export default function PreparedModelTable({
 }) {
   return (
     <section aria-label="Models in this review" className="mt-6">
-      <h2 className="text-sm font-semibold text-ink">Models in this review</h2>
+      <h2 className="text-ui-title font-semibold text-ink">
+        Models in this review
+      </h2>
       {entries ? (
-        <div className="mt-2 overflow-x-auto rounded-lg border border-line">
+        <div className="mt-2 overflow-x-auto rounded-ui-md border border-line">
           <table className="w-full text-left text-xs">
             <thead className="bg-sunken text-ink-muted">
               <tr>

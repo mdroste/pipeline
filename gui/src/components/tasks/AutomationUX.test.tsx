@@ -101,6 +101,7 @@ it("restores edited structures, names, quick fields, and timing per template", a
     target: { value: "My revised paper" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Weekly" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Steps & limits" }));
   const limit = screen.getByLabelText("Action limit");
   fireEvent.change(limit, { target: { value: "80" } });
   fireEvent.blur(limit);
@@ -123,7 +124,7 @@ it("restores edited structures, names, quick fields, and timing per template", a
     "My follow-up",
   );
 });
-it("keeps My templates and naming outside Advanced and preserves saved-template edits", async () => {
+it("keeps My templates in Steps & limits and preserves saved-template edits", async () => {
   render(
     <Builder
       initialSessionId="chat-id"
@@ -131,6 +132,7 @@ it("keeps My templates and naming outside Advanced and preserves saved-template 
       onClose={vi.fn()}
     />,
   );
+  fireEvent.click(screen.getByRole("tab", { name: "Steps & limits" }));
   await screen.findByRole("option", { name: savedChain.name });
   const picker = screen.getByLabelText("My templates");
   expect(picker.closest("details")).toBeNull();

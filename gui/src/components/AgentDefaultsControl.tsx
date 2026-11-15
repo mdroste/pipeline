@@ -1,12 +1,8 @@
 import type { ReactNode } from "react";
 import { providerAvailability } from "../lib/connections";
 import { unsetEffortLabel } from "../lib/modelChoice";
-import type {
-  DepsReport,
-  ModelCatalog,
-  ModelSelection,
-  Settings,
-} from "../lib/types";
+import type { DepsReport, Settings } from "../lib/settingsTypes";
+import type { ModelCatalog, ModelSelection } from "../lib/reviewModelTypes";
 import {
   decodeModelSelection,
   effortOptions,

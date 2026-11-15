@@ -251,6 +251,11 @@ exports are converted to the current format, version 11, and read what they
 read when imported in the app. Validation also warns about a step that reads
 nothing from the run.
 
+A named product may set `required` to `true` if the workflow must deliver it.
+By default a conditional named product may be absent when its producer skips.
+A declared primary report or findings product must be delivered. An empty
+findings array counts as a delivered product.
+
 ### Give a step the document
 
 Each step chooses which forms of the main document it can read. Add a `primary`

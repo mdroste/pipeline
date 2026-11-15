@@ -13,6 +13,9 @@ pub struct Receipt {
     pub label: String,
     pub state: String,
     pub operation: String,
+    /// Absent on receipts written before the dispatch-marker contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_kind: Option<super::adapters::contract::Kind>,
     pub started_at: i64,
     pub finished_at: Option<i64>,
     pub wake_at: Option<i64>,
@@ -24,6 +27,12 @@ pub struct Receipt {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
+    /// Workspace conversation created exclusively for this scheduled run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence_session: Option<String>,
+    /// Researcher-supplied corrections to an unchanged snapshot, scoped to its iteration.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub corrected_snapshots: BTreeMap<String, Value>,
     pub receipts: BTreeMap<String, Receipt>,
     #[serde(default = "object")]
     pub outputs: Value,
@@ -31,6 +40,9 @@ pub struct Progress {
     pub decisions: BTreeMap<String, Value>,
     #[serde(default)]
     pub actions: u32,
+    /// Absolute cutoffs for open groups, keyed by the actual iteration/branch address.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub group_deadlines: BTreeMap<String, i64>,
     #[serde(default)]
     pub limit_reached: bool,
 }
@@ -42,7 +54,23 @@ pub struct Ready {
     pub address: String,
     pub step: Step,
     pub inputs: Value,
+    /// Enclosing group instance prefixes and their individual action ceilings.
+    pub groups: Vec<(String, u32)>,
+    pub timeout_secs: u32,
 }
+impl Ready {
+    pub(crate) fn cutoff(&self, progress: &Progress, deadline: i64, start: i64) -> i64 {
+        self.groups
+            .iter()
+            .filter_map(|(prefix, _)| progress.group_deadlines.get(prefix.trim_end_matches('/')))
+            .copied()
+            .fold(
+                deadline.min(start.saturating_add(i64::from(self.timeout_secs))),
+                i64::min,
+            )
+    }
+}
+
 #[derive(Debug)]
 pub enum Advance {
     Ready(Vec<Ready>),
@@ -52,10 +80,19 @@ pub enum Advance {
 }
 
 pub fn advance(chain: &Chain, progress: &mut Progress, inputs: &Value) -> Advance {
+    advance_at(chain, progress, inputs, super::store::now())
+}
+
+pub(crate) fn advance_at(
+    chain: &Chain,
+    progress: &mut Progress,
+    inputs: &Value,
+    time: i64,
+) -> Advance {
     if progress.receipts.len() >= MAX_INSTANCES {
         return Advance::Attention("Task instance limit reached".into());
     }
-    let mut budget = WalkBudget::new(progress);
+    let mut budget = WalkBudget::new(progress, time, chain.limits.action_timeout_secs);
     match walk(&chain.steps, "", progress, inputs, &mut budget) {
         Ok((true, _)) => Advance::Finished,
         Ok((false, ready)) if ready.is_empty() => Advance::Waiting,
@@ -232,10 +269,33 @@ fn walk(
                 budget.record(p, format!("{address}/done"), json!(true))?;
             }
             Action::Chain { chain } => {
-                let result = walk(&chain.steps, &format!("{address}/"), p, inputs, budget)?;
-                if !result.0 {
-                    return Ok(result);
+                let prefix = format!("{address}/");
+                let deadline = *p.group_deadlines.entry(address.clone()).or_insert_with(|| {
+                    // Older receipts have no saved group clock. Their first action proves entry.
+                    let start = p
+                        .receipts
+                        .values()
+                        .filter(|r| r.address.starts_with(&prefix))
+                        .map(|r| r.started_at)
+                        .min()
+                        .unwrap_or(budget.time);
+                    start.saturating_add(i64::from(chain.limits.deadline_hours) * 3600)
+                });
+                if deadline <= budget.time {
+                    return Err(format!("Group {address} reached its elapsed deadline. Start a new run to give it more time."));
                 }
+                let (finished, mut ready) = walk(&chain.steps, &prefix, p, inputs, budget)?;
+                if !finished {
+                    for action in &mut ready {
+                        action.timeout_secs =
+                            action.timeout_secs.min(chain.limits.action_timeout_secs);
+                        action
+                            .groups
+                            .push((prefix.clone(), chain.limits.max_actions));
+                    }
+                    return Ok((false, ready));
+                }
+                p.group_deadlines.remove(&address);
                 budget.record(p, format!("{address}/done"), json!(true))?;
             }
             _ => match p.receipts.get(&address) {
@@ -254,6 +314,8 @@ fn walk(
                             address,
                             step: step.clone(),
                             inputs: inputs.clone(),
+                            groups: Vec::new(),
+                            timeout_secs: budget.timeout,
                         }],
                     ))
                 }
@@ -268,12 +330,16 @@ fn walk(
 const MAX_CONTROL_DECISIONS: usize = 4096;
 pub(super) const MAX_PROGRESS_BYTES: usize = 8 * 1024 * 1024;
 struct WalkBudget {
+    time: i64,
+    timeout: u32,
     remaining: usize,
     bytes: usize,
 }
 impl WalkBudget {
-    fn new(progress: &Progress) -> Self {
+    fn new(progress: &Progress, time: i64, timeout: u32) -> Self {
         Self {
+            time,
+            timeout,
             remaining: 32768,
             bytes: serde_json::to_vec(progress).map_or(usize::MAX, |v| v.len()),
         }
@@ -298,6 +364,19 @@ impl WalkBudget {
         self.bytes += bytes;
         p.decisions.insert(key, value);
         Ok(())
+    }
+}
+
+impl Progress {
+    pub fn expired_group(&self, time: i64) -> Option<&str> {
+        self.group_deadlines
+            .iter()
+            .find(|(_, until)| **until <= time)
+            .map(|(group, _)| group.as_str())
+    }
+
+    pub fn next_wake(&self, due: Option<i64>) -> Option<i64> {
+        self.group_deadlines.values().copied().chain(due).min()
     }
 }
 

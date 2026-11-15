@@ -12,12 +12,12 @@ import {
   type PendingRun,
   type RunProfileSnapshot,
 } from "../../lib/appRunPreparation";
+import type { DepsReport } from "../../lib/settingsTypes";
 import type {
-  DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
-  RunParallelOverrides,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
+import type { RunParallelOverrides } from "../../lib/reviewModelTypes";
 import type { AppPage } from "../../components/NavRail";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 

@@ -20,8 +20,8 @@
 //! The command layer holds the turn permit and the project lock around any action
 //! that changes files, as it does for every other file change, and `claim_project`
 //! refuses one that could reach a local job's files.
+use super::git_process::{capture_git, GitLimits};
 use super::repository::{self, RepositoryStatus};
-use super::tasks::{capture_git, GitLimits};
 use super::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

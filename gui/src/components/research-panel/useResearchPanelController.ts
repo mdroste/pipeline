@@ -9,14 +9,20 @@ import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
-  EffectiveHarness,
-  ExecutionProfile,
-  HarnessCatalog,
-  PaperWithRevision,
-  ResearchExecution,
-  ResearchNote,
   Workspace,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/sessionTypes";
+import type {
+  EffectiveHarness,
+  HarnessCatalog,
+} from "../../lib/workbench/harnessTypes";
+import type {
+  ExecutionProfile,
+  ResearchExecution,
+} from "../../lib/workbench/executionTypes";
+import type {
+  PaperWithRevision,
+  ResearchNote,
+} from "../../lib/workbench/researchTypes";
 import type { ResearchTab } from "./types";
 
 export function operation(prefix: string) {

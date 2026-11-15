@@ -4,11 +4,11 @@
 :root select:not([multiple])[size="1"],
 :root .ui-select-trigger {
   min-width: 0;
-  min-height: 2.125rem;
+  min-height: var(--ui-control-height);
   appearance: none;
   -webkit-appearance: none;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
   background-color: var(--ui-surface);
   color: var(--ui-text);
   padding: 0.4375rem 2rem 0.4375rem 0.6875rem;
@@ -55,8 +55,8 @@
 :root select:not([multiple]):is(:not([size]), [size="1"]):focus-visible,
 :root .ui-select-trigger:focus-visible {
   border-color: var(--ui-border-strong);
-  box-shadow: 0 0 0 3px var(--ui-sunken);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-muted) 18%, transparent);
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
 }
 
 :root select:not([multiple]):is(:not([size]), [size="1"]):disabled,
@@ -180,7 +180,7 @@
 
 :root .ui-dropdown-item,
 :root [data-ui-popover] [role="option"] {
-  min-height: 2.125rem;
+  min-height: var(--ui-control-height);
   border-radius: var(--ui-radius-sm);
   padding: 0.4375rem 0.625rem;
   font-size: var(--ui-text-label);

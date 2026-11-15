@@ -2,7 +2,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { InputSlot, VarSpec } from "../../lib/types";
+import type { InputSlot, VarSpec } from "../../lib/workflowTypes";
 import {
   MemoizedExtraInputsEditor as ExtraInputsEditor,
   MemoizedVariablesEditor as VariablesEditor,

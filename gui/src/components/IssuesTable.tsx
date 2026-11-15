@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { reportExportClient } from "../lib/reportExportClient";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import type { Issue, IssueEvidence } from "../lib/issues";
 import { doiUrl, severityRank } from "../lib/issues";
 import { Icon } from "../ui/icons";
@@ -123,7 +124,7 @@ export default function IssuesTable({
     const request = saveChainRef.current
       .catch(() => undefined)
       .then(() =>
-        invoke<void>("save_annotations", { runId: targetRun, content }),
+        reviewHistoryClient.saveAnnotations({ runId: targetRun, content }),
       );
     saveChainRef.current = request.catch(() => undefined);
     return { request, content };
@@ -146,7 +147,8 @@ export default function IssuesTable({
       setAnnotationsLoaded(true);
       return;
     }
-    invoke<string>("get_annotations", { runId })
+    reviewHistoryClient
+      .annotations({ runId })
       .then((s) => {
         if (loadVersionRef.current !== version) return;
         try {
@@ -327,7 +329,7 @@ export default function IssuesTable({
     try {
       // The backend runs the native save dialog and writes only to the
       // user-chosen path; the webview never supplies a filesystem path.
-      await invoke("save_text_file", {
+      await reportExportClient.saveText({
         content: md,
         suggestedName: "issue-decisions.md",
       });

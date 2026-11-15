@@ -3,7 +3,7 @@ import type {
   WorkspaceAccountState,
   WorkspaceModelCatalog,
   WorkspaceRateLimits,
-} from "./workbenchTypes";
+} from "./workbench/runtimeTypes";
 export interface AccountStatus {
   account: WorkspaceAccountState;
   epoch: number;

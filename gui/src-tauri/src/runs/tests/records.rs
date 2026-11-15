@@ -149,11 +149,12 @@ fn summary_carries_metrics_and_basename() {
 
 #[test]
 fn input_identity_is_stable_across_input_kinds_and_reruns() {
-    let document = input_identity("/papers/main.pdf", "document", "hash-a", None);
+    let mut document = input_identity("/papers/main.pdf", "document", "hash-a", None);
     let document_again = input_identity("/papers/main.pdf", "document", "hash-b", None);
     assert_eq!(document.lineage_id, document_again.lineage_id);
     assert_ne!(document.content_hash, document_again.content_hash);
 
+    document.review_handoff_id = Some("review_handoff_original".into());
     let moved_tree = input_identity(
         "/new-location/source",
         "source_tree",
@@ -161,6 +162,7 @@ fn input_identity_is_stable_across_input_kinds_and_reruns() {
         Some(&document),
     );
     assert_eq!(moved_tree.lineage_id, document.lineage_id);
+    assert_eq!(moved_tree.review_handoff_id, document.review_handoff_id);
     assert!(moved_tree.selection_key.starts_with("source_tree:"));
 
     assert_eq!(

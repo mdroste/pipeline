@@ -7,9 +7,9 @@ import {
 } from "../../lib/workspaceNavigation";
 
 const tabClass =
-  "-mb-px shrink-0 border-b-2 py-2.5 text-ui-label outline-offset-[-2px] transition-colors";
+  "-mb-px min-h-[var(--ui-control-height)] shrink-0 border-b-2 py-2 text-ui-label outline-offset-[-2px] transition-colors";
 const idle = "border-transparent text-ink-muted hover:text-ink";
-const current = "border-[var(--ui-page-accent)] font-medium text-ink";
+const current = "border-[var(--ui-inverse)] font-medium text-ink";
 
 export default function ProjectSubnav({
   tab,
@@ -24,7 +24,7 @@ export default function ProjectSubnav({
   return (
     <nav
       aria-label={`${workspaceDestinations[tab].section} destinations`}
-      className="flex shrink-0 items-center gap-5 overflow-x-auto border-b border-line px-5"
+      className="flex shrink-0 items-center gap-4 overflow-x-auto border-b border-line px-[var(--ui-page-gutter)]"
     >
       {sectionTabs(tab, stage).map((id) => (
         <button

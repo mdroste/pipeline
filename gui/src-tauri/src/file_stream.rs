@@ -5,9 +5,9 @@
 //! `FileSource`, so this module holds no root and applies no scope policy, and
 //! Workspace and Review sources never see each other. A URL carries an
 //! unguessable in-memory token, so model-written Markdown cannot reach a file
-//! and nothing survives a restart. A source is reopened per request, because a
-//! held handle would interfere with sync clients and rename on Windows; a
-//! changed stamp answers 409 and the viewer reloads.
+//! and nothing survives a restart. Live sources reopen per request so sync and
+//! rename remain possible on Windows. A captured PDF can retain its verified
+//! immutable handle until its reader closes. A changed stamp answers 409.
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -34,6 +34,9 @@ pub struct OpenedSource {
 /// One validated file. `open` repeats the owner's scope checks on every request.
 pub trait FileSource: Send + Sync {
     fn open(&self) -> Result<Option<OpenedSource>, String>;
+    fn read(&self, file: &mut File, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
+        read_part(file, start, length)
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Presentation {
@@ -47,6 +50,7 @@ struct Entry {
     stamp: String,
     presentation: Presentation,
     used: u64,
+    pinned: bool,
 }
 #[derive(Default)]
 struct Registry {
@@ -68,14 +72,43 @@ pub fn issue(
     stamp: String,
     presentation: Presentation,
 ) -> Result<String, String> {
+    register(source, mime, stamp, presentation, false).map(|(token, _)| token)
+}
+
+/// Reserve a few slots for immutable documents held open by a reader.
+/// When all reserved slots are taken the caller loads its bytes before an
+/// ordinary token can age out. Other viewers retain the rest of the registry.
+pub(crate) fn issue_capture(
+    source: Arc<dyn FileSource>,
+    stamp: String,
+    local: bool,
+) -> Result<(String, bool), String> {
+    register(source, "application/pdf", stamp, Presentation::Bytes, local)
+}
+
+fn register(
+    source: Arc<dyn FileSource>,
+    mime: &'static str,
+    stamp: String,
+    presentation: Presentation,
+    pin: bool,
+) -> Result<(String, bool), String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|error| error.to_string())?;
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let mut registry = registry();
+    let pinned = pin
+        && registry
+            .entries
+            .values()
+            .filter(|entry| entry.pinned)
+            .count()
+            < MAX_TOKENS / 4;
     if registry.entries.len() >= MAX_TOKENS {
         if let Some(oldest) = registry
             .entries
             .iter()
+            .filter(|(_, entry)| !entry.pinned)
             .min_by_key(|(_, entry)| entry.used)
             .map(|(token, _)| token.clone())
         {
@@ -92,9 +125,14 @@ pub fn issue(
             stamp,
             presentation,
             used,
+            pinned,
         },
     );
-    Ok(token)
+    Ok((token, pinned))
+}
+/// The main document was replaced. Its JS cleanup may never run.
+pub fn release_captures() {
+    registry().entries.retain(|_, entry| !entry.pinned);
 }
 pub fn revoke(token: &str) {
     registry().entries.remove(token);
@@ -151,7 +189,7 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
     *response.status_mut() = code;
     response
 }
-fn read_part(file: &mut File, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_part(file: &mut File, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
     file.seek(SeekFrom::Start(start))?;
     let mut bytes = Vec::with_capacity(length as usize);
     file.take(length).read_to_end(&mut bytes)?;
@@ -220,7 +258,7 @@ fn serve(request: &Request<Vec<u8>>, is_main: bool) -> Response<Vec<u8>> {
     let body = if request.method() == Method::HEAD {
         Vec::new()
     } else {
-        match read_part(&mut file, start, length) {
+        match source.read(&mut file, start, length) {
             Ok(body) => body,
             Err(_) => return status(StatusCode::INTERNAL_SERVER_ERROR),
         }
@@ -441,11 +479,20 @@ mod tests {
     fn capacity_retires_the_least_recently_used_token() {
         let (_temp, first) = fixture(b"first");
         let (_kept, kept) = fixture(b"kept");
+        let (pin, reserved) = issue_capture(
+            Arc::new(Disk(_kept.path().join("file.bin"))),
+            "size:4".into(),
+            true,
+        )
+        .unwrap();
+        assert!(reserved);
         for _ in 0..MAX_TOKENS - 1 {
             let (_temp, _) = fixture(b"filler");
             get(&kept, None);
         }
         assert_eq!(get(&first, None).status(), StatusCode::GONE);
         assert_eq!(get(&kept, None).status(), StatusCode::OK);
+        assert_eq!(get(&pin, None).body(), b"kept");
+        revoke(&pin);
     }
 }

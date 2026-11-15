@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import type { ActiveTurn, WorkbenchEvent } from "../../lib/workbenchTypes";
+import type {
+  ActiveTurn,
+  WorkbenchEvent,
+} from "../../lib/workbench/runtimeTypes";
 import { reportProblem } from "./reportProblem";
 import type { WorkspaceConversationRuntime } from "./useWorkspaceConversationRuntime";
 

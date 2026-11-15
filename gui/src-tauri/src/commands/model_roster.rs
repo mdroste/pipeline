@@ -5,13 +5,14 @@
 //! stage exception, a workflow-pinned step, the usage-limit backup). The
 //! frontend renders it; it never re-derives provider or model inheritance.
 
-use crate::pipeline_config::{Phase, PipelineConfig};
+use crate::auto_review::{adaptive_agent_count_range, specialist_donor};
+use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
 use crate::settings::{ModelSelection, Settings};
 
 /// One group of calls that share a provider, model, and thinking level.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RosterEntry {
-    /// `extraction`, `orientation`, `parallel`, `merge`, `sequential`,
+    /// `extraction`, `orientation`, `parallel`, `adaptive`, `merge`, `sequential`,
     /// `reconcile`, or `fallback`.
     pub stage: &'static str,
     pub label: String,
@@ -28,7 +29,7 @@ pub struct RosterEntry {
     /// default model in Settings), `settings` (a Settings stage exception),
     /// or `workflow` (pinned by the workflow).
     pub source: &'static str,
-    /// When the call may not run, for example "Only after a usage limit".
+    /// Extra context about when and how often the call runs.
     pub note: Option<String>,
 }
 
@@ -138,20 +139,70 @@ pub fn model_roster(
         &orientation,
         settings.orientation_model_selection(&orientation),
     );
-    let effort = settings.orientation_effort(&orientation);
+    let inherited_effort = settings.orientation_effort(&orientation);
+    let effort =
+        if crate::pipeline::orient::uses_manuscript_index(config.orientation_schema.as_ref()) {
+            settings.paper_orientation_effort(&orientation)
+        } else {
+            inherited_effort.clone()
+        };
+    let faster_orientation = effort != inherited_effort;
     push(RosterEntry {
         stage: "orientation",
-        label: "Orientation map".into(),
+        label: "Document bundle preparation".into(),
         step_ids: Vec::new(),
         step_labels: Vec::new(),
         transport: transport(&orientation),
-        source: baseline.source(&orientation, &model, &effort, false),
+        source: baseline.source(&orientation, &model, &inherited_effort, false),
         provider: orientation,
         model,
         effort,
-        note: None,
+        note: faster_orientation.then(|| {
+            "Paper Review uses Medium thinking for document bundle preparation when supported."
+                .into()
+        }),
     });
 
+    let step_entry = |step: &StepConfig, provider: &str| {
+        let parallel = step.phase == Phase::Parallel;
+        let pinned = raw_config
+            .steps
+            .iter()
+            .find(|raw| raw.id == step.id)
+            .is_some_and(|raw| !raw.agents.is_empty());
+        let model = effective(
+            settings,
+            provider,
+            step.model_selection_for(settings, provider),
+        );
+        let effort = step.effort_for(settings, provider);
+        let mut source = baseline.source(provider, &model, &effort, pinned);
+        if source == "settings" && parallel_chosen && parallel && !pinned {
+            source = "review";
+        }
+        RosterEntry {
+            stage: if parallel { "parallel" } else { "sequential" },
+            label: if parallel {
+                "Parallel steps".into()
+            } else {
+                "Sequential steps".into()
+            },
+            step_ids: vec![step.id.clone()],
+            step_labels: vec![if step.label.trim().is_empty() {
+                step.id.clone()
+            } else {
+                step.label.clone()
+            }],
+            transport: transport(provider),
+            provider: provider.into(),
+            model,
+            effort,
+            source,
+            note: None,
+        }
+    };
+    let adaptive = specialist_donor(config).zip(adaptive_agent_count_range(config));
+    let merges_adaptive = adaptive.is_some_and(|(donor, _)| donor.agents.len() > 1);
     let mut needs_merge = false;
     for phase in [Phase::Parallel, Phase::Sequential] {
         for step in config
@@ -159,82 +210,51 @@ pub fn model_roster(
             .iter()
             .filter(|step| step.enabled && step.kind.is_model() && step.phase == phase)
         {
-            let pinned = raw_config
-                .steps
-                .iter()
-                .find(|raw| raw.id == step.id)
-                .is_some_and(|raw| !raw.agents.is_empty());
             needs_merge |= phase == Phase::Parallel && step.agents.len() > 1;
             for provider in &step.agents {
-                let model = effective(
-                    settings,
-                    provider,
-                    step.model_selection_for(settings, provider),
+                push(step_entry(step, provider));
+            }
+        }
+        if phase == Phase::Parallel {
+            if let Some((donor, (low, high))) = adaptive {
+                let count = if low == high {
+                    low.to_string()
+                } else {
+                    format!("{low}–{high}")
+                };
+                let note = format!(
+                    "{count} calls per document. Reviewers are selected during document bundle preparation."
                 );
-                let effort = step.effort_for(settings, provider);
-                let mut source = baseline.source(provider, &model, &effort, pinned);
-                if source == "settings" && parallel_chosen && phase == Phase::Parallel && !pinned {
-                    source = "review";
+                for provider in &donor.agents {
+                    push(RosterEntry {
+                        stage: "adaptive",
+                        label: "Adaptive agents".into(),
+                        step_ids: Vec::new(),
+                        step_labels: Vec::new(),
+                        note: Some(note.clone()),
+                        ..step_entry(donor, provider)
+                    });
                 }
-                push(RosterEntry {
-                    stage: if phase == Phase::Parallel {
-                        "parallel"
-                    } else {
-                        "sequential"
-                    },
-                    label: if phase == Phase::Parallel {
-                        "Parallel steps".into()
-                    } else {
-                        "Sequential steps".into()
-                    },
-                    step_ids: vec![step.id.clone()],
-                    step_labels: vec![if step.label.trim().is_empty() {
-                        step.id.clone()
-                    } else {
-                        step.label.clone()
-                    }],
-                    transport: transport(provider),
-                    provider: provider.clone(),
-                    model,
-                    effort,
-                    source,
-                    note: None,
-                });
             }
         }
         if phase == Phase::Parallel && config.merge.enabled && needs_merge {
-            // Mirrors pipeline::merge: a workflow Merge agent runs on its
-            // provider's default; an inherited one takes the Merge policy.
-            let pinned = config.merge.agents.first().cloned();
-            let provider = pinned
-                .clone()
-                .unwrap_or_else(|| settings.merge_agent().to_string());
-            let (model, effort) = if pinned.is_some() {
-                (
-                    settings.model_selection(&provider),
-                    settings.model_effort(&provider).to_string(),
-                )
-            } else {
-                (
-                    effective(
-                        settings,
-                        &provider,
-                        settings.merge_model_selection(&provider),
-                    ),
-                    settings.merge_effort(&provider),
-                )
-            };
+            let (provider, model, effort) = config.merge.call_policy(settings);
             push(RosterEntry {
                 stage: "merge",
                 label: "Combine results".into(),
                 step_ids: Vec::new(),
                 step_labels: Vec::new(),
                 transport: transport(&provider),
-                source: baseline.source(&provider, &model, &effort, pinned.is_some()),
+                source: baseline.source(
+                    &provider,
+                    &model,
+                    &effort,
+                    !config.merge.agents.is_empty(),
+                ),
                 provider,
                 model,
                 effort,
-                note: None,
+                note: merges_adaptive.then(|| "Also combines adaptive agents’ results".into()),
             });
         }
     }

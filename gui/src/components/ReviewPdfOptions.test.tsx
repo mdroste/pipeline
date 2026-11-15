@@ -14,39 +14,17 @@ const props = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
-  invoke.mockImplementation(async (command) =>
-    command === "review_pdf_options"
-      ? { method: "llm", provider: "claude", snapshotId: "frozen" }
-      : {
-          text: "A sample",
-          image: "data:image/jpeg;base64,AA",
-          method: "llm",
-          pageCount: 9,
-          notes: [],
-        },
-  );
+  invoke.mockResolvedValue({ method: "paddleocr-vl-full" });
 });
-it("makes the model call explicit and binds the sample to the displayed settings", async () => {
-  const user = userEvent.setup();
+it("shows the default PDF method without offering a page preview", async () => {
   render(<ReviewPdfOptions {...props} />);
-  await user.click(screen.getByText("Check a sample page"));
-  await screen.findByText(/uses your model allowance/);
-  expect(invoke).not.toHaveBeenCalledWith(
-    "preview_review_pdf",
-    expect.anything(),
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Preview page with AI" }),
-  );
-  expect(await screen.findByText("A sample")).toBeVisible();
-  expect(invoke).toHaveBeenCalledWith(
-    "preview_review_pdf",
-    expect.objectContaining({
-      page: 1,
-      allowModelCall: true,
-      expectedSnapshotId: "frozen",
-    }),
-  );
+  expect(
+    await screen.findByRole("option", { name: /Workflow default · PaddleOCR/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("Check a sample page")).not.toBeInTheDocument();
+  expect(invoke.mock.calls).toEqual([
+    ["review_pdf_options", { runParallelOverrides: null }],
+  ]);
 });
 it("changes this review's method without saving global settings", async () => {
   const user = userEvent.setup();
@@ -67,11 +45,9 @@ it("ignores options for an earlier document", async () => {
   );
   const { rerender } = render(<ReviewPdfOptions {...props} />);
   rerender(<ReviewPdfOptions {...props} path="/new.pdf" />);
-  await screen.findByRole("option", { name: /Workflow default · AI model/ });
-  await act(async () =>
-    resolve({ method: "pdftotext", provider: "codex", snapshotId: "old" }),
-  );
+  await screen.findByRole("option", { name: /Workflow default · PaddleOCR/ });
+  await act(async () => resolve({ method: "pdftotext" }));
   expect(
-    screen.getByRole("option", { name: /Workflow default · AI model/ }),
+    screen.getByRole("option", { name: /Workflow default · PaddleOCR/ }),
   ).toBeInTheDocument();
 });

@@ -87,6 +87,15 @@ pub fn detect_toolchains(project_root: Option<&Path>) -> ToolchainReport {
     detect_with(&Host::current(), project_root)
 }
 
+/// Resolve an installed program for a user-started artifact without running
+/// version probes or trusting a project-local executable.
+pub(super) fn artifact_program(kind: &str) -> Option<PathBuf> {
+    locations::candidates(&Host::current())
+        .into_iter()
+        .find(|candidate| candidate.kind == kind)
+        .map(|candidate| candidate.path)
+}
+
 pub(super) fn detect_with(host: &Host, project_root: Option<&Path>) -> ToolchainReport {
     let project = project_root
         .and_then(|root| std::fs::canonicalize(root).ok())

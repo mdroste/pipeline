@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
 
 import type {
   Phase,
@@ -6,7 +6,7 @@ import type {
   MergeConfig,
   ExtractionConfig,
   ArtifactSelector,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
 
 import { confirmDialog, notify } from "../DialogService";
 
@@ -240,10 +240,10 @@ export function useStepActions(
     try {
       const template =
         source === "generic"
-          ? await invoke<string>("get_default_prompt", {
+          ? await workflowSchemaClient.defaultPrompt({
               name: "parallel_context_generic",
             })
-          : await invoke<string>("get_default_parallel_template");
+          : await workflowSchemaClient.parallelTemplate();
       if (
         request !== promptResetRequestRef.current ||
         activeProfileRef.current !== profile
@@ -301,7 +301,7 @@ export function useStepActions(
     if (draft.mode === "adaptive") {
       if (!draft.templateId)
         throw new Error("Select an adaptive agent to copy.");
-      template = await invoke<StepConfig>("get_auto_review_specialist_step", {
+      template = await workflowSchemaClient.specialistStep({
         id: draft.templateId,
       });
     }
@@ -344,11 +344,11 @@ export function useStepActions(
       if (draft.mode === "blank") {
         return draft.phase === "parallel"
           ? `# ${draft.label}\n\nDescribe what this step should evaluate.\n\n## Method\n\n...\n\n## Output structure\n\n...`
-          : `You are performing a custom analysis step.\n\nORIENTATION MAP:\n{orientation}\n\nPRIOR OUTPUTS:\n{prior_outputs}\n\nLAST OUTPUT:\n{last_output}\n\n[Your instructions here]`;
+          : `You are performing a custom analysis step.\n\nDOCUMENT OVERVIEW:\n{orientation}\n\nPRIOR OUTPUTS:\n{prior_outputs}\n\nLAST OUTPUT:\n{last_output}\n\n[Your instructions here]`;
       }
       const contextBlocks: string[] = [];
       if (context.include.some((selector) => selector.kind === "survey")) {
-        contextBlocks.push("ORIENTATION MAP:\n{orientation}");
+        contextBlocks.push("DOCUMENT OVERVIEW:\n{orientation}");
       }
       if (
         context.include.some(

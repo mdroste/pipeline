@@ -1,10 +1,12 @@
+import type { ExecutionPlanEnvelope } from "../lib/appRunPreparation";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { appClient } from "../lib/appClient";
 import { listen } from "@tauri-apps/api/event";
+import { collectBatchListeners } from "../lib/batchListeners";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { BatchJob, InputSlot, VarSpec, DepsReport } from "../lib/types";
+import type { BatchJob } from "../lib/reviewTypes";
+import type { InputSlot, VarSpec } from "../lib/workflowTypes";
 import { inputSlotExtensions } from "../lib/pipelineHelpers";
-import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
@@ -12,20 +14,7 @@ interface Props {
   onOpenRun: (runId: string) => void;
   showClose?: boolean;
   /** Execution plan already loaded by the app shell for the active workflow. */
-  preloadedSetup?: BatchSetupEnvelope | null;
-}
-
-export interface BatchSetupEnvelope {
-  profileId: string;
-  profileConfigSnapshotId: string;
-  profileSnapshotId: string;
-  configuredInputMode?: string;
-  inputMode: string;
-  inputInterpretation?: string;
-  variables: VarSpec[];
-  inputSlots: InputSlot[];
-  readiness: DepsReport;
-  stages: ExecutionPlanStage[];
+  preloadedSetup?: ExecutionPlanEnvelope | null;
 }
 
 function fmtDuration(secs: number): string {
@@ -44,9 +33,9 @@ function statusColor(status: string): string {
     case "running":
       return "text-blue-600 dark:text-blue-400 animate-pulse";
     case "cancelled":
-      return "text-gray-500 dark:text-gray-400";
+      return "text-ink-muted";
     default:
-      return "text-gray-500 dark:text-gray-400";
+      return "text-ink-muted";
   }
 }
 
@@ -111,7 +100,7 @@ export default function BatchPanel({
   );
   const acceptsBatchInput = inputMode !== "none";
 
-  const applySetup = useCallback((setup: BatchSetupEnvelope) => {
+  const applySetup = useCallback((setup: ExecutionPlanEnvelope) => {
     const specs = setup.variables ?? [];
     setInputMode(setup.configuredInputMode || setup.inputMode || "document");
     setVariables(specs);
@@ -146,37 +135,25 @@ export default function BatchPanel({
     const listenerSetup = Promise.allSettled([
       listen<BatchJob[]>("batch:progress", (e) => setJobs(e.payload)),
       listen("batch:done", () =>
-        invoke<BatchJob[]>("get_batch_status")
+        appClient
+          .batchStatus()
           .then(setJobs)
           .catch(() => {}),
       ),
     ]);
     listenerSetup
       .then((registrations) => {
-        const registered = registrations.flatMap((registration) =>
-          registration.status === "fulfilled" ? [registration.value] : [],
-        );
-        const failed = registrations.find(
-          (registration): registration is PromiseRejectedResult =>
-            registration.status === "rejected",
-        );
-        if (failed) {
-          registered.forEach((unlisten) => unlisten());
-          throw failed.reason;
-        }
-        if (!live) {
-          registered.forEach((unlisten) => unlisten());
-          return null;
-        }
+        const registered = collectBatchListeners(registrations, live);
+        if (!registered) return null;
         unlisteners = registered;
         setListenersReady(true);
         // Read status only after every event listener is active. Otherwise a
         // run can start between the initial status read and listener setup.
         return Promise.all([
-          invoke<BatchJob[]>("get_batch_status"),
+          appClient.batchStatus(),
           warmSetup
             ? Promise.resolve(warmSetup)
-            : invoke<BatchSetupEnvelope>("get_execution_plan", {
+            : appClient.executionPlan({
                 variables: null,
                 extraInputs: null,
                 expectedProfileConfigSnapshotId: null,
@@ -211,13 +188,13 @@ export default function BatchPanel({
   }, [applySetup, preloadedSetup, setupAttempt]);
 
   const prepareCurrentSetup = useCallback(
-    async (paperPath?: string | null): Promise<BatchSetupEnvelope> => {
+    async (paperPath?: string | null): Promise<ExecutionPlanEnvelope> => {
       if (!profileConfigSnapshotId) {
         throw new Error(
           "The active workflow setup is not ready. Refresh it and review the options.",
         );
       }
-      const setup = await invoke<BatchSetupEnvelope>("get_execution_plan", {
+      const setup = await appClient.executionPlan({
         variables: variableValues,
         extraInputs,
         expectedProfileConfigSnapshotId: profileConfigSnapshotId,
@@ -297,7 +274,16 @@ export default function BatchPanel({
         filters: [
           {
             name: spec.label || "Input",
-            extensions: ["pdf", "tex", "txt", "md", "docx", "json", "csv"],
+            extensions: [
+              "pdf",
+              "tex",
+              "txt",
+              "md",
+              "docx",
+              "pptx",
+              "json",
+              "csv",
+            ],
           },
         ],
       });
@@ -318,7 +304,12 @@ export default function BatchPanel({
     try {
       const picked = await open({
         multiple: true,
-        filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
+        filters: [
+          {
+            name: "Documents and slides",
+            extensions: ["pdf", "tex", "docx", "pptx"],
+          },
+        ],
       });
       if (Array.isArray(picked))
         setStaged((prev) => [...new Set([...prev, ...picked])]);
@@ -343,9 +334,11 @@ export default function BatchPanel({
     }
     if (typeof dir !== "string") return;
     try {
-      const files = await invoke<string[]>("list_input_files", { dir });
+      const files = await appClient.inputFiles(dir);
       if (files.length === 0)
-        setError("No PDF, LaTeX, or Word files found directly in that folder.");
+        setError(
+          "No PDF, LaTeX, Word, or PowerPoint files found directly in that folder.",
+        );
       setStaged((prev) => [...new Set([...prev, ...files])]);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -371,7 +364,7 @@ export default function BatchPanel({
         return;
       }
       const setup = await prepareCurrentSetup(representativeBatchPath(staged));
-      await invoke("start_batch", {
+      await appClient.startBatch({
         paths: staged,
         variables: variableValues,
         extraInputs,
@@ -392,7 +385,7 @@ export default function BatchPanel({
     setError(null);
     setErrorCanRetrySetup(false);
     try {
-      await invoke("cancel_batch");
+      await appClient.cancelBatch();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(`Batch cancellation failed: ${message}`);
@@ -417,11 +410,11 @@ export default function BatchPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
+      <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-line bg-surface shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Batch reports
         </h2>
-        <span className="text-xs text-gray-500 dark:text-gray-400">
+        <span className="text-xs text-ink-muted">
           Review each document in turn using the selected review design.
         </span>
         {showClose && (
@@ -459,16 +452,13 @@ export default function BatchPanel({
         )}
 
         {profileLoading && (
-          <p role="status" className="text-sm text-gray-500 dark:text-gray-400">
+          <p role="status" className="text-sm text-ink-muted">
             Loading active workflow…
           </p>
         )}
 
         {!profileLoading && !acceptsBatchInput && (
-          <div
-            role="note"
-            className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
-          >
+          <div role="note" className="ui-notice ui-notice--warning">
             <p className="font-medium">
               This workflow does not accept batch inputs.
             </p>
@@ -486,7 +476,7 @@ export default function BatchPanel({
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 Shared report options
               </h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-ink-muted">
                 Use these options for every review in the batch.
               </p>
               {variables.map((spec) => {
@@ -633,8 +623,9 @@ export default function BatchPanel({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
-                Add files or a folder of PDF, LaTeX, or Word papers to queue.
+              <p className="text-sm text-ink-muted px-2">
+                Add files or a folder of PDF, LaTeX, Word, or PowerPoint
+                documents to queue.
               </p>
             )}
           </div>
@@ -690,7 +681,7 @@ export default function BatchPanel({
                     {j.name}
                   </span>
                   {j.duration_secs > 0 && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                    <span className="text-xs text-ink-muted tabular-nums">
                       {fmtDuration(j.duration_secs)}
                     </span>
                   )}

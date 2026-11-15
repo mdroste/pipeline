@@ -1,14 +1,15 @@
+import { useSetupReads } from "./reviewSetupReads";
 import { useEffect, useId, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { appClient } from "../lib/appClient";
+import { settingsClient } from "../lib/settingsClient";
+import type { DepsReport, Settings } from "../lib/settingsTypes";
 import type {
-  DepsReport,
   ModelCatalog,
-  PipelineConfig,
   ReviewModelChoice,
   RosterEntry,
   RunModelOverrides,
-  Settings,
-} from "../lib/types";
+} from "../lib/reviewModelTypes";
+import type { PipelineConfig } from "../lib/workflowTypes";
 import { workflowParallelAgents } from "../lib/parallelAgents";
 import {
   rosterModelSummary,
@@ -89,14 +90,12 @@ export default function RunModelChoice({
   const [rosterLoading, setRosterLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
 
+  const reads = useSetupReads(refreshKey);
   useEffect(() => {
     let live = true;
     setConfig(null);
     setLoadError(null);
-    Promise.all([
-      invoke<{ settings: Settings }>("get_settings"),
-      invoke<PipelineConfig>("get_pipeline_config"),
-    ])
+    Promise.all([settingsClient.load(), reads.config()])
       .then(([response, workflow]) => {
         if (!live) return;
         setSettings(response.settings);
@@ -108,7 +107,7 @@ export default function RunModelChoice({
     return () => {
       live = false;
     };
-  }, [refreshKey, attempt]);
+  }, [reads, attempt]);
 
   const providers = useMemo<Provider[]>(() => {
     if (!settings) return ["claude", "codex", "antigravity"];
@@ -127,7 +126,7 @@ export default function RunModelChoice({
     setCatalogErrors([]);
     Promise.allSettled(
       providers.map(async (provider) => {
-        const catalog = await invoke<ModelCatalog>("get_model_catalog", {
+        const catalog = await settingsClient.modelCatalog({
           provider,
           settings,
           refresh: false,
@@ -162,9 +161,10 @@ export default function RunModelChoice({
     setRosterLoading(true);
     setRosterError(null);
     setRoster(null);
-    invoke<RosterEntry[]>("get_model_roster", {
-      runParallelOverrides: value ?? null,
-    })
+    appClient
+      .modelRoster({
+        runParallelOverrides: value ?? null,
+      })
       .then((entries) => {
         if (live) {
           setRoster(entries);
@@ -186,7 +186,7 @@ export default function RunModelChoice({
     return (
       <section
         aria-label="Models for this review"
-        className="rounded-ui-md border border-line p-4 text-ui-label"
+        className="review-model-card rounded-ui-md border border-line p-4 text-ui-label"
       >
         <h2 className="font-medium">Models for this review</h2>
         {loadError ? (
@@ -259,7 +259,7 @@ export default function RunModelChoice({
   return (
     <section
       aria-label="Models for this review"
-      className="overflow-hidden rounded-ui-md border border-line bg-surface"
+      className="review-model-card overflow-hidden rounded-ui-md border border-line bg-surface"
     >
       <div className="flex items-center justify-between gap-2 px-3 pt-3">
         <h2 className="text-ui-label font-medium text-ink">
@@ -289,24 +289,25 @@ export default function RunModelChoice({
         aria-controls={editorId}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
-        className="group block w-full px-3 py-3 text-left transition-colors hover:bg-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-50"
+        className="review-model-summary group flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-50"
       >
-        <span className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
-          <span className="rounded-ui-sm bg-sunken px-2 py-0.5 text-ui-meta font-medium text-ink">
-            {summary.provider}
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+            <span className="break-words text-ui-body font-medium text-ink">
+              {summary.model}
+            </span>
+            <span className="text-ui-meta text-ink-muted">
+              {summary.provider}
+            </span>
           </span>
-          <span className="text-ui-meta text-ink-muted">
+          <span className="mt-1 block text-ui-meta leading-5 text-ink-muted">
+            {review.effort ? `${summary.effort} thinking` : summary.effort}
+            {" · "}
             {hasModelChoice ? "This review" : "Your default model"}
           </span>
         </span>
-        <span className="block break-words text-ui-body font-medium leading-5 text-ink">
-          {summary.model}
-        </span>
-        <span className="mt-1 block text-ui-meta leading-5 text-ink-muted">
-          {review.effort ? `${summary.effort} thinking` : summary.effort}
-        </span>
-        <span className="mt-3 flex items-center justify-between gap-2 text-ui-meta font-medium text-ink-muted group-hover:text-ink">
-          {open ? "Done" : "Change model"}
+        <span className="flex shrink-0 items-center gap-1.5 text-ui-meta font-medium text-ink-muted group-hover:text-ink">
+          {open ? "Done" : "Change"}
           <Icon
             name="chevron-down"
             className={`h-3.5 w-3.5 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}

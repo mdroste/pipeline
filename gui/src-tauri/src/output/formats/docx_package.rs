@@ -226,6 +226,10 @@ fn document_body(export: &ReportExport) -> String {
             write_finding(&mut body, finding);
         }
         write_quality(&mut body, export);
+        if !export.report_markdown.trim().is_empty() {
+            body.text(Some("Heading1"), "Full report");
+            body.markdown(&export.report_markdown, 1);
+        }
     }
     body.into_xml()
 }

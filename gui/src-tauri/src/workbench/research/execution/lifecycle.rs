@@ -67,6 +67,11 @@ pub(crate) fn prepare_execution(
     let mut profile = get_execution_profile(store, &request.profile_id)?;
     // Held while the job is prepared. Its place in line is taken when it launches.
     let guard = crate::workbench::project::execution_lock(store, &profile.workspace_id)?;
+    if super::artifact::active_in_project(&profile.workspace_id).is_some() {
+        return Err(WorkbenchError::conflict(
+            "A script from Artifacts is running in this project.",
+        ));
+    }
     let mut authorization = if request.plan_id.is_none() {
         Some(preview_host_execution(store, &profile.id)?)
     } else {

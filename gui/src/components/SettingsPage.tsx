@@ -1,3 +1,4 @@
+import PageHeader from "../ui/PageHeader";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SettingsNavigation } from "./settings/SettingsNavigation";
 import { useSettingsDraft } from "./settings/useSettingsDraft";
@@ -51,7 +52,7 @@ import {
 } from "./settings/search";
 import { useParserControls } from "./settings/useParserControls";
 import { confirmDialog } from "./DialogService";
-import type { DepsReport, Settings } from "../lib/types";
+import type { DepsReport, Settings } from "../lib/settingsTypes";
 import type { ThemePreference } from "../lib/theme";
 import { useAppPreferences } from "../lib/appPreferences";
 import { router } from "../lib/router";
@@ -313,6 +314,7 @@ export default function SettingsPage({
               </label>
               <input
                 id="settings-search"
+                className="ui-input"
                 type="search"
                 value={query}
                 placeholder="Search settings…"
@@ -355,14 +357,12 @@ export default function SettingsPage({
               </div>
             ) : null}
             <div hidden={Boolean(query.trim())}>
-              <header className="settings-page-header">
-                <div>
-                  <h1>{pageInfo.title}</h1>
-                  <p className="settings-page-description">
-                    {pageInfo.description}
-                  </p>
-                </div>
-              </header>
+              <div className="settings-page-heading">
+                <PageHeader
+                  title={pageInfo.title}
+                  description={pageInfo.description}
+                />
+              </div>
               {(section === "providers" || section === "workflow") && (
                 <nav
                   className="settings-jump-nav"
@@ -391,7 +391,10 @@ export default function SettingsPage({
                 </nav>
               )}
               {warnings.length > 0 && (
-                <div role="alert" className="settings-load-warning">
+                <div
+                  role="alert"
+                  className="settings-load-warning ui-notice ui-notice--warning"
+                >
                   {warnings.map((warning, i) => (
                     <p key={i}>{warning}</p>
                   ))}

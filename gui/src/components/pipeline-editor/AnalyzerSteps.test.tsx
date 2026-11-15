@@ -5,7 +5,7 @@ import AddStepDialog from "./AddStepDialog";
 import AnalyzerStepPanel from "./AnalyzerStepPanel";
 import RunPreview from "../RunPreview";
 import { analyzerStep, type AnalyzerInfo } from "../../lib/analyzers";
-import type { PipelineConfig } from "../../lib/types";
+import type { PipelineConfig } from "../../lib/workflowTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));

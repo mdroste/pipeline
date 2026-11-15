@@ -6,11 +6,12 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  container: project-page / inline-size;
 }
 .project-page-body {
   max-width: 67.5rem;
   margin: 0 auto;
-  padding: 1.125rem 2rem 3.5rem;
+  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-8);
   color: var(--ui-text);
 }
 .project-page-hint {
@@ -21,14 +22,14 @@
 }
 .project-section {
   min-width: 0;
-  padding: 1rem 0 1.25rem;
+  padding: var(--ui-space-4) 0 var(--ui-section-gap);
   border-top: 1px solid var(--ui-border);
 }
 .project-section > * + * {
-  margin-top: 0.75rem;
+  margin-top: var(--ui-space-3);
 }
 details.project-section {
-  padding: 0.6875rem 0;
+  padding: var(--ui-row-padding) 0;
 }
 details.project-section > summary {
   cursor: pointer;
@@ -53,7 +54,7 @@ details.project-section > summary::marker {
   border-top: 0;
 }
 .project-section .project-section {
-  padding: 0.875rem 1rem;
+  padding: var(--ui-space-3) var(--ui-space-4);
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
 }
@@ -77,16 +78,16 @@ details.project-section > summary::marker {
   width: 100%;
   max-width: 67.5rem;
   margin: 0 auto;
-  padding: 0.25rem 2rem 3.5rem;
+  padding: var(--ui-space-1) var(--ui-page-gutter) var(--ui-space-8);
 }
 .project-panel > * > .project-page-hint {
   width: 100%;
   max-width: 67.5rem;
   margin: 0 auto;
-  padding: 1.125rem 2rem 0.75rem;
+  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-3);
 }
-@media (max-width: 720px) {
+@container project-page (max-width: 36rem) {
   .project-page-body {
-    padding: 0.875rem 1rem 2.5rem;
+    padding-inline: var(--ui-space-4);
   }
 }

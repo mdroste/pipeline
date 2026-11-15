@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { listedRunStatus, reportStatusDisplay } from "./reportPresentation";
-import type { ReportQuality } from "./types";
+import type { ReportQuality } from "./reviewTypes";
 
 const quality = (overrides: Partial<ReportQuality>) =>
   ({

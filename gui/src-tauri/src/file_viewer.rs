@@ -181,7 +181,6 @@ pub fn normalize_external_path(path: &str) -> String {
 
 /// A Windows path in the form ShellExecute and Explorer accept. A project root
 /// is verbatim, and joining a relative path to one leaves its forward slashes.
-#[cfg(any(windows, test))]
 pub fn windows_system_path(path: &str) -> String {
     normalize_external_path(path).replace('/', "\\")
 }
@@ -193,6 +192,58 @@ pub fn system_path(path: &Path) -> std::path::PathBuf {
         return windows_system_path(text).into();
     }
     path.to_path_buf()
+}
+
+fn trusted_open_command(path: &Path, platform: &str) -> std::process::Command {
+    match platform {
+        "macos" => {
+            let mut command = std::process::Command::new("open");
+            command.arg("--").arg(path);
+            command
+        }
+        "windows" => {
+            let mut command = std::process::Command::new("explorer");
+            command.arg(windows_system_path(&path.to_string_lossy()));
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt as _;
+                command.creation_flags(0x08000000);
+            }
+            command
+        }
+        _ => {
+            let mut command = std::process::Command::new("xdg-open");
+            command.arg(path);
+            command
+        }
+    }
+}
+
+/// Only for an app-resolved directory or an HTML report the app just generated.
+/// Arbitrary user files still require `check_openable` at their owning boundary.
+/// Return after launch; a desktop association can keep its opener alive until
+/// the application closes. Reap it asynchronously without a polling timer.
+pub(crate) fn open_trusted_path(path: &Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err("The system opener requires an absolute path".into());
+    }
+    let mut child = tokio::process::Command::from(trusted_open_command(path, std::env::consts::OS))
+        .spawn()
+        .map_err(|error| format!("Could not start the system opener: {error}"))?;
+    if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!("The system opener failed ({status})"))
+        };
+    }
+    tokio::spawn(async move {
+        match child.wait().await {
+            Ok(status) if status.success() => {}
+            result => eprintln!("Pipeline system opener did not finish successfully: {result:?}"),
+        }
+    });
+    Ok(())
 }
 
 /// Explorer reads `/select,"C:\\a b\\c.tex"` as one option. Rust's own quoting
@@ -232,8 +283,118 @@ pub fn reveal(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Only the native application picker supplies `application`. Opening a
+/// private writable copy keeps the original and its permissions out of the
+/// handoff, even when the chosen application treats the file as a script.
+pub fn open_copy_with(application: &Path, name: &Path, bytes: &[u8]) -> Result<(), String> {
+    let application = application
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let (folder, copy) = stage_editable_copy(name, bytes).map_err(|error| error.to_string())?;
+    launch_with(&application, &copy)?;
+    // The chosen application may read or save the copy after the launcher
+    // returns. Keep it in the system temporary folder for that app.
+    let _ = folder.keep();
+    Ok(())
+}
+
+fn stage_editable_copy(
+    source: &Path,
+    bytes: &[u8],
+) -> std::io::Result<(tempfile::TempDir, std::path::PathBuf)> {
+    let name = source
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("The file has no name"))?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("pipeline-artifact-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    let folder = builder.tempdir()?;
+    let copy = folder.path().join(name);
+    std::fs::write(&copy, bytes)?;
+    Ok((folder, copy))
+}
+
+#[cfg(target_os = "macos")]
+fn launch_with(application: &Path, file: &Path) -> Result<(), String> {
+    if !application.is_dir() || !has_named_extension(application, "app") {
+        return Err("Choose a macOS application (.app).".into());
+    }
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg("-a")
+        .arg(application)
+        .arg(file)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("macOS could not open the copy ({status})."))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn launch_with(application: &Path, file: &Path) -> Result<(), String> {
+    let metadata = application.metadata().map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    let executable = has_named_extension(application, "exe");
+    #[cfg(unix)]
+    let executable = {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.permissions().mode() & 0o111 != 0
+    };
+    if !metadata.is_file() || !executable {
+        return Err("Choose an application executable.".into());
+    }
+    let mut child = std::process::Command::new(application)
+        .arg(system_path(file))
+        .current_dir(file.parent().ok_or("The copy has no parent folder.")?)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn has_named_extension(path: &Path, name: &str) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(name))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn trusted_openers_use_native_operands_without_shell_interpolation() {
+        use super::trusted_open_command;
+        use std::path::Path;
+        let path = Path::new("/tmp/résultats with spaces/report.html");
+        let linux = trusted_open_command(path, "linux");
+        assert_eq!(linux.get_program(), "xdg-open");
+        assert_eq!(linux.get_args().collect::<Vec<_>>(), vec![path.as_os_str()]);
+        let mac = trusted_open_command(path, "macos");
+        assert_eq!(
+            mac.get_args().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("--"), path.as_os_str()]
+        );
+        for (path, expected) in [
+            (r"\\?\C:\Research data\José", r"C:\Research data\José"),
+            (r"\\?\UNC\server\share\Research", r"\\server\share\Research"),
+        ] {
+            let windows = trusted_open_command(Path::new(path), "windows");
+            assert_eq!(windows.get_program(), "explorer");
+            assert_eq!(
+                windows.get_args().collect::<Vec<_>>(),
+                vec![std::ffi::OsStr::new(expected)]
+            );
+        }
+    }
+
     use super::{
         check_openable, has_extension, runnable_by_system, select_argument, starts_like_program,
         windows_system_path,
@@ -250,6 +411,7 @@ mod tests {
         "Command::new(\"xdg-open\")",
         "Command::new(\"explorer\")",
         "Command::new(\"explorer.exe\")",
+        "file_viewer::open_trusted_path(",
     ];
 
     /// Non-comment production lines holding one of `patterns`, by file under `root`.
@@ -294,8 +456,8 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
     }
 
-    /// A new way to reach the system's opener has to be listed here with what
-    /// makes it safe. One that opens a file has to pass `check_openable` first.
+    /// A new way to reach the system's opener has to be listed here. A file
+    /// passed to the default application has to pass `check_openable` first.
     #[test]
     fn every_route_to_the_system_opener_is_accounted_for() {
         let accounted: BTreeMap<String, usize> = [
@@ -304,12 +466,13 @@ mod tests {
             // `check_artifact`.
             ("commands/artifacts.rs", 1),
             // The data folder, resolved here and never passed in.
-            ("commands/config.rs", 3),
+            ("commands/maintenance.rs", 1),
             // Opens an HTML report this function just wrote. Package reveal
             // delegates to the shared `reveal` path below.
-            ("commands/export/desktop.rs", 3),
-            // `reveal` shows a file in its folder and never opens it.
-            ("file_viewer.rs", 3),
+            ("commands/export/desktop.rs", 1),
+            // `reveal` shows a file in its folder. `launch_with` passes a copy
+            // to the application chosen in a native picker, never the default.
+            ("file_viewer.rs", 7),
             // `external_target`, `snapshot_conversation_file`, and
             // `editor_external_path`.
             ("workbench/commands/project.rs", 3),
@@ -453,6 +616,28 @@ mod tests {
                 "{refusal}"
             );
         }
+    }
+
+    #[test]
+    fn an_explicit_app_receives_a_writable_copy_with_the_original_name() {
+        let source = tempfile::tempdir().unwrap();
+        let original = source.path().join("estimate model.do");
+        std::fs::write(&original, b"summarize outcome\n").unwrap();
+        let bytes = std::fs::read(&original).unwrap();
+        let (folder, copy) = super::stage_editable_copy(&original, &bytes).unwrap();
+        assert_eq!(copy, folder.path().join("estimate model.do"));
+        assert_eq!(std::fs::read(&copy).unwrap(), bytes);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                folder.path().metadata().unwrap().permissions().mode() & 0o077,
+                0
+            );
+            assert_eq!(copy.metadata().unwrap().permissions().mode() & 0o111, 0);
+        }
+        std::fs::write(&copy, b"describe outcome\n").unwrap();
+        assert_eq!(std::fs::read(&original).unwrap(), bytes);
     }
 
     #[test]

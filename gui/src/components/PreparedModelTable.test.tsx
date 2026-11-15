@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
 import PreparedModelTable from "./PreparedModelTable";
-import type { RosterEntry } from "../lib/types";
+import type { RosterEntry } from "../lib/reviewModelTypes";
 
 it("shows the prepared model, thinking, source, extraction, and backup choices", () => {
   const entry = (patch: Partial<RosterEntry>): RosterEntry => ({
@@ -28,6 +28,12 @@ it("shows the prepared model, thinking, source, extraction, and backup choices",
         }),
         entry({ stage: "extraction", label: "Read PDF" }),
         entry({
+          stage: "adaptive",
+          label: "Adaptive agents",
+          model: { mode: "pinned", model: "review-model" },
+          note: "2–6 calls per document. Reviewers are selected during document bundle preparation.",
+        }),
+        entry({
           stage: "fallback",
           label: "Backup",
           note: "Used when the first provider reaches its usage limit.",
@@ -46,6 +52,9 @@ it("shows the prepared model, thinking, source, extraction, and backup choices",
     screen.getAllByText("Automatic — chosen at launch", { exact: false }),
   ).toHaveLength(2);
   expect(screen.getByRole("rowheader", { name: "Read PDF" })).toBeVisible();
+  const adaptive = screen.getByRole("row", { name: /^Adaptive agents/ });
+  expect(within(adaptive).getByText(/2–6 calls per document/)).toBeVisible();
+  expect(within(adaptive).getByText(/review-model/)).toBeVisible();
   expect(
     screen.getByText(/first provider reaches its usage limit/),
   ).toBeVisible();

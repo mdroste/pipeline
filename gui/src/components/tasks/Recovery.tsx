@@ -6,14 +6,21 @@ export default function Recovery({
   run,
   busy,
   onControl,
+  correctedPapers,
+  onCorrectedPapers,
 }: {
   run: TaskRun;
   busy: boolean;
+  correctedPapers: Record<string, string>;
+  onCorrectedPapers: (value: Record<string, string>) => void;
   onControl: (action: string) => Promise<void>;
 }) {
   const [preview, setPreview] = useState<"retry" | "context" | null>(null);
   const unfinished = Object.values(run.progress.receipts).filter((r) =>
     ["unknown", "failed"].includes(r.state),
+  );
+  const corrections = unfinished.filter((r) =>
+    r.error?.startsWith("The revised artifact is unchanged."),
   );
   const expired = run.deadlineAt <= Date.now() / 1000;
   return (
@@ -25,7 +32,7 @@ export default function Recovery({
       </p>
       <button
         type="button"
-        className="task-primary"
+        className="ui-button ui-button--primary"
         disabled={busy}
         onClick={() => void onControl("reconcile")}
       >
@@ -96,9 +103,26 @@ export default function Recovery({
                 deadline.
               </p>
             )}
+            {corrections.map((r) => (
+              <label key={r.address}>
+                Corrected paper for {r.label}
+                <textarea
+                  value={correctedPapers[r.address] ?? ""}
+                  onChange={(event) =>
+                    onCorrectedPapers({
+                      ...correctedPapers,
+                      [r.address]: event.target.value,
+                    })
+                  }
+                />
+              </label>
+            ))}
             <button
               type="button"
-              disabled={busy}
+              disabled={
+                busy ||
+                corrections.some((r) => !correctedPapers[r.address]?.trim())
+              }
               onClick={() => void onControl("retry")}
             >
               Retry unfinished actions

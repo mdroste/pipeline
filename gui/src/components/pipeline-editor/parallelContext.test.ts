@@ -1,7 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PipelineConfig, StepConfig } from "../../lib/types";
+import type { PipelineConfig, StepConfig } from "../../lib/workflowTypes";
 import { contextForParallel } from "./parallelContext";
 import { useStepActions } from "./useStepActions";
 import { useWorkflowEditor } from "./useWorkflowEditor";

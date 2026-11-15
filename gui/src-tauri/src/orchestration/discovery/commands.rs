@@ -9,6 +9,16 @@ pub struct Start {
     pub operation_id: String,
 }
 #[tauri::command]
+pub fn discovery_budget_preview(mut definition: Definition) -> Result<budget::Preview> {
+    // A researcher can size the portfolio before writing the brief.
+    if definition.prompt.trim().is_empty() {
+        definition.prompt = "Preview".into();
+    }
+    validate::definition(&definition)?;
+    Ok(budget::preview(&definition))
+}
+
+#[tauri::command]
 pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Value> {
     validate::definition(&request.definition)?;
     validate::text(&request.operation_id, 128)?;
@@ -34,6 +44,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         .chars()
         .take(80)
         .collect::<String>();
+    let idea_agents = request.definition.idea_agents;
     let (binding, authority, context) = run_store(move |s| {
         let session = if let Some(id) = selected {
             id
@@ -42,6 +53,9 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         };
         let b = crate::workbench::tasks::binding(&s, &session)?;
         crate::workbench::tasks::validate_binding(&s, &b)?;
+        if idea_agents > 0 && !matches!(b.connection_id, Some(crate::connections::ConnectionId::Chatgpt | crate::connections::ConnectionId::ClaudeCode)) {
+            return Err(crate::workbench::store::WorkbenchError::invalid("Idea subagents require a ChatGPT or Claude Code conversation. Choose one or set Idea subagents to 0."));
+        }
         let h = crate::workbench::research::resolve_harness(&s, &session)?;
         Ok((
             b,
@@ -121,6 +135,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         phase: Phase::Orient,
         orientation: None,
         literature: Vec::new(),
+        idea_seeds: Vec::new(),
         deep_candidates: Vec::new(),
         selection: None,
         selection_hash: None,
@@ -192,7 +207,7 @@ pub async fn discovery_paper(
 ) -> Result<Value> {
     super::super::manager(app).await?.db(move|s|{
         let p=storage::load(&s,&id)?.papers.into_iter().find(|p|p.candidate_id==candidate_id).ok_or("Paper unavailable")?;
-        Ok(json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,"rounds":p.rounds,"challenges":p.challenges,"evidence":p.evidence,"versions":super::artifacts::full_versions(&s,&p),"assessment":p.assessment}))
+        Ok(json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,"rounds":p.rounds,"infeasibility":p.infeasibility,"challenges":p.challenges,"evidence":p.evidence,"versions":super::artifacts::full_versions(&s,&p),"assessment":p.assessment}))
     }).await
 }
 #[tauri::command]
@@ -324,6 +339,31 @@ pub(super) async fn retry(c: &Coordinator, p: &mut Portfolio) -> Result<Option<S
     p.run.source_scope = run_store(move |s| research::readopt_scope(&s, &source, &expected, false))
         .await
         .map_err(|e| e.message)?;
+    if let Some(old) = child
+        .as_ref()
+        .filter(|r| r.progress.receipts.values().any(|a| a.state == "unknown"))
+    {
+        c.settle_turns(old).await;
+        let mut recovered = old.clone();
+        if c.recover_results(&mut recovered).await? {
+            return Err(
+                "The original action is still running. Check saved results before retrying.".into(),
+            );
+        }
+        if recovered
+            .progress
+            .receipts
+            .values()
+            .all(|a| a.state == "completed")
+        {
+            // Keep the same child attached. The normal advance path will adopt
+            // its journal; no new action or budget reservation is needed.
+            p.run.state = "running".into();
+            p.run.due_at = Some(now());
+            p.run.reason = "Continuing with the recorded result".into();
+            return Ok(None);
+        }
+    }
     // A completed step whose files could not be saved keeps its reply. The
     // next tick reads it again, so no model call is repeated.
     if child
@@ -368,6 +408,31 @@ pub(super) async fn retry(c: &Coordinator, p: &mut Portfolio) -> Result<Option<S
     };
     p.run.due_at = Some(now());
     Ok(child.map(|child| child.id))
+}
+#[tauri::command]
+pub async fn discovery_accept_assessment(
+    app: tauri::AppHandle,
+    id: String,
+    revision: i64,
+    candidate_id: u32,
+    subject_version: String,
+) -> Result<Value> {
+    let c = super::super::manager(app).await?;
+    let _gate = c.gate.lock().await;
+    let mut p = c.db(move |s| storage::load(&s, &id)).await?;
+    if p.run.revision != revision {
+        return Err("Assessment changed; reload before accepting".into());
+    }
+    let record = p
+        .papers
+        .iter_mut()
+        .find(|p| p.candidate_id == candidate_id)
+        .and_then(|p| p.versions.last_mut())
+        .and_then(|v| v.claim_record.as_mut())
+        .ok_or("No current paper assessment to accept")?;
+    record.accept(&subject_version)?;
+    save(&c, &mut p, "assessmentAccepted", None).await?;
+    Ok(export::view(&p))
 }
 #[tauri::command]
 pub async fn discovery_export(

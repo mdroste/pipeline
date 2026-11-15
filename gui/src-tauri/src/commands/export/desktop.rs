@@ -106,27 +106,6 @@ pub async fn print_report_html(
         *prev = Some(path_buf.clone());
     }
 
-    #[cfg(target_os = "macos")]
-    std::process::Command::new("open")
-        .arg("--")
-        .arg(&path_buf)
-        .spawn()
-        .map_err(|e| format!("Failed to open browser: {e}"))?;
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("explorer")
-            .arg(&path_buf)
-            .creation_flags(0x08000000)
-            .spawn()
-            .map_err(|e| format!("Failed to open browser: {e}"))?;
-    }
-    #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open")
-        .arg("--")
-        .arg(&path_buf)
-        .spawn()
-        .map_err(|e| format!("Failed to open browser: {e}"))?;
-
-    Ok(())
+    crate::file_viewer::open_trusted_path(&path_buf)
+        .map_err(|error| format!("Failed to open browser: {error}"))
 }

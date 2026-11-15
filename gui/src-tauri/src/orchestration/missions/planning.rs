@@ -43,6 +43,7 @@ pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
         .cloned();
     let disposition = p.disposition;
     m.rounds.push(Round {
+        claim_record: None,
         number: m.rounds.len() as u32 + 1,
         change_cursor: m.watch_epoch,
         plan: p,

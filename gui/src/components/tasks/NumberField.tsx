@@ -15,12 +15,28 @@ type Props = Omit<
  * A whole-number input that keeps partial text local while typing and clamps
  * to its range on blur or Enter. Empty or unreadable text reverts.
  */
-export function NumberField({ value, onChange, min, max, ...rest }: Props) {
+export function NumberField({
+  value,
+  onChange,
+  min,
+  max,
+  className = "",
+  ...rest
+}: Props) {
   const draft = useDraftText(String(value), (text) => {
     const parsed = Number(text);
     if (!text.trim() || !Number.isFinite(parsed)) return;
     const next = Math.min(max ?? Infinity, Math.max(min, Math.round(parsed)));
     if (next !== value) onChange(next);
   });
-  return <input {...rest} type="number" min={min} max={max} {...draft} />;
+  return (
+    <input
+      {...rest}
+      className={`ui-input ${className}`}
+      type="number"
+      min={min}
+      max={max}
+      {...draft}
+    />
+  );
 }

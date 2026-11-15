@@ -75,11 +75,10 @@ pub fn cancel(operation: &str) -> bool {
 pub(super) fn mark_run(dir: &std::path::Path) -> Result<(), String> {
     if let Ok(operation) = OPERATION.try_with(Clone::clone) {
         std::fs::write(dir.join(".task-pin"), &operation).map_err(|e| e.to_string())?;
-        std::fs::write(
-            dir.join("task-operation.json"),
-            json!({"operation":operation}).to_string(),
-        )
-        .map_err(|e| e.to_string())?;
+        crate::orchestration::adapters::atomic_json(
+            &dir.join("task-operation.json"),
+            &json!({"operation":operation}),
+        )?;
         let root = crate::orchestration::store::Store::default_root()?;
         crate::orchestration::adapters::atomic_json(
             &root
@@ -91,10 +90,49 @@ pub(super) fn mark_run(dir: &std::path::Path) -> Result<(), String> {
     }
     Ok(())
 }
-pub fn recovered_result(run_id: &str) -> Result<Option<Value>, String> {
+pub(crate) enum AttemptStatus {
+    Live,
+    Ended(String),
+    Unknown,
+}
+pub(crate) fn attempt_status(id: &str, operation: &str) -> Result<AttemptStatus, String> {
+    if owner()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|(op, _)| op == operation)
+    {
+        return Ok(AttemptStatus::Live);
+    }
+    let status = crate::runs::load_manifest(id)?.status;
+    if matches!(
+        status.as_str(),
+        "failed" | "cancelled" | "interrupted" | "partial"
+    ) {
+        Ok(AttemptStatus::Ended(status))
+    } else {
+        Ok(AttemptStatus::Unknown)
+    }
+}
+pub fn recovered_result(run_id: &str, operation: &str) -> Result<Option<Value>, String> {
+    crate::runs::validate_run_id(run_id)?;
+    let file = crate::runs::runs_dir()?
+        .join(run_id)
+        .join("task-operation.json");
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    crate::safety::open_regular_file(&file)?
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 4096
+        || serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())?["operation"]
+            != operation
+    {
+        return Err("The Review belongs to a different automation attempt".into());
+    }
     let manifest = crate::runs::load_manifest(run_id)?;
     if !["done", "degraded"].contains(&manifest.status.as_str()) {
-        pins::release_settled_failure(run_id)?;
         return Ok(None);
     }
     let run_dir = crate::runs::runs_dir()?.join(run_id);
@@ -119,14 +157,6 @@ fn recovered_value(
         "markdown": super::rerun::read_run_file_in(run_dir, "report.md")?,
         "extracted_text": extracted_text,
     }))
-}
-pub fn release_pin(run_id: &str) -> Result<(), String> {
-    crate::runs::validate_run_id(run_id)?;
-    let path = crate::runs::runs_dir()?.join(run_id).join(".task-pin");
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 pub async fn execute(
     operation: String,
@@ -175,6 +205,7 @@ pub async fn execute(
     let fingerprint = stable_snapshot_fingerprint(&settings_for_snapshot_fingerprint(&settings))
         .map_err(|e| e.to_string())?;
     let snapshot = RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings,
         config: document.config,
@@ -204,6 +235,9 @@ pub async fn execute(
         }
     })?;
     let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
+    if let Some(meter) = crate::usage_allowance::current() {
+        let _ = run.scope().allowance.set(meter);
+    }
     *owner().lock().unwrap_or_else(|e| e.into_inner()) =
         Some((operation.clone(), run.scope().clone()));
     let owned = OwnerGuard;

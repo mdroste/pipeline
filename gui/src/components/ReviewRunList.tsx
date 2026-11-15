@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../ui/icons";
-import type { QueuedRun } from "../lib/types";
+import type { QueuedRun } from "../lib/reviewTypes";
 import { isActiveRun, orderRuns, runStatusLine } from "../lib/reviewRuns";
 
 /** Already-opened finished reviews kept in the rail; unopened ones always

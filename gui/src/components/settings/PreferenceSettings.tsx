@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   useAppPreferences,
   saveAppPreferences,
@@ -42,6 +42,7 @@ export function AppearanceSettings({
   onThemeChange: (theme: ThemePreference) => void;
 }) {
   const { preferences: p, update, feedback } = usePreferenceEditor();
+  const fieldId = useId();
   const [themeError, setThemeError] = useState("");
   const scale = (
     key: "interfaceScale" | "reportScale",
@@ -50,6 +51,8 @@ export function AppearanceSettings({
   ) => (
     <>
       <select
+        id={`${fieldId}-${key}`}
+        aria-describedby={`${fieldId}-${key}-help`}
         aria-label={label}
         className={selectClass}
         value={p[key]}
@@ -103,6 +106,7 @@ export function AppearanceSettings({
       </SettingRow>
       <SettingRow
         id="interface-scale"
+        controlId={`${fieldId}-interfaceScale`}
         label="Interface text size"
         description="Scales interface text and spacing across Pipeline."
       >
@@ -110,6 +114,7 @@ export function AppearanceSettings({
       </SettingRow>
       <SettingRow
         id="report-scale"
+        controlId={`${fieldId}-reportScale`}
         label="Default report text size"
         description="New reports open at this size. You can change it while reading."
       >
@@ -121,10 +126,13 @@ export function AppearanceSettings({
       </SettingRow>
       <SettingRow
         id="interface-density"
+        controlId={`${fieldId}-density`}
         label="Spacing"
         description="Comfortable gives controls more room; Compact fits more rows on screen."
       >
         <select
+          id={`${fieldId}-density`}
+          aria-describedby={`${fieldId}-density-help`}
           aria-label="Spacing"
           className={selectClass}
           value={p.density}

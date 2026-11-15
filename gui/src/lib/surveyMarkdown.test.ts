@@ -84,7 +84,7 @@ describe("renderSurvey", () => {
       key_references: [],
       extraction_quality_notes: [],
     });
-    expect(md).toContain("# Orientation Map");
+    expect(md).toContain("# Document overview");
     expect(md).toContain("**Authors**: Ada, Grace");
     expect(md).toContain("| 1 | Model | 2–5 |");
     expect(md).toContain("## Stated Contribution");
@@ -92,6 +92,11 @@ describe("renderSurvey", () => {
 
   it("renders an adaptive review plan and its selection reasons", () => {
     const md = renderSurvey({
+      document_preparation: {
+        version: 1,
+        inventory_source: "captured structure",
+        registry_revision: "reviewer-registry-v1",
+      },
       metadata: {
         title: "A Paper",
         authors: [],
@@ -112,6 +117,7 @@ describe("renderSurvey", () => {
           {
             id: "formal_proofs",
             reason: "The main result depends on four propositions.",
+            references: ["page:10", "input:appendix:page:17"],
           },
         ],
         routing_uncertainty: [],
@@ -124,10 +130,11 @@ describe("renderSurvey", () => {
       key_references: [],
       extraction_quality_notes: [],
     });
-    expect(md).toContain("## Detected Review Plan");
+    expect(md).toContain("## Review plan");
+    expect(md).toContain("may be incomplete");
     expect(md).toContain("**Subject**: Quantitative macroeconomics");
     expect(md).toContain(
-      "**Formal Proofs**: The main result depends on four propositions.",
+      "**Formal Proofs**: The main result depends on four propositions. (p. 10, appendix · p. 17)",
     );
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DepsReport } from "../../lib/types";
+import type { DepsReport } from "../../lib/settingsTypes";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type {
   DetectedToolchain,

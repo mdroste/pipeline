@@ -9,7 +9,7 @@ import {
 } from "../../lib/studioClient";
 import { parseArgvText } from "../../lib/argvText";
 import type { ProjectRecord } from "../../lib/projectClient";
-import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 import { button, input, Field, Select, Text, lines } from "./shared";
 import { JobLauncher } from "./Jobs";
 

@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
-import type { EngineStatus, Settings } from "../../lib/types";
+import type { EngineStatus } from "../../lib/engineTypes";
+import type { Settings } from "../../lib/settingsTypes";
 
 import EnginesPanel from "../EnginesPanel";
 import {

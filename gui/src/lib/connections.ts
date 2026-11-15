@@ -1,5 +1,5 @@
 /** Connection names and saved IDs are shared with the native app. */
-import type { DepsReport, Settings } from "./types";
+import type { DepsReport, Settings } from "./settingsTypes";
 import registry from "../../connections.json";
 
 export type ConnectionId =

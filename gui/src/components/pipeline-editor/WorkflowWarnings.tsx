@@ -1,4 +1,4 @@
-import type { StepConfig } from "../../lib/types";
+import type { StepConfig } from "../../lib/workflowTypes";
 import type { WorkflowLintWarning } from "../../lib/pipelineHelpers";
 
 export default function WorkflowWarnings({

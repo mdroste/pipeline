@@ -9,7 +9,7 @@ import {
   type SyncResult,
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
-import type { ResearchExecution } from "../../lib/workbenchTypes";
+import type { ResearchExecution } from "../../lib/workbench/executionTypes";
 import { button, input, Field, Select, Inspect } from "./shared";
 
 const PdfComparison = lazy(() => import("../file-workspace/PdfComparison"));

@@ -1,3 +1,4 @@
+import { workflowProfileClient } from "../../lib/workflowProfileClient";
 import { useCallback, useRef, useState } from "react";
 import {
   normalizeAuthorNote,
@@ -11,8 +12,8 @@ import {
   type PendingRun,
   type PreparedLaunch,
 } from "../../lib/appRunPreparation";
-import type { PrimaryInputSelection } from "../../lib/types";
-import type { ReviewHandoff } from "../../lib/workbenchTypes";
+import type { PrimaryInputSelection } from "../../lib/workflowTypes";
+import type { ReviewHandoff } from "../../lib/workbench/releaseTypes";
 import type { ExecutionPlanStage } from "../../lib/pipelineHelpers";
 import { notify } from "../../components/DialogService";
 import type { usePipeline } from "../usePipeline";
@@ -158,7 +159,7 @@ export function useReviewLaunch(
       // bind the immutable execution snapshot. If the active profile changed,
       // the expected fingerprint below rejects the launch rather than showing
       // a preview for mixed configurations.
-      const config = await appClient.pipelineConfig();
+      const config = await workflowProfileClient.config();
       if (snapshot.inputSelection?.interpretation === "batch") {
         let paths = snapshot.inputSelection.paths;
         if (snapshot.inputSelection.selectionKind === "folder") {
@@ -166,7 +167,7 @@ export function useReviewLaunch(
         }
         if (paths.length === 0) {
           throw new Error(
-            "No PDF, LaTeX, or Word documents were found in the selected folder.",
+            "No PDF, LaTeX, Word, or PowerPoint documents were found in the selected folder.",
           );
         }
         const representativePath = paths[0];
@@ -271,6 +272,7 @@ export function useReviewLaunch(
             extraInputs: prepared.extraInputs ?? null,
             expectedProfileConfigSnapshotId:
               prepared.plan.profileConfigSnapshotId,
+            reviewHandoffId: prepared.snapshot.inputSelection?.reviewHandoffId,
             ...overrides,
           })
         : [
@@ -283,6 +285,8 @@ export function useReviewLaunch(
               variables: prepared.variables ?? null,
               extraInputs: prepared.extraInputs ?? null,
               expectedProfileSnapshotId: prepared.plan.profileSnapshotId,
+              reviewHandoffId:
+                prepared.snapshot.inputSelection?.reviewHandoffId,
               ...overrides,
             }),
           ];
@@ -374,10 +378,11 @@ export function useReviewLaunch(
 
   const handleWorkspaceReviewHandoff = async (handoff: ReviewHandoff) => {
     const selection: PrimaryInputSelection = {
+      reviewHandoffId: handoff.id,
       paths: [handoff.stagedPath],
       interpretation: handoff.inputInterpretation,
       selectionKind:
-        handoff.inputInterpretation === "source_tree" ? "folder" : "file",
+        handoff.inputInterpretation === "document" ? "file" : "folder",
     };
     noteEditPreview.current = null;
     setAuthorNote("");
@@ -426,9 +431,9 @@ export function useReviewLaunch(
   /** Queue a re-run of a past run and open it. */
   const rerunReview = async (runId: string, onlyFailed: boolean) => {
     try {
-      const variables = await confirmRerunRequirements(runId, onlyFailed);
-      if (variables === null) return;
-      const run = await enqueueRerun(runId, { onlyFailed, variables });
+      const confirmed = await confirmRerunRequirements(runId, onlyFailed);
+      if (confirmed === null) return;
+      const run = await enqueueRerun(runId, { onlyFailed, ...confirmed });
       await openRun(run.key);
     } catch (error) {
       notify(`The re-run could not be queued: ${workbenchErrorMessage(error)}`);

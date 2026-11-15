@@ -147,7 +147,9 @@ export default function Tooltip({
           >
             {label}
           </div>,
-          document.body,
+          anchor.current?.closest<HTMLElement>(
+            'dialog[open], [role="dialog"][aria-modal="true"]',
+          ) ?? document.body,
         )}
     </>
   );

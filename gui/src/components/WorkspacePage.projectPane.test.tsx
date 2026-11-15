@@ -5,7 +5,10 @@ import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../lib/appEvents";
 import WorkspacePage from "./WorkspacePage";
 import { NavRailSlotProvider, useNavRailSlot } from "./nav-rail/navRailSlot";
-import type { ConversationSnapshot, Workspace } from "../lib/workbenchTypes";
+import type {
+  ConversationSnapshot,
+  Workspace,
+} from "../lib/workbench/sessionTypes";
 
 const mocks = vi.hoisted(() => ({
   modelCatalog: vi.fn(),

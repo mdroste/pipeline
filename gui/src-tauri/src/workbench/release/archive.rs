@@ -109,3 +109,6 @@ mod regression_tests;
 
 #[cfg(test)]
 mod relocation_tests;
+
+#[cfg(test)]
+mod root_mapping_tests;

@@ -3,8 +3,160 @@
 //! mounts and again after `activeTurnChanged`, and never polls. These records are
 //! app-owned; no App Server shape reaches the renderer through them.
 
-use super::*;
+use super::{run_store, RuntimeCommandError};
+pub(crate) fn research_team_permit() -> Result<OwnedSemaphorePermit, String> {
+    turn_queue()
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "task_busy: Workspace is running another turn".into())
+}
+
+#[cfg(test)]
+use super::{submit_turn, SendTurnRequest, DATABASE_GATE};
 use crate::agent_runtime::events::NormalizedEvent;
+#[cfg(test)]
+use crate::workbench::store::UpdateSessionRequest;
+use crate::workbench::{conversation_tools, research};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use tauri::Emitter;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+static TURN_QUEUE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static ACTIVE_TURN_STATE: OnceLock<StdMutex<ActiveTurnState>> = OnceLock::new();
+
+pub(super) fn turn_queue() -> &'static Arc<Semaphore> {
+    TURN_QUEUE.get_or_init(|| Arc::new(Semaphore::new(1)))
+}
+
+#[derive(Default)]
+pub(super) struct ActiveTurnState {
+    pub(super) setup_in_progress: bool,
+    pub(super) epoch: Option<u64>,
+    pub(super) thread_id: Option<String>,
+    pub(super) turn_id: Option<String>,
+    pub(super) completion_during_setup: Option<(String, String)>,
+    pub(super) connection_closed_during_setup: bool,
+    pub(super) permit: Option<OwnedSemaphorePermit>,
+    pub(super) account_lease: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    pub(super) owner: Option<TurnOwner>,
+}
+
+impl ActiveTurnState {
+    pub(super) fn finish_setup(&mut self, failed: bool) {
+        self.setup_in_progress = false;
+        let completed = self
+            .thread_id
+            .as_ref()
+            .zip(self.turn_id.as_ref())
+            .is_some_and(|(thread, turn)| {
+                self.completion_during_setup.as_ref() == Some(&(thread.clone(), turn.clone()))
+            });
+        if (failed && self.turn_id.is_none()) || self.connection_closed_during_setup || completed {
+            *self = Self::default();
+        }
+    }
+}
+
+pub(super) fn active_turn_state() -> &'static StdMutex<ActiveTurnState> {
+    ACTIVE_TURN_STATE.get_or_init(|| StdMutex::new(ActiveTurnState::default()))
+}
+
+pub(super) fn complete_active_turn(epoch: u64, thread_id: &str, turn_id: &str) {
+    let mut state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.epoch != Some(epoch) || state.thread_id.as_deref() != Some(thread_id) {
+        return;
+    }
+    if state.setup_in_progress {
+        state.completion_during_setup = Some((thread_id.to_string(), turn_id.to_string()));
+    } else if state.turn_id.as_deref() == Some(turn_id) {
+        let thread_id = thread_id.to_owned();
+        let turn_id = turn_id.to_owned();
+        if research::jobs::has_active() {
+            tokio::spawn(async move {
+                let _ = run_store(move |store| {
+                    research::cancel_executions_for_provider_turn(&store, &thread_id, &turn_id)
+                })
+                .await;
+            });
+        }
+        *state = ActiveTurnState::default();
+    }
+}
+
+pub(crate) fn accept_local_turn(epoch: u64, thread: &str, turn: &str) {
+    let mut state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    state.epoch = Some(epoch);
+    state.thread_id = Some(thread.into());
+    state.turn_id = Some(turn.into());
+}
+
+pub(crate) fn finish_local_turn(epoch: u64, thread: &str, turn: &str) {
+    complete_active_turn(epoch, thread, turn);
+}
+
+pub(crate) fn turn_setup_in_progress() -> bool {
+    active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .setup_in_progress
+}
+
+/// Whether this native turn still holds the app-wide turn permit. Nothing does
+/// after a restart, so a turn a crash left open has no live owner.
+pub(crate) fn turn_has_live_owner(thread: &str, turn: &str) -> bool {
+    let state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.thread_id.as_deref() == Some(thread) && state.turn_id.as_deref() == Some(turn)
+}
+
+/// Stops the tools a closed App Server connection leaves behind.
+/// Only one turn runs at a time, so they are its turn's, or left from a finished
+/// one, unless a Claude, API or newer ChatGPT turn holds the permit. That turn's
+/// tools belong to it.
+pub(in crate::workbench) async fn stop_connection_tools(epoch: u64) {
+    let another_runtime = {
+        let state = active_turn_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.epoch != Some(epoch) && (state.setup_in_progress || state.epoch.is_some())
+    };
+    if !another_runtime {
+        conversation_tools::stop_all().await;
+    }
+}
+
+pub(super) fn close_active_connection(epoch: u64) {
+    let mut state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if state.epoch != Some(epoch) {
+        return;
+    }
+    if let (Some(thread), Some(turn)) = (&state.thread_id, &state.turn_id) {
+        let thread = thread.clone();
+        let turn = turn.clone();
+        if research::jobs::has_active() {
+            tokio::spawn(async move {
+                let _ = run_store(move |store| {
+                    research::cancel_executions_for_provider_turn(&store, &thread, &turn)
+                })
+                .await;
+            });
+        }
+    }
+    if state.setup_in_progress {
+        state.connection_closed_during_setup = true;
+    } else {
+        *state = ActiveTurnState::default();
+    }
+}
 
 /// What put a turn under the permit, which decides who owns its text and Stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +288,7 @@ pub struct PendingRequest {
     session_id: Option<String>,
     /// What the request card shows. Nothing in it is an App Server shape.
     details: Option<crate::workbench::codex::RequestDetails>,
+    can_remember: bool,
 }
 
 fn request_session(state: &ActiveTurnState, event: &NormalizedEvent) -> Option<String> {
@@ -148,7 +301,7 @@ fn request_session(state: &ActiveTurnState, event: &NormalizedEvent) -> Option<S
         .flatten()
 }
 
-pub(super) fn with_session(event: NormalizedEvent) -> PendingRequest {
+pub(crate) fn with_session(event: NormalizedEvent) -> PendingRequest {
     let session_id = request_session(
         &active_turn_state()
             .lock()
@@ -161,10 +314,12 @@ pub(super) fn with_session(event: NormalizedEvent) -> PendingRequest {
         }
         _ => None,
     };
+    let can_remember = super::chat_approval::can_remember(&event);
     PendingRequest {
         event,
         session_id,
         details,
+        can_remember,
     }
 }
 
@@ -457,6 +612,7 @@ mod tests {
                 event,
                 session_id,
                 details: None,
+                can_remember: false,
             })
             .unwrap()
         };

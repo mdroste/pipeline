@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import AgentChips from "./AgentChips";
 import { describeStep } from "./stepSummary";
-import type { PipelineConfig, StepConfig } from "../../lib/types";
+import type { PipelineConfig, StepConfig } from "../../lib/workflowTypes";
 
 it("uses provider names instead of internal ids", () => {
   render(<AgentChips agents={[]} onChange={vi.fn()} />);

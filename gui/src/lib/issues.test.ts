@@ -3,31 +3,34 @@ import findingsV2 from "../../tests/fixtures/workflow/findings-v2.json";
 import {
   doiUrl,
   parseIssues,
-  extractJson,
   severityRank,
   detectReportIssues,
   renderSpecialistMarkdown,
   renderStructuredMarkdown,
 } from "./issues";
-import type { PipelineReport } from "./types";
+import type { PipelineReport } from "./reviewTypes";
 
 describe("issues parsing", () => {
-  it("extracts JSON from plain, fenced, and prose forms", () => {
-    expect(extractJson('{"a":1}')).toEqual({ a: 1 });
-    expect(extractJson("```json\n[1,2]\n```")).toEqual([1, 2]);
-    expect(extractJson('the answer is {"ok": true} really')).toEqual({
-      ok: true,
-    });
-    expect(extractJson("no json here")).toBeNull();
+  it("reads findings from plain, fenced, and prose forms", () => {
+    const json = JSON.stringify({ issues: [{ title: "A finding" }] });
+    for (const text of [
+      json,
+      "```json\n" + json + "\n```",
+      "The answer is " + json + " above.",
+    ]) {
+      expect(parseIssues(text)?.[0].title).toBe("A finding");
+    }
+    expect(parseIssues("no json here")).toBeNull();
   });
 
-  it("skips malformed candidates and handles mixed nesting", () => {
-    expect(extractJson('bad [x] then {"items":[{"text":"} ]"}]}')).toEqual({
-      items: [{ text: "} ]" }],
+  it("skips malformed candidates and preserves brackets inside strings", () => {
+    const json = JSON.stringify({
+      issues: [{ title: "A finding", body: "} ]" }],
     });
-    expect(extractJson("```json\n{bad}\n```\n```json\n[1,2]\n```")).toEqual([
-      1, 2,
-    ]);
+    expect(parseIssues("bad [x] then " + json)?.[0].body).toBe("} ]");
+    expect(
+      parseIssues("```json\n{bad}\n```\n```json\n" + json + "\n```")?.[0].title,
+    ).toBe("A finding");
   });
 
   it("parses an { issues: [...] } object", () => {

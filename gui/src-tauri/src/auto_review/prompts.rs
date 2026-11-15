@@ -136,9 +136,9 @@ pub(super) fn with_routing_context(prompt: &str, reason: &str) -> String {
     }
 }
 
-/// Compact, editable Auto Review orientation template. Catalog placeholders
-/// are expanded from the live manifest catalog only when the orientation call
-/// is built; saved profiles and the workflow editor never embed catalog rows.
+/// Compact, editable review-planning template. Automatic planning replaces
+/// catalog placeholders with its registry instructions and supplies candidate
+/// cards separately; saved profiles never embed the global catalog.
 pub fn orientation_prompt() -> String {
     ORIENTATION_TEMPLATE.to_string()
 }

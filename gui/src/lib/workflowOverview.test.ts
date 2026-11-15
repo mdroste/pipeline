@@ -4,7 +4,7 @@ import {
   preparationKind,
   preparationTitle,
 } from "./workflowOverview";
-import type { MergeConfig, StepConfig } from "./types";
+import type { MergeConfig, StepConfig } from "./workflowTypes";
 
 function step(overrides: Partial<StepConfig> & { id: string }): StepConfig {
   return {
@@ -50,7 +50,7 @@ describe("buildOverview", () => {
     expect(
       model.stages.map((stage) => [stage.kind, stage.number, stage.title]),
     ).toEqual([
-      ["prepare", 1, "Prepare document bundle"],
+      ["prepare", 1, "Document bundle preparation"],
       ["parallel", 2, "In parallel"],
       ["merge", null, "Merge"],
       ["single", 3, "Literature"],
@@ -161,7 +161,7 @@ describe("buildOverview", () => {
       label: "Adaptive agents",
       adaptive: "4",
     });
-    expect(model.stages[0].nodes[1].label).toBe("Orient + classify");
+    expect(model.stages[0].nodes[1].label).toBe("Choose reviewers");
   });
 
   it("describes run_if guards and web tools on step nodes", () => {
@@ -192,10 +192,10 @@ describe("buildOverview", () => {
 describe("preparation naming", () => {
   it("never calls a folder input a document bundle", () => {
     expect(preparationTitle(preparationKind(""))).toBe(
-      "Prepare document bundle",
+      "Document bundle preparation",
     );
     expect(preparationTitle(preparationKind("document"))).toBe(
-      "Prepare document bundle",
+      "Document bundle preparation",
     );
     expect(preparationTitle(preparationKind("folder"))).toBe(
       "Prepare source-tree inventory",

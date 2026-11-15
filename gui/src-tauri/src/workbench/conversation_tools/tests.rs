@@ -89,6 +89,80 @@ fn current_access_and_captured_catalog_both_gate_calls() {
     assert!(prepare(&store, &call).is_err());
 }
 
+#[test]
+fn legacy_browser_settings_and_snapshots_cannot_restore_the_tool() {
+    let (_dir, store, session, call) = fixture();
+    let connection = store.connection().unwrap();
+    for runtime in [
+        "codex",
+        "claude",
+        "openai-api",
+        "anthropic-api",
+        "google-api",
+        "local",
+    ] {
+        let overrides = json!({"runtime":runtime,"webSearch":true});
+        connection
+            .execute(
+                "UPDATE sessions SET overrides_json=?1 WHERE id=?2",
+                params![overrides.to_string(), session],
+            )
+            .unwrap();
+        let baseline = research::resolve_harness(&store, &session).unwrap();
+        let mut legacy = overrides;
+        legacy["browser"] = json!(true);
+        connection
+            .execute(
+                "UPDATE sessions SET overrides_json=?1 WHERE id=?2",
+                params![legacy.to_string(), session],
+            )
+            .unwrap();
+        let effective = research::resolve_harness(&store, &session).unwrap();
+        assert_eq!(effective, baseline, "{runtime}");
+        for name in ["web_search", "web_fetch"] {
+            assert!(offered(&effective, name), "{runtime}: {name}");
+        }
+        assert!(!offered(&effective, "web_download"));
+        let mut project = effective.clone();
+        project.workspace_id = Some("project".into());
+        project.mode = "edit".into();
+        assert!(catalog(&project)
+            .iter()
+            .any(|tool| tool["name"] == "web_download"));
+        assert!(!offered(&effective, "browser"));
+    }
+    // A stored turn can still contain the old capability and catalog. Loading
+    // it preserves web access, while admission also checks today's catalog.
+    connection
+        .execute(
+            "UPDATE sessions SET overrides_json=?1 WHERE id=?2",
+            params![
+                json!({"webSearch":true,"browser":true}).to_string(),
+                session
+            ],
+        )
+        .unwrap();
+    let mut legacy =
+        serde_json::to_value(research::resolve_harness(&store, &session).unwrap()).unwrap();
+    legacy["capabilities"]["browser"] = json!(true);
+    legacy["dynamicTools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"browser"}));
+    connection
+        .execute(
+            "UPDATE config_snapshots SET body_json=?1 WHERE session_id=?2",
+            params![legacy.to_string(), session],
+        )
+        .unwrap();
+    assert!(matches!(prepare(&store, &call).unwrap(), Admission::Run(_)));
+    let mut retired = call;
+    retired["tool"] = json!("browser");
+    retired["callId"] = json!("retired");
+    assert!(prepare(&store, &retired).is_err());
+    assert!(!owns("browser"));
+}
+
 /// A project conversation mid-turn, with the tools its access offers.
 fn project_turn(overrides: Value) -> (tempfile::TempDir, Store, String, String, Value) {
     let dir = tempfile::tempdir().unwrap();
@@ -218,7 +292,6 @@ fn a_real_access_change_still_stops_the_tools() {
     for (name, overrides) in [
         ("mode", json!({"webSearch":true,"mode":"edit"})),
         ("network", json!({"webSearch":true,"commandNetwork":true})),
-        ("browser", json!({"webSearch":true,"browser":true})),
         ("file mode", json!({"webSearch":true,"fileMode":"direct"})),
         (
             "domains",

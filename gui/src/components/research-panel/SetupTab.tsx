@@ -9,7 +9,7 @@ import { conversationClient } from "../../lib/workbench/conversationClient";
 import { harnessClient } from "../../lib/workbench/harnessClient";
 import { operation } from "./useResearchPanelController";
 import type { useResearchPanelController } from "./useResearchPanelController";
-import type { ConversationSnapshot } from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 
 type Panel = ReturnType<typeof useResearchPanelController>;
 type Props = Pick<

@@ -4,6 +4,9 @@ use super::codex::{
 use super::*;
 use crate::agent_runtime::events::NormalizedEvent;
 use crate::workbench::store::SessionBinding;
+use crate::workbench::store::{
+    CreateSessionRequest, DeleteSessionRequest, MoveSessionRequest, Store, UpdateSessionRequest,
+};
 
 #[test]
 fn storage_maintenance_and_native_setup_exclude_each_other() {
@@ -343,11 +346,52 @@ fn started_thread(request: &Value) -> Value {
         "thread":{"id":"thread-successor","sessionId":"provider-session"},
         "model":"gpt-test","modelProvider":"openai",
         "activePermissionProfile":{"id":params["permissions"]},
-        "approvalPolicy":"untrusted","approvalsReviewer":"user",
+        "approvalPolicy":params["approvalPolicy"],"approvalsReviewer":"user",
         "cwd":params["cwd"],
         "instructionSources":[],
         "runtimeWorkspaceRoots":params["runtimeWorkspaceRoots"]
     })
+}
+
+#[tokio::test]
+async fn a_changed_approval_policy_starts_a_new_codex_thread_with_history() {
+    let store = crate::orchestration::tests::disposable_workspace();
+    let (session, binding) = codex_conversation(&store, "approval-mode", None);
+    let prepared = crate::workbench::research::prepare_turn(&store, &session).unwrap();
+    store
+        .set_binding_harness(&binding.id, &prepared.effective.fingerprint, &[])
+        .unwrap();
+    let binding = store.active_binding(&session).unwrap().unwrap();
+    let root = store
+        .runtime_root(&session)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let fingerprint = crate::workbench::chat_approval::Mode::Sandbox
+        .codex_fingerprint(&prepared.effective.fingerprint);
+    let history =
+        crate::workbench::history::codex_context(&store, &session, Some(&binding), &fingerprint)
+            .unwrap();
+    assert!(history.is_some());
+    let (supervisor, requests) = fake_app_server(&root, |request| Ok(started_thread(request)));
+    let connection = open_thread(
+        &supervisor,
+        &send_request(&session),
+        Some(binding),
+        history,
+        &prepared,
+        root,
+        crate::workbench::chat_approval::Mode::Sandbox,
+    )
+    .await
+    .unwrap();
+    assert_eq!(connection.approval_policy.as_deref(), Some("never"));
+    assert_eq!(methods(&requests), ["thread/start"]);
+    let requests = requests.lock().unwrap();
+    assert!(requests[0]["params"]["developerInstructions"]
+        .as_str()
+        .unwrap()
+        .contains("Conversation history"));
 }
 
 #[tokio::test]
@@ -384,6 +428,7 @@ async fn a_thread_codex_holds_no_history_for_moves_to_one_seeded_successor() {
         None,
         &prepared,
         root,
+        Default::default(),
     )
     .await
     .unwrap();
@@ -414,6 +459,7 @@ async fn a_resume_that_fails_for_any_other_reason_never_starts_a_successor() {
         None,
         &prepared,
         root,
+        Default::default(),
     )
     .await
     .unwrap_err();

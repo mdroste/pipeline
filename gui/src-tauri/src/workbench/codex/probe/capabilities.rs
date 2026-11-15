@@ -14,7 +14,6 @@ pub(super) async fn verify(
     ] {
         let policy = crate::workbench::capabilities::ConversationCapabilities {
             command_domains: vec!["example.org".into()],
-            browser: false,
             shell_write: profile.contains("edit"),
             private_folder: false,
         };

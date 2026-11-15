@@ -9,7 +9,7 @@ import type {
   ConversationSnapshot,
   Workspace,
   SessionSnapshot,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
 
 const WorkspaceAttachmentsPanel = lazy(
   () => import("./WorkspaceAttachmentsPanel"),

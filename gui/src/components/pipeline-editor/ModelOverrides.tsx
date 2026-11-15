@@ -5,7 +5,9 @@ import {
   unsetEffortLabel,
   unsetModelOption,
 } from "../../lib/modelChoice";
-import type { ModelCatalog, Settings, StepConfig } from "../../lib/types";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
+import type { Settings } from "../../lib/settingsTypes";
+import type { StepConfig } from "../../lib/workflowTypes";
 import {
   decodeModelSelection,
   defaultParallelAgents,

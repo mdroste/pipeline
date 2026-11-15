@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  Project,
-  ProjectsResponse,
-  RunSummary,
-  TrashedProject,
-} from "../lib/types";
+import { reviewCollectionClient } from "../lib/reviewCollectionClient";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import type { Project, TrashedProject } from "../lib/reviewCollectionTypes";
+import type { RunSummary } from "../lib/reviewTypes";
 import { listedRunStatus } from "../lib/reportPresentation";
 import { router } from "../lib/router";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
@@ -79,8 +76,8 @@ export default function ProjectsPage({
     setError(null);
     try {
       const [projectResponse, runResponse] = await Promise.all([
-        invoke<ProjectsResponse>("list_projects"),
-        invoke<RunSummary[]>("list_runs"),
+        reviewCollectionClient.list(),
+        reviewHistoryClient.list(),
       ]);
       setProjects(projectResponse.projects);
       setWarnings(projectResponse.warnings);
@@ -105,9 +102,7 @@ export default function ProjectsPage({
   const refreshTrash = async () => {
     setTrashLoading(true);
     try {
-      setTrashedProjects(
-        await invoke<TrashedProject[]>("list_trashed_projects"),
-      );
+      setTrashedProjects(await reviewCollectionClient.trashed());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -167,7 +162,7 @@ export default function ProjectsPage({
           }
           setDetailsStatus("saving");
           setError(null);
-          const updated = await invoke<Project>("update_project", {
+          const updated = await reviewCollectionClient.update({
             id: record.id,
             name: draft.editName,
             description: draft.editDescription,
@@ -279,7 +274,7 @@ export default function ProjectsPage({
     setPending(true);
     setError(null);
     try {
-      const project = await invoke<Project>("create_project", {
+      const project = await reviewCollectionClient.create({
         name: createName,
         description: createDescription || null,
       });
@@ -316,7 +311,7 @@ export default function ProjectsPage({
     setError(null);
     try {
       replaceProject(
-        await invoke<Project>("set_project_run", {
+        await reviewCollectionClient.setRun({
           projectId: selected.id,
           runId,
           included,
@@ -343,7 +338,7 @@ export default function ProjectsPage({
     try {
       let updated = selected;
       for (const run of related) {
-        updated = await invoke<Project>("set_project_run", {
+        updated = await reviewCollectionClient.setRun({
           projectId: selected.id,
           runId: run.run_id,
           included: true,
@@ -374,7 +369,7 @@ export default function ProjectsPage({
     setPending(true);
     setError(null);
     try {
-      await invoke("delete_project", { id: selected.id });
+      await reviewCollectionClient.trash({ id: selected.id });
       const remaining = projects.filter(
         (project) => project.id !== selected.id,
       );
@@ -394,7 +389,7 @@ export default function ProjectsPage({
     setPending(true);
     setError(null);
     try {
-      await invoke("restore_trashed_project", { id: entry.project.id });
+      await reviewCollectionClient.restore({ id: entry.project.id });
       notify("Review collection restored.", "success");
       await Promise.all([refresh(), refreshTrash()]);
       setSelectedId(entry.project.id);
@@ -421,7 +416,7 @@ export default function ProjectsPage({
     setPending(true);
     setError(null);
     try {
-      await invoke("permanently_delete_trashed_project", {
+      await reviewCollectionClient.remove({
         id: entry.project.id,
       });
       notify("Review collection permanently deleted.", "success");
@@ -434,21 +429,21 @@ export default function ProjectsPage({
   };
 
   return (
-    <div className="flex h-full min-h-0 bg-white dark:bg-gray-950">
-      <aside className="flex w-72 shrink-0 flex-col border-r border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-950">
+    <div className="flex h-full min-h-0 bg-surface">
+      <aside className="flex w-[clamp(12rem,30%,18rem)] shrink-0 flex-col border-r border-line bg-sunken">
         <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">
               Review collections
             </h1>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <p className="mt-0.5 text-xs text-ink-muted">
               Track reports and findings over time.
             </p>
           </div>
           <button
             type="button"
             onClick={() => setCreating((value) => !value)}
-            className="rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+            className="ui-button ui-button--sm ui-button--primary"
           >
             New
           </button>
@@ -461,7 +456,7 @@ export default function ProjectsPage({
               value={createName}
               onChange={(event) => setCreateName(event.target.value)}
               placeholder="Collection name"
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              className="ui-input w-full"
             />
             <textarea
               aria-label="New collection description"
@@ -507,7 +502,7 @@ export default function ProjectsPage({
               <span className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                 {project.name}
               </span>
-              <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
+              <span className="mt-0.5 block text-[0.6875rem] text-ink-muted">
                 {project.run_ids.length} run
                 {project.run_ids.length === 1 ? "" : "s"} ·{" "}
                 {formatDate(project.updated)}
@@ -515,7 +510,7 @@ export default function ProjectsPage({
             </button>
           ))}
           {!loading && projects.length === 0 && (
-            <p className="px-3 py-8 text-center text-xs leading-5 text-gray-500 dark:text-gray-400">
+            <p className="px-3 py-8 text-center text-xs leading-5 text-ink-muted">
               Create a review collection, then add reports from your saved
               history.
             </p>
@@ -585,10 +580,7 @@ export default function ProjectsPage({
 
       <main ref={details} className="min-w-0 flex-1 overflow-auto">
         {error && (
-          <div
-            role="alert"
-            className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
-          >
+          <div role="alert" className="m-6 ui-notice ui-notice--error">
             {error}
             <ReportIssueLink />
           </div>
@@ -612,7 +604,7 @@ export default function ProjectsPage({
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
                 <label
-                  className="text-xs font-medium text-gray-500 dark:text-gray-400"
+                  className="text-xs font-medium text-ink-muted"
                   htmlFor="project-name"
                 >
                   Collection name
@@ -636,7 +628,7 @@ export default function ProjectsPage({
                 <p
                   role="status"
                   aria-live="polite"
-                  className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
+                  className="mt-1 text-[0.6875rem] text-ink-muted"
                 >
                   {detailsStatus === "saving"
                     ? "Saving…"
@@ -689,7 +681,7 @@ export default function ProjectsPage({
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                     Reports
                   </h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <p className="mt-0.5 text-xs text-ink-muted">
                     Adding a report keeps the saved version. A report can belong
                     to several collections.
                   </p>
@@ -746,7 +738,7 @@ export default function ProjectsPage({
                       <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                         {run ? runLabel(run) : runId}
                       </p>
-                      <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
+                      <p className="mt-0.5 truncate text-xs text-ink-muted">
                         {run
                           ? `${run.profile_name} · ${formatDate(run.created)} · ${listedRunStatus(run.status)}`
                           : "Report no longer exists"}
@@ -772,7 +764,7 @@ export default function ProjectsPage({
                   </div>
                 ))}
                 {projectRuns.length === 0 && (
-                  <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                  <p className="px-4 py-10 text-center text-sm text-ink-muted">
                     No reports have been added yet.
                   </p>
                 )}
@@ -780,7 +772,7 @@ export default function ProjectsPage({
             </section>
           </div>
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex h-full items-center justify-center text-sm text-ink-muted">
             Create a review collection to begin.
           </div>
         )}

@@ -652,6 +652,25 @@ fn role_defaults_preserve_legacy_fallbacks_and_transport_specific_policies() {
 }
 
 #[test]
+fn paper_orientation_caps_inherited_chatgpt_effort_and_respects_stage_overrides() {
+    let mut settings = Settings {
+        preferred_provider: "codex".into(),
+        default_effort: "xhigh".into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.orientation_effort("codex"), "xhigh");
+    assert_eq!(settings.paper_orientation_effort("codex"), "medium");
+    assert_eq!(
+        settings.paper_orientation_effort("claude"),
+        settings.orientation_effort("claude")
+    );
+    settings
+        .default_orientation_effort_overrides
+        .insert("codex:cli".into(), "high".into());
+    assert_eq!(settings.paper_orientation_effort("codex"), "high");
+}
+
+#[test]
 fn normalization_drops_retired_provider_ids_from_saved_settings() {
     // Settings written before the Gemini CLI removal can still name the
     // retired "gemini" provider in surviving fields. Loading must heal them

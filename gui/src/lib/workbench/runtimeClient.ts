@@ -12,7 +12,7 @@ import type {
   SendTurnRequest,
   SendTurnResult,
   WorkbenchEvent,
-} from "../workbenchTypes";
+} from "./runtimeTypes";
 
 export const runtimeClient = {
   connectCodex() {
@@ -69,6 +69,9 @@ export const runtimeClient = {
   },
   pendingRequests() {
     return invoke<WorkbenchEvent[]>("workbench_codex_pending_requests");
+  },
+  clearChatApprovals(sessionId: string) {
+    return invoke<void>("workbench_clear_chat_approvals", { sessionId });
   },
   activeTurn() {
     return invoke<ActiveTurn | null>("workbench_active_turn");

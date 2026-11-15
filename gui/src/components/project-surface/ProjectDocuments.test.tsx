@@ -3,7 +3,7 @@ import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import ProjectDocuments from "./ProjectDocuments";
 import type { SurfaceApi } from "./shared";
-import type { PaperWithRevision } from "../../lib/workbenchTypes";
+import type { PaperWithRevision } from "../../lib/workbench/researchTypes";
 import { makeProjectHome } from "../../test/projectSurfaceFixtures";
 
 vi.mock("../WorkspaceContextTray", () => ({ addContextObject: vi.fn() }));

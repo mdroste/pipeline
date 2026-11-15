@@ -2,13 +2,10 @@
 //!
 //! Local files are read and profiled by `prepare_local` outside database
 //! workers; `commit` stores the blob and immutable record inside one.
-#[cfg(test)]
-use super::connectors::Capture;
 use super::{
     csv, dta,
     profile::{fit_dictionary, Profile, RowPreview},
-    xlsx, ConnectorProvenance, DataAcquisition, DatasetVersion, ImportDataset, MetadataDataset,
-    SampleDefinition,
+    xlsx, DataAcquisition, DatasetVersion, ImportDataset, MetadataDataset, SampleDefinition,
 };
 use crate::workbench::{
     desk::{self, err, DeskRecord},
@@ -36,7 +33,6 @@ pub struct PreparedDataset {
     content_hash: String,
     external_reference: Option<String>,
     profile: Profile,
-    connector: Option<ConnectorProvenance>,
 }
 fn profile_bytes(bytes: &[u8], ext: &str, sheet: Option<&str>) -> WorkbenchResult<Profile> {
     match ext {
@@ -72,7 +68,6 @@ pub fn prepare_local(r: ImportDataset) -> WorkbenchResult<PreparedDataset> {
         content_hash: String::new(),
         external_reference: None,
         profile: Profile::default(),
-        connector: None,
     };
     if len > MAX_BYTES {
         if ext != "dta" {
@@ -162,7 +157,7 @@ pub fn commit(store: &Store, p: PreparedDataset) -> WorkbenchResult<DeskRecord> 
         limitations,
         value_labels: p.profile.value_labels,
         source_format: p.profile.source_format,
-        connector: p.connector,
+        connector: None,
     };
     // Size the record before writing a blob; the artifact ID adds well under the slack.
     fit_dictionary(&mut version)?;
@@ -215,38 +210,6 @@ pub(crate) fn import_bytes(
             profile: profile_bytes(bytes, ext, None)?,
             bytes: Some(bytes.to_vec()),
             external_reference: None,
-            connector: None,
-        },
-    )
-}
-/// Record a legacy connector capture while qualifying its saved format.
-#[cfg(test)]
-pub(crate) fn import_capture(
-    store: &Store,
-    ws: &str,
-    capture: Capture,
-    operation: &str,
-) -> WorkbenchResult<DeskRecord> {
-    store.workspace(ws)?;
-    let mut profile = csv::profile(&capture.csv, "csv")?;
-    profile.limitations.push(format!(
-        "Retrieved from {} under the terms recorded in connector; repeat its notice and citation wherever these data appear.",
-        capture.acquisition.provider
-    ));
-    commit(
-        store,
-        PreparedDataset {
-            workspace_id: ws.into(),
-            title: crate::workbench::search::prefix(&capture.title, 500).into(),
-            ext: "csv".into(),
-            acquisition: capture.acquisition,
-            supersedes: None,
-            operation_id: operation.into(),
-            content_hash: desk::hash(&capture.csv),
-            profile,
-            bytes: Some(capture.csv),
-            external_reference: None,
-            connector: Some(capture.provenance),
         },
     )
 }

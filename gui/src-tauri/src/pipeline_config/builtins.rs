@@ -134,7 +134,7 @@ pub(super) fn quick_auto_review_profile() -> ProfileData {
     )
 }
 
-/// Paper Review's reviewers applied to a slide deck (exported as PDF). The
+/// Paper Review's reviewers applied to a PDF, PowerPoint, or Beamer slide deck. The
 /// router is told the input is a deck, and the schema pins the slide-deck
 /// genre, whose host-owned context is injected into every step at run time.
 pub(super) fn slide_review_profile() -> ProfileData {
@@ -490,16 +490,22 @@ pub(super) fn grant_review_profile() -> ProfileData {
 pub(super) fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
 
-    // Paper Review and Slide Review — one validated orientation/router call,
-    // core reviews, and a bounded set of selected subject/method specialists.
+    // Paper Review and Slide Review use validated orientation, core reviews,
+    // and a bounded set of selected subject/method specialists.
     for (id, profile) in [
-        (PAPER_REVIEW_ID, auto_review_profile()),
-        (PAPER_REVIEW_FAST_ID, quick_auto_review_profile()),
-        (SLIDE_REVIEW_ID, slide_review_profile()),
-        (GRANT_REVIEW_ID, grant_review_profile()),
-        (DECLAUDE_ID, declaude_profile()),
+        (PAPER_REVIEW_ID, auto_review_profile as fn() -> ProfileData),
+        (
+            PAPER_REVIEW_FAST_ID,
+            quick_auto_review_profile as fn() -> ProfileData,
+        ),
+        (SLIDE_REVIEW_ID, slide_review_profile as fn() -> ProfileData),
+        (GRANT_REVIEW_ID, grant_review_profile as fn() -> ProfileData),
+        (DECLAUDE_ID, declaude_profile as fn() -> ProfileData),
     ] {
-        write_builtin_if_missing(&profiles.join(format!("{id}.json")), &profile)?;
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            write_builtin_if_missing(&path, &profile())?;
+        }
     }
 
     Ok(())

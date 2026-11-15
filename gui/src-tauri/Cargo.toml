@@ -47,7 +47,13 @@ html5ever = "0.40.1"
 encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "process", "time", "sync", "signal", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "process", "time", "sync", "signal", "macros", "net"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+hyper = { version = "1", features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+mxc-sdk = { version = "=1.0.1", default-features = false }
 tempfile = "3"
 dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
@@ -74,7 +80,20 @@ png = "0.18"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Registry", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPrintInfo", "NSPrintOperation", "NSPrinter", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSString", "NSURL", "NSGeometry", "NSObject"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+xattr = "1.7"
+gtk = "0.18"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 # Full per-variable debuginfo made target/debug grow ~1 GB per rebuild cycle;
 # line tables keep backtraces and profiling usable at a fraction of the size.

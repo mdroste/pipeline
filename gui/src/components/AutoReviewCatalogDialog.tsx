@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { workflowSchemaClient } from "../lib/workflowSchemaClient";
 import useModalDialog from "../hooks/useModalDialog";
 import type {
   AutoReviewCatalog,
   AutoReviewCatalogGroup,
   AutoReviewCatalogRole,
-} from "../lib/types";
+} from "../lib/reviewCatalogTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
@@ -127,7 +127,8 @@ export default function AutoReviewCatalogDialog({
 
   useEffect(() => {
     let stale = false;
-    invoke<AutoReviewCatalog>("get_auto_review_catalog")
+    workflowSchemaClient
+      .catalog()
       .then((value) => {
         if (stale) return;
         setCatalog(value);

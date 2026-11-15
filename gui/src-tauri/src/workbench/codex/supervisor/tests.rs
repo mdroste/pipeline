@@ -36,6 +36,7 @@ fn newer_servers_must_echo_the_security_contract() {
         Some(&root),
         &expected_roots,
         "pipeline-workbench",
+        approval_settings("pipeline-workbench", Default::default()),
         Some("gpt-test"),
     )
     .is_ok());
@@ -67,6 +68,7 @@ fn newer_servers_must_echo_the_security_contract() {
             Some(&root),
             &expected_roots,
             "pipeline-workbench",
+            approval_settings("pipeline-workbench", Default::default()),
             Some("gpt-test"),
         )
         .is_err());
@@ -158,6 +160,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 cwd: root.clone(),
                 runtime_workspace_roots: vec![root.clone()],
                 permissions: "pipeline-workbench".to_string(),
+                approval_mode: Default::default(),
                 developer_instructions: "Use only selected research context.".to_string(),
                 model: None,
                 effort: Some("high".to_string()),
@@ -189,7 +192,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
             .resume_thread(
                 "session-test",
                 &thread.thread_id,
-                "pipeline-workbench",
+                ("pipeline-workbench", Default::default()),
                 &root,
                 vec![root.clone()],
                 Some(json!({"web_search":"disabled"})),
@@ -254,7 +257,7 @@ async fn resume_against(
         .resume_thread(
             "session-test",
             "thread-1",
-            "pipeline-workbench",
+            ("pipeline-workbench", Default::default()),
             root,
             vec![root.to_string()],
             None,
@@ -358,7 +361,7 @@ fn a_resume_folder_outside_its_roots_is_refused_before_anything_is_sent() {
             .resume_thread(
                 "session-test",
                 "thread-1",
-                "pipeline-workbench",
+                ("pipeline-workbench", Default::default()),
                 &other.display().to_string(),
                 vec![root.display().to_string()],
                 None,
@@ -391,7 +394,7 @@ async fn side_turn_server(
                 "thread":{"id":"thread-side","sessionId":"provider-side"},
                 "model":"gpt-mini","modelProvider":"openai",
                 "activePermissionProfile":{"id":"workbench-inspect"},
-                "approvalPolicy":"untrusted","approvalsReviewer":"user",
+                "approvalPolicy":"never","approvalsReviewer":"user",
                 "cwd":workspace,
                 "instructionSources":[],
                 "runtimeWorkspaceRoots":[workspace]

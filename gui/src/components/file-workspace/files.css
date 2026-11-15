@@ -8,6 +8,7 @@
 }
 .file-workspace {
   --file-row: 28px;
+  container: file-workspace / inline-size;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -160,7 +161,7 @@
 }
 .file-browser-note {
   flex: none;
-  color: var(--text-muted);
+  color: var(--ui-muted);
   font-size: 0.6875rem;
 }
 .file-browser-row-menu {
@@ -168,9 +169,9 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 1.375rem;
-  height: 1.375rem;
-  border-radius: 0.3125rem;
+  width: 1.5rem;
+  height: 24px;
+  border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   opacity: 0;
 }
@@ -180,6 +181,7 @@
 }
 [role="treeitem"]:hover > .file-browser-row-menu,
 [role="treeitem"]:focus-visible > .file-browser-row-menu,
+.file-browser-row-menu:focus,
 .file-browser-row-menu[data-open="true"] {
   opacity: 1;
 }
@@ -199,9 +201,6 @@
 }
 .file-icon[data-type="pdf"] {
   color: #b4534a;
-}
-.file-icon[data-type="table"] {
-  color: #4f7f5e;
 }
 .file-icon[data-type="image"] {
   color: #80699f;
@@ -297,7 +296,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: 0.125rem;
-  min-height: 2.375rem;
+  min-height: var(--ui-control-height);
   padding: 0 0.5rem 0 0.375rem;
   border-bottom: 1px solid var(--ui-border);
 }
@@ -358,9 +357,9 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border-radius: 0.25rem;
+  width: var(--ui-control-height-sm);
+  height: var(--ui-control-height-sm);
+  border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   opacity: 0;
 }
@@ -394,14 +393,43 @@
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 0.5rem;
-  min-height: 2.5rem;
-  padding: 0.25rem 0.5rem 0.25rem 0.875rem;
+  flex-wrap: wrap;
+  gap: var(--ui-space-1) var(--ui-space-2);
+  min-height: var(--ui-control-height);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-border);
+}
+.file-run-output {
+  flex: none;
+  max-height: 38%;
+  overflow: auto;
+  border-top: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  padding: 0.625rem 0.875rem;
+  font-size: var(--ui-text-meta);
+}
+.file-run-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem 0.75rem;
+}
+.file-run-heading span {
+  color: var(--ui-muted);
+}
+.file-run-output pre {
+  margin: 0.375rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.file-run-output [role="alert"],
+.file-run-output pre[aria-label="Errors"] {
+  color: var(--ui-danger);
 }
 .file-crumbs {
   display: flex;
-  flex: 1;
+  flex: 1 1 8rem;
   align-items: baseline;
   gap: 0.3125rem;
   min-width: 0;
@@ -414,7 +442,7 @@
   text-overflow: ellipsis;
 }
 .file-crumbs strong {
-  flex-shrink: 0;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   font-weight: 550;
@@ -429,7 +457,8 @@
   background: var(--ui-sunken);
 }
 .file-modes button {
-  padding: 0.125rem 0.5625rem;
+  min-height: var(--ui-control-height-sm);
+  padding: var(--ui-space-1) var(--ui-space-2);
   border-radius: 0.25rem;
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
@@ -445,7 +474,8 @@
 }
 .file-action {
   flex-shrink: 0;
-  padding: 0.25rem 0.625rem;
+  min-height: var(--ui-control-height-sm);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
@@ -474,15 +504,15 @@
   flex-shrink: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.125rem 0.25rem;
-  min-height: 2.25rem;
-  padding: 0.1875rem 0.5rem;
+  gap: var(--ui-space-1) var(--ui-space-2);
+  min-height: var(--ui-control-height);
+  padding: var(--ui-space-1) var(--ui-space-3);
   border-bottom: 1px solid var(--ui-border);
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
 }
 .file-toolbar button {
-  min-height: 1.625rem;
+  min-height: var(--ui-control-height-sm);
   padding: 0.125rem 0.5rem;
   border-radius: var(--ui-radius-sm);
 }
@@ -578,7 +608,7 @@
   padding: 0.125rem 0.875rem;
   border-top: 1px solid var(--ui-border);
   color: var(--ui-muted);
-  font-size: 0.71875rem;
+  font-size: var(--ui-text-meta);
 }
 .file-statusbar select {
   min-width: 0;
@@ -775,7 +805,7 @@
   flex: 1;
 }
 
-@media (max-width: 720px) {
+@container file-workspace (max-width: 560px) {
   .file-workspace-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);

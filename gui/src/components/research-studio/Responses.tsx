@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { reviewHistoryClient } from "../../lib/reviewHistoryClient";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   studioClient,
@@ -11,7 +11,7 @@ import {
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
 import { researchClient } from "../../lib/workbench/researchClient";
-import type { RunSummary } from "../../lib/types";
+import type { RunSummary } from "../../lib/reviewTypes";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import useReopenCount from "../../hooks/useReopenCount";
 import useReveal from "../../hooks/useReveal";
@@ -258,7 +258,7 @@ export default function Responses({
                 disabled={busy}
                 onClick={() =>
                   void run(async () =>
-                    setRuns(await invoke<RunSummary[]>("list_runs")),
+                    setRuns(await reviewHistoryClient.list()),
                   )
                 }
               >

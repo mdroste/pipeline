@@ -1,10 +1,4 @@
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ProjectIndexPage from "./ProjectIndexPage";
@@ -54,7 +48,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("opens as an index and resumes the exact conversation only on request", async () => {
+it("opens the selected project with research details and chats out of the picker", async () => {
   const onOpenProject = vi.fn().mockResolvedValue(undefined);
   const onResumeConversation = vi.fn().mockResolvedValue(true);
   const user = userEvent.setup();
@@ -69,15 +63,18 @@ it("opens as an index and resumes the exact conversation only on request", async
     screen.getByRole("heading", { level: 1, name: "Projects" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "+ New project" }),
+    screen.getByRole("button", { name: "New project" }),
   ).toBeInTheDocument();
   expect(onOpenProject).not.toHaveBeenCalled();
   expect(onResumeConversation).not.toHaveBeenCalled();
   expect(invoke).toHaveBeenCalledExactlyOnceWith("workbench_project_index");
-  await user.click(
-    screen.getByRole("button", { name: "Resume conversation →" }),
-  );
-  expect(onResumeConversation).toHaveBeenCalledWith("conversation-actual");
+  expect(
+    screen.queryByRole("region", { name: "Chats" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText(/suggested notes/)).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Resume conversation/ }),
+  ).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Production networks" }));
   expect(onOpenProject).toHaveBeenCalledWith("networks");
 });
@@ -111,52 +108,67 @@ it("searches research questions and persists pins independently from project dat
   ).toBe(true);
 });
 
-it("reports load and resume failures with retry and retains the project list", async () => {
+it("reports load and open failures with retry and retains the project list", async () => {
   invoke.mockRejectedValueOnce(new Error("Store unavailable"));
   const user = userEvent.setup();
   render(
     <ProjectIndexPage
       onNewConversation={vi.fn()}
-      onOpenProject={vi.fn()}
-      onResumeConversation={vi
+      onOpenProject={vi
         .fn()
-        .mockRejectedValue(new Error("Conversation unavailable"))}
+        .mockRejectedValue(new Error("Project unavailable"))}
+      onResumeConversation={vi.fn()}
     />,
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Store unavailable",
   );
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await user.click(screen.getByRole("button", { name: "Try again" }));
   await user.click(
-    await screen.findByRole("button", { name: "Resume conversation →" }),
+    await screen.findByRole("button", { name: "Production networks" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Conversation unavailable",
+    "Project unavailable",
   );
   expect(
     screen.getByRole("button", { name: "Production networks" }),
   ).toBeEnabled();
 });
 
-it("offers folderless project creation and routes attention to the owning project", async () => {
+it("offers project creation from the empty state", async () => {
   invoke.mockResolvedValueOnce([]);
   const user = userEvent.setup();
-  const open = vi.fn().mockResolvedValue(undefined);
   render(
     <ProjectIndexPage
       onNewConversation={vi.fn()}
-      onOpenProject={open}
+      onOpenProject={vi.fn()}
       onResumeConversation={vi.fn()}
     />,
   );
-  expect(
-    await screen.findByRole("button", { name: "Create your first project" }),
-  ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Refresh" }));
   await user.click(
-    await screen.findByRole("button", { name: /2 suggested notes await/ }),
+    await screen.findByRole("button", { name: "Create your first project" }),
   );
-  await waitFor(() =>
-    expect(open).toHaveBeenCalledWith("networks", "overview"),
+  expect(await screen.findByRole("dialog")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
+});
+
+it("clears an unmatched project search", async () => {
+  const user = userEvent.setup();
+  render(
+    <ProjectIndexPage
+      onNewConversation={vi.fn()}
+      onOpenProject={vi.fn()}
+      onResumeConversation={vi.fn()}
+    />,
   );
+  await screen.findByRole("button", { name: "Production networks" });
+  await user.type(
+    screen.getByRole("searchbox", { name: "Search projects" }),
+    "missing",
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("No projects match");
+  await user.click(screen.getByRole("button", { name: "Clear search" }));
+  expect(
+    screen.getByRole("button", { name: "Production networks" }),
+  ).toBeVisible();
 });

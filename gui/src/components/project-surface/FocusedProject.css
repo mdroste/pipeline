@@ -1,0 +1,217 @@
+/* Keep global destinations stationary and give the project its own scroll area.
+   The project tools directory reflows to the actual pane, including split view. */
+.focused-project-scope {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  border-top: 1px solid var(--nav-line);
+  margin-top: 12px;
+  padding: 8px 0;
+}
+.focused-project-header {
+  position: sticky;
+  top: -8px;
+  background: var(--ui-sunken);
+  z-index: 1;
+  padding: 4px 0 8px;
+}
+.dark .focused-project-header {
+  background: var(--ui-surface);
+}
+.focused-scope-label,
+.focused-switch-results h3 {
+  font-size: var(--ui-text-meta);
+  color: var(--ui-page-muted);
+  font-weight: 500;
+  padding: 7px 8px 3px;
+}
+.focused-project-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: var(--ui-text-body);
+  color: var(--ui-page-text);
+  font-weight: 600;
+  text-align: left;
+  border-radius: var(--ui-radius-sm);
+}
+.focused-project-switch span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.focused-project-switch svg {
+  flex: none;
+}
+.focused-project-switch:hover,
+.focused-switch-results .nav-row:hover {
+  background: var(--nav-hover);
+}
+.focused-project-utilities {
+  border-top: 1px solid var(--nav-line);
+  padding-top: 6px;
+  margin-top: 8px;
+}
+.focused-project-scope .nav-row svg,
+.focused-project-utilities svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.focused-project-scope .nav-row:disabled {
+  opacity: 0.5;
+}
+.focused-switch-results {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 12px;
+}
+.focused-switch-actions,
+.focused-links,
+.focused-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.focused-switch-actions {
+  border-top: 1px solid var(--ui-page-line);
+  padding: 12px 16px;
+}
+.focused-switch-actions button,
+.focused-links button {
+  color: var(--ui-page-accent);
+  font-size: var(--ui-text-label);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.focused-page {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: clamp(14px, 3%, 28px);
+  background: var(--ui-surface);
+  color: var(--ui-page-text);
+  font-size: var(--ui-text-body);
+}
+.focused-page header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.focused-page h1 {
+  font-size: var(--ui-text-display);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.focused-page header p,
+.focused-page > p {
+  color: var(--ui-page-muted);
+  margin: 4px 0;
+}
+.focused-page h2 {
+  font-weight: 600;
+  font-size: var(--ui-text-label);
+  margin-bottom: 4px;
+}
+.focused-search {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-sm);
+  padding: 8px 10px;
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+}
+.focused-directory {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 24px;
+  margin-top: 20px;
+}
+.focused-tool,
+.focused-chat-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  width: 100%;
+  border-bottom: 1px solid var(--ui-page-line);
+  padding: 10px 0;
+}
+.focused-tool,
+.focused-chat-open {
+  text-align: left;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.focused-tool > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--ui-page-muted);
+}
+.focused-tool strong,
+.focused-chat-open strong {
+  font-weight: 500;
+  display: block;
+}
+.focused-tool small,
+.focused-chat-open small {
+  font-size: var(--ui-text-meta);
+  color: var(--ui-page-muted);
+  display: block;
+}
+.focused-tool:hover strong,
+.focused-chat-open:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.focused-chat-open {
+  flex: 1;
+}
+.focused-chat-list {
+  margin: 6px 0 16px;
+  padding: 0;
+}
+.focused-related {
+  flex: none;
+  border-bottom: 1px solid var(--ui-page-line);
+  padding: 0 16px;
+}
+.focused-tabs button {
+  font-size: var(--ui-text-label);
+  color: var(--ui-page-muted);
+  padding: 8px 0;
+  border-bottom: 2px solid transparent;
+}
+.focused-tabs button[aria-current],
+.focused-tabs button[aria-pressed="true"] {
+  color: var(--ui-page-text);
+  font-weight: 500;
+  border-color: var(--ui-page-accent);
+}
+.focused-links {
+  padding: 5px 0 7px;
+}
+.focused-location {
+  padding: 7px 0;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+}
+.focused-location span {
+  color: var(--ui-page-muted);
+  font-weight: 400;
+}

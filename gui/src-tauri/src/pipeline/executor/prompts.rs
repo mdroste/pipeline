@@ -478,44 +478,6 @@ pub(super) fn append_step_ref(
     Ok(())
 }
 
-/// Replace `{<prefix>key}` placeholders using `map`. A declared optional
-/// value that was not supplied remains visible rather than silently becoming
-/// an empty string; undeclared placeholders are rejected during workflow
-/// validation. `needle` includes the trailing colon, e.g. "{var:".
-#[cfg(test)]
-pub(super) fn substitute_placeholders(
-    text: &str,
-    needle: &str,
-    map: &std::collections::HashMap<String, String>,
-) -> Result<String, String> {
-    if !text.contains(needle) {
-        return Ok(text.to_string());
-    }
-    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(needle) {
-        crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Run prompt")?;
-        let after = &rest[start + needle.len()..];
-        if let Some(end) = after.find('}') {
-            let key = after[..end].trim();
-            let missing = format!("(optional value '{key}' not supplied)");
-            crate::safety::push_str_limited(
-                &mut out,
-                map.get(key).map(|s| s.as_str()).unwrap_or(&missing),
-                limit,
-                "Run prompt",
-            )?;
-            rest = &after[end + 1..];
-        } else {
-            crate::safety::push_str_limited(&mut out, &rest[start..], limit, "Run prompt")?;
-            return Ok(out);
-        }
-    }
-    crate::safety::push_str_limited(&mut out, rest, limit, "Run prompt")?;
-    Ok(out)
-}
-
 /// Apply both run-time substitutions to a prompt: `{var:key}` (values) and
 /// `{input:key}` (paths to extra named inputs' extracted text).
 #[cfg(test)]

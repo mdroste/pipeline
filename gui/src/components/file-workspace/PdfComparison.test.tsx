@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PdfPosition } from "./PdfReader";
@@ -11,7 +12,6 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
 }));
 vi.mock("../../lib/fileWorkspaceClient", () => ({
   workspaceFileAdapter: ({ revisionId }: { revisionId: string }) => revisionId,
-  readCapturedPdf: async (revisionId: string) => revisionId,
 }));
 vi.mock("./PdfReader", () => ({
   pdfBytes: (value: string) => value,
@@ -19,24 +19,42 @@ vi.mock("./PdfReader", () => ({
     title,
     position,
     onPosition,
+    capture,
+    onDocument,
   }: {
     title: string;
+    capture: string;
+    onDocument?: (doc: unknown) => void;
     position?: PdfPosition;
     onPosition?: (p: PdfPosition) => void;
-  }) => (
-    <div>
-      <output aria-label={title}>
-        {position
-          ? `${position.page}/${position.scale}/${position.rotation}`
-          : "independent"}
-      </output>
-      <button
-        onClick={() => onPosition?.({ page: 2, scale: "1.5", rotation: 90 })}
-      >
-        Navigate {title}
-      </button>
-    </div>
-  ),
+  }) => {
+    useEffect(() => {
+      let active = true;
+      const task = mocks.getDocument({ data: capture });
+      void task.promise.then((doc: unknown) => {
+        if (active) onDocument?.(doc);
+      });
+      return () => {
+        active = false;
+        onDocument?.(null);
+        task.destroy();
+      };
+    }, [capture]);
+    return (
+      <div>
+        <output aria-label={title}>
+          {position
+            ? `${position.page}/${position.scale}/${position.rotation}`
+            : "independent"}
+        </output>
+        <button
+          onClick={() => onPosition?.({ page: 2, scale: "1.5", rotation: 90 })}
+        >
+          Navigate {title}
+        </button>
+      </div>
+    );
+  },
 }));
 import PdfComparison from "./PdfComparison";
 beforeEach(() => {
@@ -92,6 +110,11 @@ it("links navigation and finds changed pages with bounded canvases", async () =>
   );
   fireEvent.click(screen.getByRole("button", { name: "Navigate Before" }));
   expect(screen.getByLabelText("After")).toHaveTextContent("2/1.5/90");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Find changed pages" }),
+    ).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Find changed pages" }));
   await screen.findByText(/2 pages at thumbnail resolution; 1 pages differ/);
   expect(mocks.sizes).toHaveLength(4);
@@ -101,7 +124,7 @@ it("links navigation and finds changed pages with bounded canvases", async () =>
   }
   fireEvent.click(screen.getByRole("button", { name: "Next changed page" }));
   expect(screen.getByLabelText("Before")).toHaveTextContent("2/");
-  await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(2));
+  expect(mocks.destroy).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("checkbox"));
   expect(screen.getByLabelText("After")).toHaveTextContent("independent");
 });
@@ -117,8 +140,13 @@ it("refuses an oversized comparison without reporting a partial scan as complete
       secondary={{ id: "after", title: "After" }}
     />,
   );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Find changed pages" }),
+    ).toBeEnabled(),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Find changed pages" }));
   await screen.findByText(/at most 5,000 pages/);
   expect(mocks.sizes).toHaveLength(0);
-  await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(2));
+  expect(mocks.destroy).not.toHaveBeenCalled();
 });

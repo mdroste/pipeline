@@ -3,7 +3,7 @@ import type {
   EffectiveHarness,
   HarnessModule,
   HarnessPreset,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/harnessTypes";
 import {
   activeBundle,
   applyBundle,

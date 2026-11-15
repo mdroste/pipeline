@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceResearchPanel from "./WorkspaceResearchPanel";
-import type { ConversationSnapshot } from "../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../lib/workbench/sessionTypes";
 import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
 const mocks = vi.hoisted(() => ({

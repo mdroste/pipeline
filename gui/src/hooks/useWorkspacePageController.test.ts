@@ -368,7 +368,7 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
         },
       });
   });
-  expect(result.current.conversation.active?.turnId).toBe("turn-X");
+  expect(result.current.conversation.active).toBeNull();
   await act(async () => {
     for (const cb of mocks.listeners)
       cb({

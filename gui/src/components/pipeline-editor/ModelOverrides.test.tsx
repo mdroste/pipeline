@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ModelOverrides from "./ModelOverrides";
 import { makeSettings } from "../../test/settingsFixtures";
-import type { StepConfig } from "../../lib/types";
+import type { StepConfig } from "../../lib/workflowTypes";
 
 function step(phase: StepConfig["phase"]): StepConfig {
   return {

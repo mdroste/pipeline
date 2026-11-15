@@ -13,7 +13,7 @@ import type {
   ArtifactSelectionTarget,
   RunManifest,
 } from "../../lib/artifactTypes";
-import type { PipelineReport } from "../../lib/types";
+import type { PipelineReport } from "../../lib/reviewTypes";
 import type { OutputView, WorkspaceTab } from "./types";
 
 interface ArtifactContent {

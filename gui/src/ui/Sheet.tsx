@@ -4,7 +4,9 @@ import { Icon } from "./icons";
 
 /**
  * A panel that slides over the pane it is placed in, leaving the content
- * behind it visible. The nearest positioned ancestor bounds it.
+ * behind it visible. The nearest positioned ancestor bounds it. This is a
+ * pane-scoped, nonmodal layer: other panes remain interactive and focus is
+ * not trapped. The pane scrim dismisses it; Escape restores prior focus.
  */
 export default function Sheet({
   open,
@@ -51,7 +53,7 @@ export default function Sheet({
           onClose();
         }}
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <header className="ui-overlay-header shrink-0">
           <h2 className="min-w-0 truncate text-ui-title font-semibold">
             {title}
           </h2>

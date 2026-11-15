@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { taskClient } from "../lib/taskClient";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
-import type { Workspace } from "../lib/workbenchTypes";
-import type { RunSummary } from "../lib/types";
+import type { Workspace } from "../lib/workbench/sessionTypes";
+import type { RunSummary } from "../lib/reviewTypes";
 import type { TaskSummary } from "../lib/taskTypes";
 type Source = "Projects" | "Reviews" | "Automations";
 export default function useSearchSources() {

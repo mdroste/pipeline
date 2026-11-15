@@ -18,7 +18,7 @@ pub use extraction::{
     resolved_paddle_page_concurrency,
 };
 pub use persistence::{
-    load_persisted, load_persisted_required, replace_active_profile_if, save,
+    heal_active_profile, load_persisted, load_persisted_required, replace_active_profile_if, save,
     save_preserving_active, set_active_profile,
 };
 pub use recovery::{

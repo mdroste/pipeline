@@ -19,10 +19,11 @@
   margin-left: auto;
 }
 .pdf-toolbars form input {
-  width: 150px;
+  width: 9.375rem;
+  max-width: 100%;
 }
 .pdf-toolbars .file-line-input {
-  width: 48px;
+  width: 3rem;
   text-align: center;
 }
 .pdf-layout {

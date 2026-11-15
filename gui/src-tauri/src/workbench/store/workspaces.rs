@@ -171,29 +171,35 @@ impl Store {
     }
 
     pub fn list_workspaces(&self, include_archived: bool) -> WorkbenchResult<WorkspaceList> {
+        self.list_workspaces_page(include_archived, None)
+    }
+
+    pub fn list_workspaces_page(
+        &self,
+        include_archived: bool,
+        after_id: Option<&str>,
+    ) -> WorkbenchResult<WorkspaceList> {
         let connection = self.connection()?;
         let filter = if include_archived {
             ""
         } else {
-            " WHERE archived_at IS NULL"
+            " AND archived_at IS NULL"
         };
         let sql = format!(
-            "SELECT id, name, root, root_identity, settings_revision, revision, archived_at, missing_root_at, created_at, updated_at FROM workspaces{filter} ORDER BY updated_at DESC, id LIMIT ?1"
+            "SELECT id, name, root, root_identity, settings_revision, revision, archived_at, missing_root_at, created_at, updated_at FROM workspaces WHERE id > ?2{filter} ORDER BY id LIMIT ?1"
         );
         let mut statement = connection
             .prepare(&sql)
             .map_err(|error| WorkbenchError::storage("Failed to prepare workspace list", error))?;
-        let workspaces = statement
-            .query_map([(MAX_WORKSPACES_PER_LIST + 1) as i64], read_workspace_row)
+        let mut workspaces = statement
+            .query_map(
+                params![MAX_WORKSPACES_PER_LIST as i64, after_id.unwrap_or("")],
+                read_workspace_row,
+            )
             .map_err(|error| WorkbenchError::storage("Failed to list workspaces", error))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| WorkbenchError::storage("Failed to decode workspaces", error))?;
-        if workspaces.len() > MAX_WORKSPACES_PER_LIST {
-            return Err(WorkbenchError::storage(
-                "Workspace list exceeds its safety limit",
-                MAX_WORKSPACES_PER_LIST,
-            ));
-        }
+        workspaces.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
         Ok(WorkspaceList {
             workspaces,
             sequence: current_sequence(&connection)?,

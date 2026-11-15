@@ -113,16 +113,19 @@ export function MenuItem({
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span className="block truncate">{children}</span>
+        <span className="block whitespace-normal break-words">{children}</span>
         {description && (
           <span className="mt-0.5 block text-ui-meta text-ink-muted">
             {description}
           </span>
         )}
       </span>
-      {checked && (
-        <span className="mt-px shrink-0 text-ink">
-          <Icon name="check" className="h-4 w-4" />
+      {checked !== undefined && (
+        <span
+          aria-hidden="true"
+          className="mt-px h-[18px] w-[18px] shrink-0 text-ink"
+        >
+          {checked && <Icon name="check" className="h-4 w-4" />}
         </span>
       )}
     </button>

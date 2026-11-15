@@ -22,24 +22,29 @@ pub(super) async fn time_limited<F>(
 where
     F: std::future::Future<Output = Result<serde_json::Value>>,
 {
-    let (stop, receiver) = watch::channel(false);
-    let cancellation = tokio::spawn(async move {
-        let expired = tokio::select! {
-            _ = parent_stop.changed() => false,
-            _ = tokio::time::sleep(timeout) => true,
-        };
-        let _ = stop.send(true);
-        expired
-    });
-    let watcher = cancellation.abort_handle();
-    let result = action(receiver).await;
-    watcher.abort();
-    let expired = matches!(cancellation.await, Ok(true));
-    match result {
-        Err(message) if expired && !message.starts_with("task_busy:") => {
-            Err(TIME_LIMIT_REACHED.into())
+    if timeout.is_zero() {
+        return Err(TIME_LIMIT_REACHED.into());
+    }
+    let (stop, receiver) = watch::channel(*parent_stop.borrow());
+    let end = tokio::time::Instant::now() + timeout;
+    let worker = action(receiver);
+    tokio::pin!(worker);
+    let expired = tokio::select! {
+        biased;
+        result=&mut worker => {
+            return if tokio::time::Instant::now()>=end && !result.as_ref().is_err_and(|e|e.starts_with("task_busy:")) { Err(TIME_LIMIT_REACHED.into()) } else { result };
         }
-        result => result,
+        _ = tokio::time::sleep_until(end) => true,
+        _ = parent_stop.changed() => false,
+    };
+    let _ = stop.send(true);
+    // Owners keep their slot until shutdown/commit is acknowledged. A late
+    // result remains in its journal but cannot start the next step on its own.
+    let result = worker.await;
+    if expired && !result.as_ref().is_err_and(|e| e.starts_with("task_busy:")) {
+        Err(TIME_LIMIT_REACHED.into())
+    } else {
+        result
     }
 }
 
@@ -105,13 +110,16 @@ impl Coordinator {
         let id = id.to_string();
         let mut run = self.db(move |s| s.get(&id)).await?;
         if run.schedule_id.is_some()
-            && !run.progress.decisions.contains_key("occurrenceSession")
+            && run.progress.occurrence_session.is_none()
             && run.scope.session_id.is_some()
         {
             let expected = adapters::task_binding(&run.scope)?;
             let operation = run.id.clone();
             let title = run.name.clone();
             match crate::workbench::commands::run_store(move |s| {
+                if crate::workbench::tasks::owns_occurrence(&s, &operation, &expected.session_id)? {
+                    return Ok(expected);
+                }
                 crate::workbench::tasks::occurrence_session(&s, &expected, &operation, &title)
             })
             .await
@@ -123,9 +131,20 @@ impl Coordinator {
                     run.scope.runtime_root = Some(binding.runtime_root);
                     run.scope.harness_fingerprint = Some(binding.harness_fingerprint);
                     run.scope.connection_id = binding.connection_id;
+                    // An older scheduler used this conditional's address. Preserve
+                    // committed branch work, but retire a marker with no child work.
+                    if !run
+                        .progress
+                        .receipts
+                        .keys()
+                        .chain(run.progress.decisions.keys())
+                        .any(|address| address.starts_with("occurrenceSession/"))
+                    {
+                        run.progress.decisions.remove("occurrenceSession");
+                    }
                     run.progress
-                        .decisions
-                        .insert("occurrenceSession".into(), json!(true));
+                        .occurrence_session
+                        .clone_from(&run.scope.session_id);
                     self.save(
                         &mut run,
                         "conversation",
@@ -141,6 +160,16 @@ impl Coordinator {
                 }
             }
         }
+        if let Some(group) = run.progress.expired_group(now()) {
+            let reason = format!(
+                "Group {group} reached its elapsed deadline. Start a new run to give it more time."
+            );
+            run.state = "attention".into();
+            run.due_at = None;
+            run.reason = Some(reason.clone());
+            self.save(&mut run, "deadline", &reason).await?;
+            return Ok(());
+        }
         if run.deadline_at <= now() {
             run.state = "attention".into();
             run.reason = Some("Task deadline reached".into());
@@ -151,6 +180,7 @@ impl Coordinator {
         }
         let previous_state = run.state.clone();
         let previous_due = run.due_at;
+        let previous_groups = run.progress.group_deadlines.clone();
         let previous_decisions = run.progress.decisions.len();
         let mut changed = false;
         for receipt in run.progress.receipts.values_mut() {
@@ -166,6 +196,7 @@ impl Coordinator {
             }
         }
         let outcome = state::advance(&run.chain, &mut run.progress, &run.inputs);
+        changed |= previous_groups != run.progress.group_deadlines;
         match outcome {
             Advance::Finished => {
                 run.state = "finished".into();
@@ -201,6 +232,7 @@ impl Coordinator {
                         }
                     })
                     .min();
+                run.due_at = run.progress.next_wake(run.due_at);
                 if !running {
                     run.reason = Some(
                         run.progress
@@ -226,6 +258,14 @@ impl Coordinator {
                 let was_queued = run.reason.as_deref() == Some("Waiting for an execution slot");
                 let mut queued_due = None;
                 let mut blocked = false;
+                let retries = if ready.iter().any(|a| !a.groups.is_empty())
+                    && run.progress.actions as usize > run.progress.receipts.len()
+                {
+                    let id = run.id.clone();
+                    self.db(move |s| s.retried_addresses(&id)).await?
+                } else {
+                    Vec::new()
+                };
                 for pending in ready {
                     let control = matches!(
                         pending.step.action,
@@ -243,7 +283,7 @@ impl Coordinator {
                     };
                     if !control && (busy || !adapters::available(&pending.step.action, &run.scope))
                     {
-                        queued_due = Some(now() + 2);
+                        queued_due = run.progress.next_wake(Some(now() + 2));
                         run.due_at = queued_due;
                         if run.state != "running" {
                             run.state = "queued".into();
@@ -251,6 +291,25 @@ impl Coordinator {
                         run.reason = Some("Waiting for an execution slot".into());
                         blocked = true;
                         continue;
+                    }
+                    if let Some((group, limit)) = pending.groups.iter().find(|(prefix, limit)| {
+                        run.progress
+                            .receipts
+                            .keys()
+                            .chain(retries.iter())
+                            .filter(|addr| addr.starts_with(prefix))
+                            .count()
+                            >= *limit as usize
+                    }) {
+                        let reason = format!(
+                            "Group {} reached its limit of {limit} actions",
+                            group.trim_end_matches('/')
+                        );
+                        run.state = "attention".into();
+                        run.reason = Some(reason.clone());
+                        run.due_at = None;
+                        self.save(&mut run, "budget", &reason).await?;
+                        break;
                     }
                     if run.progress.actions >= run.chain.limits.max_actions
                         || serde_json::to_vec(&run.progress).map_err(err)?.len() > 8 * 1024 * 1024
@@ -276,7 +335,15 @@ impl Coordinator {
                         Action::Input { prompt, .. } => prompt.clone(),
                         _ => pending.step.label.clone(),
                     };
+                    let cutoff = pending.cutoff(&run.progress, run.deadline_at, timestamp);
+                    if cutoff <= timestamp {
+                        run.due_at = Some(timestamp);
+                        self.save(&mut run, "deadline", "Checking elapsed deadline")
+                            .await?;
+                        break;
+                    }
                     let receipt = Receipt {
+                        action_kind: Some(adapters::contract::Kind::of(&pending.step.action)),
                         sequence: run.progress.actions + 1,
                         address: pending.address.clone(),
                         step_id: pending.step.id.clone(),
@@ -329,13 +396,19 @@ impl Coordinator {
                         let app = self.app.clone();
                         tokio::spawn(async move {
                             let timeout = std::time::Duration::from_secs(
-                                owned.chain.limits.action_timeout_secs.into(),
+                                cutoff.saturating_sub(now()).max(0) as u64,
                             );
                             let worker = {
+                                let dispatch_id = operation.clone();
                                 let (owned, pending) = (owned.clone(), pending.clone());
                                 move |stop| async move {
                                     tokio::spawn(execute(
-                                        app, store, owned, pending, operation, stop,
+                                        app,
+                                        store,
+                                        owned,
+                                        pending,
+                                        dispatch_id,
+                                        stop,
                                     ))
                                     .await
                                     .unwrap_or_else(|e| {
@@ -344,22 +417,20 @@ impl Coordinator {
                                 }
                             };
                             let result = time_limited(timeout, receiver, worker).await;
-                            if let Err(error) = coordinator
-                                .complete(&owned.id, &pending.address, result)
-                                .await
-                            {
-                                if let Some(app) = &coordinator.app {
-                                    let _ = app.emit("tasks:error", error);
-                                }
-                            }
                             coordinator
                                 .active
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .remove(&key);
+                            coordinator
+                                .publish_completion(&owned.id, &pending.address, &operation, result)
+                                .await;
                             coordinator.notify();
                         });
                     }
+                }
+                if run.state == "attention" {
+                    return Ok(());
                 }
                 if changed || (blocked && !was_queued) {
                     self.save(&mut run, "queued", "Waiting for an execution slot")

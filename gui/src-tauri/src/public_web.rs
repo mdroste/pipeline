@@ -204,19 +204,29 @@ fn undeclared_encoding(bytes: &[u8]) -> &'static encoding_rs::Encoding {
 /// NUL bytes mark a binary file, whatever its header claims, unless the encoding
 /// is UTF-16.
 fn decode(bytes: Vec<u8>, mime: &str) -> WebResult<(String, Option<&'static str>)> {
-    let bytes = match String::from_utf8(bytes) {
-        Ok(text) => return Ok((text, None)),
-        Err(error) => error.into_bytes(),
+    let header =
+        header_charset(mime).and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()));
+    // UTF-16 can also be valid UTF-8 bytes (with or without NULs). A declared
+    // wide encoding must reach the decoder, while genuine UTF-8 still wins
+    // over an incorrect legacy single-byte label.
+    let bytes = if header.is_some_and(|encoding| {
+        encoding == encoding_rs::UTF_16LE || encoding == encoding_rs::UTF_16BE
+    }) {
+        bytes
+    } else {
+        match String::from_utf8(bytes) {
+            Ok(text) if !text.as_bytes().contains(&0) => return Ok((text, None)),
+            Ok(text) => text.into_bytes(),
+            Err(error) => error.into_bytes(),
+        }
     };
     let binary = || invalid("This URL contains a binary file; choose a text or HTML page");
     let html = mime.contains("html");
-    let declared = header_charset(mime)
-        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
-        .or_else(|| {
-            html.then(|| meta_charset(&bytes))
-                .flatten()
-                .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
-        });
+    let declared = header.or_else(|| {
+        html.then(|| meta_charset(&bytes))
+            .flatten()
+            .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+    });
     let named = encoding_rs::Encoding::for_bom(&bytes)
         .map(|(encoding, _)| encoding)
         .or(declared);
@@ -261,6 +271,18 @@ fn readable(response: Download) -> WebResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "Requires public internet; no model calls"]
+    async fn public_page_fetch_returns_citable_text() {
+        let page = fetch("https://example.com").await.unwrap();
+        assert_eq!(page["url"], "https://example.com/");
+        assert!(page["text"].as_str().unwrap().contains("Example Domain"));
+        assert!(page["mime"].as_str().unwrap().contains("html"));
+        assert!(page["retrievedAt"].as_str().is_some());
+        assert_eq!(page["truncated"], false);
+    }
+
     #[test]
     fn rejects_private_and_mapped_addresses_and_non_web_urls() {
         for value in [
@@ -341,6 +363,25 @@ mod tests {
     }
 
     #[test]
+    fn wide_text_that_also_forms_utf8_reaches_the_declared_decoder() {
+        for (bytes, mime, expected) in [
+            (&b"h\0i\0"[..], "text/plain; charset=utf-16le", "hi"),
+            (&b"\0h\0i"[..], "text/plain; charset=utf-16be", "hi"),
+            (&b"AB"[..], "text/plain; charset=utf-16be", "\u{4142}"),
+            (&b"\xFE\xFF\0h\0i"[..], "text/plain", "hi"),
+            (
+                &b"<\0p\0>\0h\0i\0<\0/\0p\0>\0"[..],
+                "text/html; charset=utf-16le",
+                "hi",
+            ),
+        ] {
+            let decoded = page(bytes, mime).unwrap();
+            assert_eq!(decoded["text"], expected);
+            assert!(decoded.get("encodingNote").is_none());
+        }
+    }
+
+    #[test]
     fn undeclared_html_with_one_bad_byte_stays_utf8_and_says_so() {
         let mut html = "<p>Universit\u{e9} de Gen\u{e8}ve ".as_bytes().to_vec();
         html.extend_from_slice(b"caf\xE9</p>");
@@ -378,6 +419,8 @@ mod tests {
     #[test]
     fn real_binary_content_keeps_its_error() {
         for (bytes, mime) in [
+            (&b"GIF89a\0\0\0"[..], "image/gif"),
+            (&b"a\0b"[..], "text/plain; charset=utf-8"),
             (&b"%PDF-1.7\n\xE2\xE3\xCF\xD3\0\0"[..], "application/pdf"),
             (
                 &b"\x89PNG\r\n\x1a\n\0\0"[..],

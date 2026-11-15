@@ -189,3 +189,12 @@ fn trashed_runs_restore_through_symlinked_storage_paths() {
         restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").is_err()
     );
 }
+
+#[test]
+fn manual_trash_honors_a_queued_rerun_before_touching_the_run_store() {
+    let parent = "protected-parent";
+    let _hold = hold_from_retention(parent);
+    assert!(delete_run(parent)
+        .unwrap_err()
+        .contains("still needs this run"));
+}

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FilePreview } from "../fileWorkspaceClient";
+import type { FileListing, FilePreview } from "../fileWorkspaceClient";
 import type {
   CreateSessionRequest,
   DeleteSessionRequest,
@@ -12,9 +12,60 @@ import type {
   UpdateSessionRequest,
   WorkbenchSession,
   ConversationSnapshot,
-} from "../workbenchTypes";
+} from "./sessionTypes";
 
+export interface ArtifactRunTarget {
+  sessionId: string;
+  scopeRoot: string;
+  path: string;
+}
+
+export interface ArtifactRun {
+  id: string;
+  state:
+    | "running"
+    | "stopping"
+    | "completed"
+    | "failed"
+    | "interrupted"
+    | "timed_out"
+    | "outcome_unknown";
+  exitStatus: number | null;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+}
+
+export interface ConversationIndexRow {
+  session: Pick<
+    WorkbenchSession,
+    "id" | "workspaceId" | "title" | "archivedAt" | "updatedAt"
+  >;
+  projectName: string | null;
+}
+export interface IndexCursor extends SessionCursor {
+  projectUpdatedAt: string;
+  workspaceId: string;
+}
 export const conversationClient = {
+  index(
+    archived: boolean,
+    unfiled: boolean,
+    query: string,
+    palette: boolean,
+    cursor: IndexCursor | null,
+  ) {
+    return invoke<{
+      items: ConversationIndexRow[];
+      nextCursor: IndexCursor | null;
+    }>("workbench_conversation_index", {
+      archived,
+      unfiled,
+      query,
+      palette,
+      cursor,
+    });
+  },
   createSession(request: CreateSessionRequest) {
     return invoke<Mutation<WorkbenchSession>>("workbench_create_session", {
       request,
@@ -60,9 +111,9 @@ export const conversationClient = {
   },
   transcriptPage(
     sessionId: string,
-    before: import("../workbenchTypes").TranscriptCursor,
+    before: import("./sessionTypes").TranscriptCursor,
   ) {
-    return invoke<import("../workbenchTypes").TranscriptPage>(
+    return invoke<import("./sessionTypes").TranscriptPage>(
       "workbench_transcript_page",
       { sessionId, before },
     );
@@ -78,6 +129,12 @@ export const conversationClient = {
       path,
     });
   },
+  openConversationFileWith(sessionId: string, path: string) {
+    return invoke<void>("workbench_conversation_file_open_with", {
+      sessionId,
+      path,
+    });
+  },
   revealConversationFolder(sessionId: string) {
     return invoke<void>("workbench_conversation_folder_reveal", { sessionId });
   },
@@ -86,6 +143,44 @@ export const conversationClient = {
       sessionId,
       path,
     });
+  },
+  previewConversationFile(sessionId: string, path: string) {
+    return invoke<FilePreview>("workbench_conversation_file_preview", {
+      sessionId,
+      path,
+    });
+  },
+  saveConversationFile(request: {
+    sessionId: string;
+    path: string;
+    scopeRoot: string;
+    expectedHash: string;
+    content: string;
+  }) {
+    return invoke<string>("workbench_conversation_file_save", { request });
+  },
+  runArtifact(target: ArtifactRunTarget, expectedHash: string) {
+    return invoke<ArtifactRun>("workbench_conversation_file_run", {
+      request: { target, expectedHash },
+    });
+  },
+  artifactRunStatus(target: ArtifactRunTarget) {
+    return invoke<ArtifactRun | null>(
+      "workbench_conversation_file_run_status",
+      { target },
+    );
+  },
+  stopArtifactRun(target: ArtifactRunTarget, runId: string) {
+    return invoke<void>("workbench_conversation_file_run_stop", {
+      target,
+      runId,
+    });
+  },
+  listConversationFiles(sessionId: string, directory = "") {
+    return invoke<{ scopeRoot: string; listing: FileListing | null }>(
+      "workbench_conversation_file_list",
+      { sessionId, directory },
+    );
   },
   exportConversation(sessionId: string, path: string) {
     return invoke<void>("workbench_export_conversation", { sessionId, path });

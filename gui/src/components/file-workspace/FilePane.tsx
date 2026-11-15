@@ -12,7 +12,8 @@ import {
   modeLabel,
   type FileMode,
 } from "../../lib/fileKinds";
-import { confirmDialog } from "../DialogService";
+import { confirmDialog, notify } from "../DialogService";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import {
   EmptyState,
   IconButton,
@@ -33,6 +34,7 @@ import MediaViewer from "./viewers/MediaViewer";
 import HtmlViewer from "./viewers/HtmlViewer";
 import "./viewers/viewers.css";
 import ReportIssueLink from "../ReportIssueLink";
+import { ArtifactRunOutput, useArtifactRun } from "./ArtifactRunOutput";
 
 const PdfReader = lazy(() => import("./PdfReader"));
 const ImageViewer = lazy(() => import("./viewers/ImageViewer"));
@@ -54,6 +56,7 @@ interface Props {
   mode?: FileMode;
   setMode: (mode: FileMode) => void;
   saving: string | null;
+  editOnDemand?: boolean;
   completionTexts: string[];
   onDraft: (draft: string) => void;
   onDiscard: () => void;
@@ -61,6 +64,7 @@ interface Props {
   onCompare: () => void;
   onReload: () => void;
   onExternal: () => void;
+  onOpenInFiles?: () => void;
   onReveal: () => void;
   onPassage: (passage: FilePassage | null) => void;
 }
@@ -78,6 +82,7 @@ export default function FilePane({
   mode: chosen,
   setMode,
   saving,
+  editOnDemand,
   completionTexts,
   onDraft,
   onDiscard,
@@ -85,12 +90,16 @@ export default function FilePane({
   onCompare,
   onReload,
   onExternal,
+  onOpenInFiles,
   onReveal,
   onPassage,
 }: Props) {
   const file = buffer.file;
+  const [editing, setEditing] = useState(!editOnDemand);
+  const canEdit = file.editable && editing;
   const kind = fileKind(file);
   const dirty = buffer.draft !== file.text;
+  const artifact = useArtifactRun(adapter.artifactSessionId, file);
   const modes = availableModes(file);
   const mode = chosen && modes.includes(chosen) ? chosen : defaultMode(file);
   const stream = useMemo(
@@ -104,8 +113,19 @@ export default function FilePane({
   const tailDecoder = useRef(new TextDecoder());
   const [loadError, setLoadError] = useState("");
   const [menu, setMenu] = useState(false);
+  const [openingCopy, setOpeningCopy] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const [folder, name] = splitPath(file.path);
+  const openCopyWith = async () => {
+    setOpeningCopy(true);
+    try {
+      await adapter.openCopyWith?.(file.path);
+    } catch (error) {
+      notify(workbenchErrorMessage(error));
+    } finally {
+      setOpeningCopy(false);
+    }
+  };
   const shownText = file.truncated ? buffer.draft + extra : buffer.draft;
   const headBytes = useMemo(
     () => file.textBytes ?? new TextEncoder().encode(file.text ?? "").length,
@@ -161,11 +181,11 @@ export default function FilePane({
       value={shownText}
       path={`${adapter.id}/${file.path}`}
       label={`Source editor: ${file.path}`}
-      readOnly={!file.editable}
+      readOnly={!canEdit}
       reveal={location}
       completionTexts={completionTexts}
-      onSave={onSave}
-      onChange={file.editable ? onDraft : undefined}
+      onSave={canEdit ? onSave : undefined}
+      onChange={canEdit ? onDraft : undefined}
       onSelection={(s) =>
         onPassage(
           s.text
@@ -348,6 +368,39 @@ export default function FilePane({
             ))}
           </div>
         )}
+        {editOnDemand && file.editable && (
+          <button
+            type="button"
+            className="file-action"
+            onClick={() => {
+              if (!editing) setMode("source");
+              setEditing(!editing);
+            }}
+          >
+            {editing ? "Done editing" : "Edit"}
+          </button>
+        )}
+        {artifact.enabled && (
+          <button
+            type="button"
+            className="file-action"
+            disabled={
+              artifact.active
+                ? artifact.run?.state === "stopping"
+                : dirty || saving !== null || artifact.busy
+            }
+            title={
+              dirty && !artifact.active
+                ? "Save changes before running"
+                : undefined
+            }
+            onClick={() =>
+              void (artifact.active ? artifact.stop() : artifact.start())
+            }
+          >
+            {artifact.active ? "Stop" : artifact.busy ? "Starting…" : "Run"}
+          </button>
+        )}
         {file.editable && dirty && (
           <>
             <button className="file-action" onClick={() => void discard()}>
@@ -359,7 +412,7 @@ export default function FilePane({
               title="Command/Ctrl+S"
               onClick={onSave}
             >
-              {saving === file.path ? "Saving…" : "Save"}
+              {saving === location.path ? "Saving…" : "Save"}
             </button>
           </>
         )}
@@ -386,7 +439,21 @@ export default function FilePane({
             </MenuItem>
           )}
           <MenuItem onSelect={() => void reload()}>Reload</MenuItem>
-          {(adapter.external || adapter.reveal) && <MenuSeparator />}
+          {(onOpenInFiles ||
+            adapter.openCopyWith ||
+            adapter.external ||
+            adapter.reveal) && <MenuSeparator />}
+          {onOpenInFiles && (
+            <MenuItem onSelect={onOpenInFiles}>Open in Files</MenuItem>
+          )}
+          {adapter.openCopyWith && (
+            <MenuItem
+              disabled={openingCopy}
+              onSelect={() => void openCopyWith()}
+            >
+              Open a copy with…
+            </MenuItem>
+          )}
           {adapter.external && (
             <MenuItem onSelect={onExternal}>Open externally</MenuItem>
           )}
@@ -439,6 +506,7 @@ export default function FilePane({
       <Suspense fallback={<p className="file-status">Loading viewer…</p>}>
         {body()}
       </Suspense>
+      <ArtifactRunOutput run={artifact.run} error={artifact.error} />
     </div>
   );
 }

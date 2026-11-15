@@ -3,7 +3,7 @@ import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import findingsV2 from "../../tests/fixtures/workflow/findings-v2.json";
 import type { ArtifactSelectionRequest } from "../lib/artifactTypes";
-import type { PipelineReport } from "../lib/types";
+import type { PipelineReport } from "../lib/reviewTypes";
 import useArtifactSelection from "./artifact-explorer/useArtifactSelection";
 import ReportWorkspace from "./ReportWorkspace";
 

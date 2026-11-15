@@ -19,6 +19,7 @@ Populate the supplied findings schema. For every finding:
 - `reviewer_ids`: the `Report id` values of every report contributing to this finding.
 - `problem`, `consequence`, and `recommended_action`: separate non-empty statements preserving the paper evidence, the exact defect, what claim it affects, and the smallest credible remedy.
 - `evidence`: carry over the contributing reports' locators, merged and deduplicated. Every item must name its `evidence_type`, set `verification_status` to `unverified`, include a useful `description`, and contain a concrete page, line, node, asset, source path, URL, DOI, query, or call locator. Never invent a locator.
+- For manuscript evidence, use a page, document node, or asset and leave `source_path` unset. Use `source_path` for a separately supplied source file.
 
 At the root, set `schema_version` to `2` and reproduce the supplied taxonomy exactly in `taxonomy`.
 

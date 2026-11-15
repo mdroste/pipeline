@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceAttachmentsPanel from "./WorkspaceAttachmentsPanel";
 import { appEvents } from "../lib/appEvents";
-import type { ConversationSnapshot } from "../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../lib/workbench/sessionTypes";
 
 const mocks = vi.hoisted(() => ({
   listPapers: vi.fn(),

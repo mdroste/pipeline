@@ -72,16 +72,14 @@ pub(in crate::orchestration) async fn await_turn(
     let mut unowned_since = None;
     loop {
         if *stop.borrow() {
-            let _ = workspace::workbench_codex_interrupt_turn(thread.to_string(), turn.to_string())
-                .await;
+            let _ = workspace::interrupt_runtime_turn(thread.to_string(), turn.to_string()).await;
             return Err("Task stopped; the conversation turn was interrupted".into());
         }
         if let Some(value) = read_outcome(session, submission).await? {
             return Ok(value);
         }
         if let Some(question) = workspace::task_pending_request(thread, turn) {
-            let _ = workspace::workbench_codex_interrupt_turn(thread.to_string(), turn.to_string())
-                .await;
+            let _ = workspace::interrupt_runtime_turn(thread.to_string(), turn.to_string()).await;
             return Err(unanswered_request(&question));
         }
         if workspace::turn_has_live_owner(thread, turn) || workspace::turn_setup_in_progress() {
@@ -110,6 +108,23 @@ pub async fn execute(
     run: TaskRun,
     ready: Ready,
     operation: String,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> Result<Value> {
+    let meter = super::super::allowance::meter(&store, &run, &ready, &operation)?;
+    crate::usage_allowance::CURRENT
+        .scope(
+            Some(meter),
+            execute_inner(app, store, run, ready, operation, stop),
+        )
+        .await
+}
+
+async fn execute_inner(
+    app: Option<tauri::AppHandle>,
+    store: Store,
+    run: TaskRun,
+    ready: Ready,
+    operation: String,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<Value> {
     if *stop.borrow() {
@@ -124,6 +139,13 @@ pub async fn execute(
         let bytes = std::fs::read(&journal).map_err(err)?;
         return serde_json::from_slice(&bytes).map_err(err);
     }
+    let mark = || {
+        super::contract::mark(
+            &store,
+            &operation,
+            super::contract::Kind::of(&ready.step.action),
+        )
+    };
     #[cfg(all(feature = "e2e", debug_assertions))]
     if matches!(ready.step.action, Action::Workspace { .. }) {
         if let Some(result) =
@@ -140,29 +162,41 @@ pub async fn execute(
     }
     let result = match &ready.step.action {
         Action::LiteratureLookup { query } => {
-            crate::workbench::discovery::acquire(
+            mark()?;
+            tokio::select! { result=crate::workbench::discovery::acquire(
                 run.scope
                     .workspace_id
                     .clone()
                     .ok_or("Literature lookup needs a project")?,
                 query.clone(),
                 operation.clone(),
-            )
-            .await?
+            ) => result?, _ = stop.changed() => return Err("Literature lookup stopped".into()) }
         }
         Action::Snapshot {
             input,
             filename,
             require_change,
         } => {
+            let replacement = run
+                .progress
+                .corrected_snapshots
+                .get(&ready.address)
+                .cloned();
             let value = resolve(input, &run, &ready)?;
             let local = store.clone();
             let scope = run.scope.clone();
             let filename = filename.clone();
-            let result =
-                tokio::task::spawn_blocking(move || snapshot(&local, &scope, value, &filename))
-                    .await
-                    .map_err(err)??;
+            mark()?;
+            let result = tokio::task::spawn_blocking(move || {
+                if let Some(corrected) = replacement {
+                    artifact_path(&local, &corrected)?;
+                    Ok(corrected)
+                } else {
+                    snapshot(&local, &scope, value, &filename)
+                }
+            })
+            .await
+            .map_err(err)??;
             if *require_change
                 && run.progress.outputs.as_object().is_some_and(|o| {
                     o.values()
@@ -174,6 +208,7 @@ pub async fn execute(
                         .into(),
                 );
             }
+            atomic_json(&journal.with_file_name("snapshot.json"), &result)?;
             result
         }
         Action::Workspace {
@@ -187,6 +222,37 @@ pub async fn execute(
                 &ready.inputs,
             )?;
             let binding = task_binding(&run.scope)?;
+            if let Some(count) =
+                crate::orchestration::discovery::storage::idea_team(&store, &run.id)?
+            {
+                super::contract::mark_team(&store, &operation)?;
+                for _ in 0..=count {
+                    crate::usage_allowance::Hold::reserve(
+                        crate::usage_allowance::current().as_ref(),
+                        crate::usage_allowance::Class::Subscription,
+                        "",
+                        0,
+                        0,
+                    )?;
+                }
+                let result = super::idea_team::run(
+                    store
+                        .root
+                        .join("actions")
+                        .join(&operation)
+                        .join("progress.json"),
+                    binding,
+                    text,
+                    model.clone(),
+                    effort.clone(),
+                    count,
+                    stop.clone(),
+                )
+                .await?;
+                atomic_json(&journal.with_file_name("team-result.json"), &result)?;
+                atomic_json(&journal, &result)?;
+                return Ok(result);
+            }
             let session = binding.session_id.clone();
             let submission = format!("task-{operation}");
             let previous_session = session.clone();
@@ -207,6 +273,7 @@ pub async fn execute(
                     previous["turnId"].as_str().unwrap_or_default().to_string(),
                 )
             } else {
+                mark()?;
                 let sent = crate::workbench::commands::submit_turn(
                     app.clone(),
                     crate::workbench::commands::SendTurnRequest {
@@ -269,6 +336,7 @@ pub async fn execute(
                 .get(profile_id)
                 .cloned()
                 .ok_or("Review profile was not prepared")?;
+            mark()?;
             let future = crate::commands::orchestration::execute(
                 operation.clone(),
                 pinned,
@@ -322,6 +390,7 @@ pub async fn execute(
             };
             let session = run.scope.session_id.clone();
             let op = operation.clone();
+            mark()?;
             let receipt=run_store(move|s| {
                 if let Some(plan_id) = plan {
                     let status = crate::workbench::research::execution_plan::status(&s,&workspace,&plan_id)?;
@@ -368,12 +437,21 @@ pub async fn execute(
         }
         Action::Deliver { input } => {
             let value = resolve(input, &run, &ready)?;
-            crate::workbench::commands::deliver_task(
-                task_binding(&run.scope)?,
-                operation.clone(),
-                value,
-            )
-            .await?
+            let source = store.clone();
+            let binding = task_binding(&run.scope)?;
+            let input = input.clone();
+            let (value, files) = tokio::task::spawn_blocking(move || {
+                super::delivery::action_files(&source, &run, &input, &value)
+                    .map(|files| (value, files))
+            })
+            .await
+            .map_err(err)??;
+            if *stop.borrow() {
+                return Err("Task stopped before delivery".into());
+            }
+            mark()?;
+            crate::workbench::commands::deliver_task(binding, operation.clone(), value, files)
+                .await?
         }
         _ => return Err("Control steps must execute in the coordinator".into()),
     };

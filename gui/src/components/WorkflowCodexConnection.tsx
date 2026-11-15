@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  workflowCodexClient,
+  type WorkflowCodexStatus,
+} from "../lib/workflowCodexClient";
 import ReportIssueLink from "./ReportIssueLink";
-
-interface Status {
-  epoch: number;
-  unresolvedAttempts?: Array<{ id: string; label: string; state: string }>;
-}
 
 /** Review-specific recovery stays separate from the shared account controls. */
 export default function WorkflowCodexConnection({
@@ -13,19 +11,20 @@ export default function WorkflowCodexConnection({
 }: {
   onStatusChange?: () => void;
 }) {
-  const [status, setStatus] = useState<Status | null>(null);
+  const [status, setStatus] = useState<WorkflowCodexStatus | null>(null);
   const [reconciliation, setReconciliation] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const identity = useRef("");
   const refresh = useCallback(async () => {
-    const next = await invoke<Status>("workflow_codex_status");
+    const next = await workflowCodexClient.status();
     setStatus(next);
   }, []);
   useEffect(() => {
     let live = true;
     const poll = () =>
-      void invoke<Status>("workflow_codex_status")
+      void workflowCodexClient
+        .status()
         .then((next) => {
           if (live) {
             setStatus(next);
@@ -87,11 +86,7 @@ export default function WorkflowCodexConnection({
                   disabled={busy}
                   onClick={() =>
                     void act(async () => {
-                      const result = await invoke<{
-                        status: string;
-                        preview: string;
-                        recordPath: string;
-                      }>("workflow_codex_reconcile_attempt", {
+                      const result = await workflowCodexClient.reconcile({
                         id: attempt.id,
                         epoch: status.epoch,
                       });
@@ -109,7 +104,7 @@ export default function WorkflowCodexConnection({
                   disabled={busy}
                   onClick={() =>
                     void act(async () => {
-                      await invoke("workflow_codex_acknowledge_attempt", {
+                      await workflowCodexClient.acknowledge({
                         id: attempt.id,
                         epoch: status.epoch,
                       });

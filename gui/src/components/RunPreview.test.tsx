@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import RunPreview from "./RunPreview";
-import type { PipelineConfig } from "../lib/types";
+import type { PipelineConfig } from "../lib/workflowTypes";
 
 const config: PipelineConfig = {
   use_orientation: true,
@@ -93,10 +93,10 @@ describe("RunPreview", () => {
     await user.click(screen.getByText("Steps and what each can read"));
     expect(details).toBeVisible();
     expect(
-      screen.getByText("Reads: Document text, visuals · Orientation map"),
+      screen.getByText("Reads: Document text, visuals · Document overview"),
     ).toBeVisible();
     expect(screen.getByText("Tools: WebSearch")).toBeVisible();
-    expect(screen.getByText("Orientation")).toBeVisible();
+    expect(screen.getByText("Document bundle preparation")).toBeVisible();
   });
 
   it("names the providers that handle orientation and specialists", () => {
@@ -122,8 +122,12 @@ describe("RunPreview", () => {
 
     const row = (label: string) =>
       screen.getByText(label).parentElement as HTMLElement;
-    expect(row("Orientation")).toHaveTextContent("ChatGPT · 1 call");
-    expect(row("Specialists")).toHaveTextContent("Claude, Gemini");
+    expect(row("Document bundle preparation")).toHaveTextContent(
+      "ChatGPT · 1–3 calls",
+    );
+    expect(row("Adaptive agents")).toHaveTextContent(
+      "Claude, Gemini · 4–12 calls",
+    );
     expect(screen.queryByText(/default provider/i)).not.toBeInTheDocument();
   });
 
@@ -289,13 +293,13 @@ describe("RunPreview", () => {
             {
               id: "extract",
               kind: "extracting",
-              label: "Creating document bundle",
+              label: "Preparing document bundle",
               stepIds: [],
             },
             {
               id: "orient",
               kind: "orienting",
-              label: "Creating orientation map & review plan",
+              label: "Choosing reviewers",
               stepIds: [],
             },
             {
@@ -330,8 +334,8 @@ describe("RunPreview", () => {
     expect(
       screen.getByText("4 steps + 2–6 specialists chosen for each document"),
     ).toBeVisible();
-    expect(screen.getByText("7–11 model calls")).toBeVisible();
-    expect(screen.getByText("Specialists")).toBeInTheDocument();
+    expect(screen.getByText("7–13 model calls")).toBeVisible();
+    expect(screen.getByText("Adaptive agents")).toBeInTheDocument();
     expect(screen.getByText(/Specialist results \(2–6\)/)).toBeInTheDocument();
     expect(
       screen.getByText(/Exposition & Architecture results/),
@@ -398,7 +402,7 @@ describe("RunPreview", () => {
     expect(
       screen.getByText("3 steps + 2–4 specialists chosen for each document"),
     ).toBeVisible();
-    expect(screen.getByText("6–8 model calls")).toBeVisible();
+    expect(screen.getByText("6–10 model calls")).toBeVisible();
     expect(screen.getByText(/2–4 calls/)).toBeInTheDocument();
   });
 });

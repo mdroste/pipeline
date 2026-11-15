@@ -3,6 +3,8 @@ use super::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+pub(crate) mod activity;
+pub(crate) mod delivery;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,15 +59,18 @@ pub fn is_task_turn(store: &Store, thread: &str, turn: &str) -> WorkbenchResult<
     store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM turns t JOIN session_bindings b ON b.id=t.binding_id WHERE b.provider_thread_id=?1 AND t.provider_turn_id=?2 AND t.client_submission_id LIKE 'task-%')",params![thread,turn],|r|r.get(0)).map_err(error)
 }
 /// Everything in the harness that decides what a turn may do. The permission
-/// profile alone is not enough: file tools follow the mode, and web search,
-/// the browser and command sites sit outside it. Research context, prompts and
+/// profile alone is not enough: file tools follow the mode, and web search
+/// and command sites sit outside it. Research context, prompts and
 /// tool descriptions are left out because they move with ordinary project
 /// activity and app updates.
 pub(super) fn access(effective: &super::research::EffectiveHarness) -> String {
-    let value = json!({"permission":effective.permission_profile,"mode":effective.mode,
+    let mut value = json!({"permission":effective.permission_profile,"mode":effective.mode,
         "fileMode":effective.file_mode,"webSearch":effective.web_search,
         "network":effective.command_network,"capabilities":effective.capabilities,
         "modules":effective.enabled_modules});
+    // Keep the saved permissions hash for schedules that never used the
+    // retired browser. Schedules that enabled it still require a refresh.
+    value["capabilities"]["browser"] = json!(false);
     super::desk::hash(value.to_string().as_bytes())
 }
 pub fn binding(store: &Store, session: &str) -> WorkbenchResult<TaskBinding> {
@@ -318,34 +323,20 @@ fn turn_text(items: Vec<String>) -> WorkbenchResult<TurnReply> {
     })
 }
 
+#[cfg(test)]
 pub fn deliver(
     store: &Store,
     session: &str,
     operation: &str,
     value: Value,
 ) -> WorkbenchResult<Value> {
-    store.session_snapshot(session)?;
-    let key = format!("task-result-{operation}");
-    let result = json!({"sessionId":session,"origin":"task","result":value});
-    if let Some(previous) = exchange(store, &key)? {
-        if previous != result {
-            return Err(WorkbenchError::conflict(
-                "Delivery operation reused with different contents",
-            ));
-        }
-        return Ok(previous);
-    }
-    if result.to_string().len() > 512 * 1024 {
-        return Err(WorkbenchError::invalid("Task delivery exceeds 512 KiB"));
-    }
-    save_exchange(store, &key, session, "result", &result)?;
-    Ok(result)
+    delivery::deliver(store, session, operation, value, Vec::new())
 }
 
 pub fn session_choices(store: &Store) -> WorkbenchResult<Vec<Value>> {
     let c = store.connection()?;
-    let mut q=c.prepare("SELECT s.id,s.title,w.name FROM sessions s LEFT JOIN workspaces w ON w.id=s.workspace_id WHERE s.archived_at IS NULL AND s.id NOT IN (SELECT session_id FROM discovery_roles) AND (w.id IS NULL OR w.archived_at IS NULL) ORDER BY s.updated_at DESC,s.id LIMIT 500").map_err(error)?;
-    let rows=q.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"workspaceName":r.get::<_,Option<String>>(2)?}))).map_err(error)?.collect::<Result<Vec<_>,_>>().map_err(error)?;
+    let mut q=c.prepare("SELECT s.id,s.title,w.name,COALESCE(json_extract(s.overrides_json,'$.runtime'),'codex') FROM sessions s LEFT JOIN workspaces w ON w.id=s.workspace_id WHERE s.archived_at IS NULL AND s.id NOT IN (SELECT session_id FROM discovery_roles) AND (w.id IS NULL OR w.archived_at IS NULL) ORDER BY s.updated_at DESC,s.id LIMIT 500").map_err(error)?;
+    let rows=q.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"workspaceName":r.get::<_,Option<String>>(2)?,"connectionId":r.get::<_,String>(3)?}))).map_err(error)?.collect::<Result<Vec<_>,_>>().map_err(error)?;
     Ok(rows)
 }
 
@@ -480,6 +471,13 @@ pub fn occurrence_session(
     binding(store, &session.id)
 }
 
+pub(crate) fn owns_occurrence(store: &Store, run: &str, session: &str) -> WorkbenchResult<bool> {
+    store.connection()?.query_row(
+        "SELECT EXISTS(SELECT 1 FROM change_log WHERE operation_id=?1 AND entity_type='session' AND entity_id=?2)",
+        rusqlite::params![format!("task-occurrence-{run}"),session], |r|r.get(0),
+    ).map_err(error)
+}
+
 /// An occurrence's conversation leaves the active lists once its run is cleared
 /// from history, unless the researcher went on to use it. Archiving is reversible.
 pub fn archive_occurrence(store: &Store, session: &str) -> WorkbenchResult<()> {
@@ -612,6 +610,19 @@ pub fn with_delivery_context(
     }
     Ok(delivered)
 }
+/// A queued row survives a crash. Only a live job owner can block replay.
+pub(crate) fn check_running(
+    store: &Store,
+    workspace: &str,
+    operation: &str,
+) -> WorkbenchResult<bool> {
+    let id: Option<String> = store.connection()?.query_row("SELECT j.execution_id FROM execution_jobs j JOIN research_executions e ON e.id=j.execution_id WHERE j.operation_id=?1 AND e.workspace_id=?2 AND e.outcome IN ('queued','running')", params![operation,workspace], |r|r.get(0)).optional().map_err(error)?;
+    match id {
+        Some(id) => super::research::jobs::execution_live(store, &id),
+        None => Ok(false),
+    }
+}
+
 /// Adopt only a terminal receipt belonging to this task operation and project.
 pub fn check_outcome(
     store: &Store,

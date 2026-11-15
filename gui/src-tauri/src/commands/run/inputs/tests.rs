@@ -60,6 +60,7 @@ async fn captured_named_input_keeps_bytes_events_and_tempfile_lifetime() {
             extra_tmps,
             runtime_extra_sources,
             extra_sources,
+            planning_inputs,
         } = capture_named_inputs(
             &bus,
             &config,
@@ -70,6 +71,8 @@ async fn captured_named_input_keeps_bytes_events_and_tempfile_lifetime() {
         )
         .await
         .unwrap();
+        assert_eq!(planning_inputs[0].key, "rubric");
+        assert_eq!(planning_inputs[0].text, text);
         assert_eq!(extra_sources, provided);
         assert_eq!(persisted_inputs["rubric"], "context/inputs/00_rubric.txt");
         let durable = run_writer

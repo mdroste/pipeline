@@ -5,7 +5,7 @@ use super::format::{
     MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ENTRY_BYTES, MAX_MANIFEST_BYTES,
 };
 use super::omissions::{
-    archived_references, make_references_portable, missing_files, missing_files_error,
+    archived_references, make_references_portable, missing_files, missing_files_error, FILE_COLUMNS,
 };
 use super::transcripts::stage_transcripts;
 use super::{conversation_files, hash_reader, now, validate_absolute_file};
@@ -268,12 +268,10 @@ pub fn export_archive_without(
         });
     }
     let old_blob_root = blob_root.to_string_lossy().into_owned();
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-        ("retained_blobs", "storage_reference"),
-    ] {
+    for (table, column) in FILE_COLUMNS
+        .into_iter()
+        .chain([("retained_blobs", "storage_reference")])
+    {
         snapshot
             .execute(
                 &format!("UPDATE {table} SET {column}=?2 || substr({column},length(?1)+1) WHERE {column} IS NOT NULL AND substr({column},1,length(?1))=?1"),
@@ -328,6 +326,11 @@ pub fn export_archive_without(
         .execute("DELETE FROM storage_trash", [])
         .map_err(|error| {
             WorkbenchError::storage("Failed to discard local trash authority", error)
+        })?;
+    snapshot
+        .execute("DELETE FROM chat_approvals", [])
+        .map_err(|error| {
+            WorkbenchError::storage("Failed to discard saved chat approvals from archive", error)
         })?;
     let portable_snapshot_path = temporary.path().join("portable-research.sqlite3");
     snapshot_database(&snapshot, &portable_snapshot_path)?;

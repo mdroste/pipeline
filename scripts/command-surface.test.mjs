@@ -6,9 +6,6 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Built at runtime from a template, so no literal name appears in the source.
-const TEMPLATED = ["workbench_shell_status", "workbench_shell_install",
-  "workbench_browser_status", "workbench_browser_install"];
 // Still registered with no caller in the interface. Remove each one, with this
 // entry, as its own reviewable change.
 const AWAITING_REMOVAL = ["workflow_codex_login_start", "workflow_codex_login_cancel"];
@@ -34,9 +31,25 @@ test("every registered backend command has a caller in the interface", () => {
   const registered = registeredCommands();
   assert.ok(registered.length > 100, "the registration list must parse");
   assert.deepEqual(
-    registered.filter((name) => !quoted.has(name) && !TEMPLATED.includes(name) && !AWAITING_REMOVAL.includes(name)),
+    registered.filter((name) => !quoted.has(name) && !AWAITING_REMOVAL.includes(name)),
     [],
   );
-  for (const name of [...TEMPLATED, ...AWAITING_REMOVAL]) assert.ok(registered.includes(name), name);
+  for (const name of AWAITING_REMOVAL) assert.ok(registered.includes(name), name);
   for (const name of AWAITING_REMOVAL) assert.ok(!quoted.has(name), `${name} has a caller again`);
+});
+
+// Only Tauri wrappers are inventoried. Headless entry points and CLI helpers
+// are ordinary Rust functions and have no Tauri attribute.
+function declaredCommands(directory) {
+  const pattern = /^\s*#\[tauri::command(?:\([^\n]*\))?\]\s*(?:#\[[^\n]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)/gm;
+  return fs.readdirSync(directory, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".rs"))
+    .flatMap((entry) => [...fs.readFileSync(path.join(entry.parentPath, entry.name), "utf8")
+      .matchAll(pattern)].map(([, name]) => name));
+}
+
+test("every Tauri command declaration has a registration", () => {
+  const registered = registeredCommands().sort();
+  const declared = declaredCommands(path.join(ROOT, "gui/src-tauri/src")).sort();
+  assert.deepEqual(declared, registered);
 });

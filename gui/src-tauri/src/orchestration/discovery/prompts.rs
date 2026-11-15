@@ -40,7 +40,7 @@ fn candidate_contract() -> Value {
         "strongestObjection":"Specific objection with inspected evidence or an explicit access limit","resolution":"Required check or reasoned reply","uncertainty":"Remaining doubt"})
 }
 fn manuscript_contract() -> Value {
-    json!({"title":"...","abstractText":"...","markdown":"Complete paper in Markdown","latex":"Complete standalone LaTeX source, not a fragment","bibliography":"BibTeX using only actual source identities; empty if no verified references",
+    json!({"centralClaims":["Central claim of this manuscript version"],"title":"...","abstractText":"...","markdown":"Complete paper in Markdown","latex":"Complete standalone LaTeX source, not a fragment","bibliography":"BibTeX using only actual source identities; empty if no verified references",
         "evidenceIds":[],"limitations":[],"responseToReview":[],"files":[]})
 }
 pub fn prompt(p: &Portfolio) -> Result<String> {
@@ -83,6 +83,9 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
             context["manuscript"] = json!({"hash":version.hash,"version":version.version,"title":version.manuscript.title,"abstract":version.manuscript.abstract_text,
                 "markdown":version.manuscript.markdown,"bibliography":version.manuscript.bibliography,"evidenceIds":version.manuscript.evidence_ids,"limitations":version.manuscript.limitations});
             if matches!(r.phase, Phase::Draft { .. } | Phase::AssessPaper { .. }) {
+                context["openObjections"] = json!(paper.challenges.last().map(|c| &c.unresolved));
+                context["claimSubjects"] = json!(version.subjects(paper));
+                context["manuscriptEvidenceId"] = json!("paper.md");
                 context["reviews"] = json!(version.reviews);
                 context["externalReview"] = json!(version.external_review);
             }
@@ -94,13 +97,22 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
             ("Identify the field(s), research genres, methods, contribution forms and appropriate evidence standards from the prompt and sources. Select only relevant subjectIds/methodIds from the existing automatic Paper Review catalog; use empty IDs plus explicit standards if a specialty is not represented. Interdisciplinary work may combine fields. Provide at least three distinct proposal lenses. Include source-access, physical experiment, ethical/institutional and computational prerequisites only when relevant; never pretend unavailable work can be performed. Literature queries must contain public topic terms, not private source excerpts or personal data.",
                 json!({"fields":["field inferred from prompt"],"subjectIds":[],"methodIds":[],"researchStandards":["appropriate standard"],"contributionForms":["appropriate contribution"],"proposalLenses":["lens 1","lens 2","lens 3"],"assumptions":[],"constraints":[],"literatureQueries":[]}))
         }
+        Phase::Brainstorm => {
+            context["requestedAgents"] = json!(r.definition.idea_agents);
+            context["requestedIdeas"] = json!(r.definition.candidate_count);
+            ("Spawn exactly requestedAgents distinct native subagents in this turn (on Claude Code, use the idea-researcher type). Give each a different lens on the topic and its own share of requestedIdeas. Use foreground agents and wait for every result. Use only the brief and supplied research material. Compare the returned questions and first tests, merge near-duplicates and fill any gaps. Return exactly requestedIdeas concise, distinct sketches, each under 800 UTF-8 bytes. A sketch should name a research question and a feasible first investigation. No invented evidence. Do not spawn replacement agents or report simulated agents.", json!({"ideas":["question and first investigation"]}))
+        }
         Phase::Generate => {
             let count=BATCH.min(r.definition.candidate_count-p.candidates.len());
             let lenses=r.orientation.as_ref().ok_or("Orientation missing")?.proposal_lenses.clone();
-            context["lens"]=json!(lenses[(p.candidates.len()/BATCH)%lenses.len()]);
+            if r.idea_seeds.is_empty() {
+                context["lens"]=json!(lenses[(p.candidates.len()/BATCH)%lenses.len()]);
+            } else {
+                context["assignedSketches"]=json!(r.idea_seeds.get(p.candidates.len()..p.candidates.len()+count).ok_or("Idea sketches missing for this proposal batch")?);
+            }
             context["exactBatchSize"]=json!(count);
             context["existingQuestions"]=json!(p.candidates.iter().map(|c|json!({"title":c.proposal.title,"question":short(&c.proposal.question,300)})).collect::<Vec<_>>());
-            ("Generate exactly exactBatchSize distinct, feasible research projects, each with a 200–400 word substantive design across its fields. Use the assigned lens and cover gaps. A proposal must state what would be learned and the cheapest discriminating investigation, not predict favorable results. Do not invent bibliographic references; missing inspected related work remains explicit. Avoid cosmetic variations of existing questions.",
+            ("Generate exactly exactBatchSize distinct, feasible research projects, each with a 200–400 word substantive design across its fields. When assignedSketches are supplied, develop one proposal per sketch in the given order. Otherwise use the assigned lens and cover gaps. A proposal must state what would be learned and the cheapest discriminating investigation, not predict favorable results. Do not invent bibliographic references; missing inspected related work remains explicit. Avoid cosmetic variations of existing questions.",
                 json!({"proposals":[{"title":"...","question":"...","contribution":"...","method":"...","firstTest":"...","requiredEvidence":["..."],"relatedWork":[],"risks":["..."]}]}))
         }
         Phase::Screen {offset} => {
@@ -130,15 +142,15 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
         Phase::Research {paper} => {
             context["round"]=json!(p.papers[paper].rounds.len()+1);
             context["maxRounds"]=json!(r.definition.research_rounds);
-            ("Conduct the next decisive investigation. Start by recording a research contract: question, assumptions, evidence standards, method, failure conditions and allowed pivots. Later rounds address the strongest remaining uncertainty. Inspect real sources and, if computation is enabled, write/run code inside this paper's isolated directory. Retain code, inputs, outputs and logs using relative files. Never read another project's files or run Stata outside this computer's required oldstata wrapper. All external data collection/physical work unavailable through existing tools must remain unavailable. Preserve null findings, failed specifications and changes after seeing results. Return a complete dossier update and exact source references from tools; a source citation is not an execution receipt. Choose draft when evidence/argument supports a paper, continue for a useful remaining investigation, or abandon when the project is infeasible. Do not spend rounds merely polishing text.",
-                json!({"contract":"...","summary":"...","claims":[],"limitations":[],"sources":[],"files":[],"next":"draft","reason":"..."}))
+            ("Conduct the next decisive investigation. Start by recording a research contract: question, assumptions, evidence standards, method, failure conditions and allowed pivots. Later rounds address the strongest remaining uncertainty. Inspect real sources and, if computation is enabled, write/run code inside this paper's isolated directory. Retain code, inputs, outputs and logs using relative files. Never read another project's files or run Stata outside this computer's required oldstata wrapper. All external data collection/physical work unavailable through existing tools must remain unavailable. Preserve null findings, failed specifications and changes after seeing results. Return a complete dossier update and exact source references from tools; a source citation is not an execution receipt. Choose draft when evidence/argument supports a paper, continue for a useful remaining investigation, or abandon when the project is infeasible. List executionIds only for existing finished project checks actually inspected. Do not spend rounds merely polishing text.",
+                json!({"contract":"...","summary":"...","claims":[],"limitations":[],"executionIds":[],"sources":[],"files":[],"next":"draft","reason":"..."}))
         }
         Phase::Challenge {..} => (
             "Independently challenge the latest investigation using the discipline's standards. Identify unsupported claims, missing controls or counterarguments, errors of interpretation, failed proof obligations, and inappropriate extrapolation. Judge progress by new evidence or argument, not repetition. Decide whether another bounded investigation is useful, the dossier supports drafting (with limitations), or the project is infeasible. Numerical examples are not general proofs; qualitative claims need appropriate source support rather than irrelevant statistical tests.",
             json!({"assessment":"...","unresolved":[],"progress":true,"next":"draft"})),
         Phase::Draft {paper} => {
             context["nextVersion"]=json!(p.papers[paper].versions.len()+1);
-            ("Write or revise a complete academic working paper in the field's appropriate structure and style, using only the retained dossier. Return Markdown, standalone LaTeX and BibTeX. The central claims, quotations, tables and figures must agree with retained evidence. State unresolved limitations in the paper. For revision, answer each material referee finding with an actual change, new evidence or reasoned rebuttal in responseToReview. If a finding requires unavailable research, retain it openly. If computation is enabled, you may write source and compile a PDF in a fresh version-specific subdirectory using an available TeX toolchain with shell escape disabled. List only actually created, relevant files, including source/code/figures and any compiled PDF. The returned LaTeX/BibTeX must equal any listed compiled source. Never fabricate PDF success or populate empirical tables with invented values. An incomplete project must be described as incomplete rather than made to look successful.",manuscript_contract())
+            ("List the centralClaims of this exact version, including unresolved conclusions, in manuscript order. Write or revise a complete academic working paper in the field's appropriate structure and style, using only the retained dossier. Return Markdown, standalone LaTeX and BibTeX. The central claims, quotations, tables and figures must agree with retained evidence. State unresolved limitations in the paper. For revision, answer each material referee finding with an actual change, new evidence or reasoned rebuttal in responseToReview. If a finding requires unavailable research, retain it openly. If computation is enabled, you may write source and compile a PDF in a fresh version-specific subdirectory using an available TeX toolchain with shell escape disabled. List only actually created, relevant files, including source/code/figures and any compiled PDF. The returned LaTeX/BibTeX must equal any listed compiled source. Never fabricate PDF success or populate empirical tables with invented values. An incomplete project must be described as incomplete rather than made to look successful.",manuscript_contract())
         }
         Phase::Review {paper} => {
             let n=p.papers[paper].versions.last().ok_or("Manuscript missing")?.reviews.len();
@@ -146,11 +158,11 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
             ("Act as an independent adversarial referee for the exact frozen manuscript. Apply the oriented subject/method standards and refereeFocus. Trace material claims to the provided evidence. For each objection identify its claim/location, evidence, severity (fatal, major, minor) and what would resolve it. Distinguish missing coverage from a defect. Do not accept the author's confidence as evidence. You have no obligation to find faults when evidence supports the claim.",json!({"summary":"...","findings":[{"claim":"...","severity":"major","evidence":"...","resolution":"..."}],"strengths":[],"limitations":[]}))
         }
         Phase::AssessPaper {..} => (
-            "Assess this final frozen paper and its evidence, then account for its referee findings/responses. Judge contribution, support, originality, completeness and remaining work. sound=false if a material central claim remains unsupported or a fatal objection is unresolved. Assess the actual work, not the ambition of its proposal. Do not infer statistical quality scores or publication probabilities. A valuable negative result can be sound. Review-disabled output still needs an honest final assessment; assessment does not retroactively become adversarial review.",
-            json!({"summary":"...","sound":true,"contribution":"...","support":"...","originality":"...","completeness":"...","remainingWork":[]})),
+            "For original input files cite input: followed by the name in inputFiles. Referee reports may be cited as referee-1, referee-2, etc., or structured-review; use role review for these secondary assessments. Copy each claimSubjects statement exactly in claimAssessments. For an openObjections item that was resolved, give its zero-based objection index, subject index, evidenceId from that claim’s inspections and explanation in objectionResponses; unanswered objections stay open. Assess this final frozen paper and its evidence, then account for its referee findings/responses. Judge contribution, support, originality, completeness and remaining work. sound=false if a material central claim remains unsupported or a fatal objection is unresolved. Assess the actual work, not the ambition of its proposal. Do not infer statistical quality scores or publication probabilities. A valuable negative result can be sound. Review-disabled output still needs an honest final assessment; assessment does not retroactively become adversarial review.",
+            json!({"objectionResponses":[],"claimAssessments":crate::orchestration::claims::example(),"summary":"...","sound":true,"contribution":"...","support":"...","originality":"...","completeness":"...","remainingWork":[]})),
         Phase::Rank => {
-            context["papers"]=json!(p.papers.iter().rev().filter_map(|p|p.assessment.as_ref().map(|a|json!({"candidateId":p.candidate_id,"title":p.versions.last().map(|v|&v.manuscript.title),"assessment":a}))).collect::<Vec<_>>());
-            ("Rank all assessed final papers using the saved priorities. Compare substantive contributions and evidence directly; proposal ranks and author histories are intentionally unavailable. Every sound paper must rank strictly above every paper with material unresolved defects. Equal ranks are allowed for close comparisons; explain uncertainty and pairwise distinctions. Include every supplied paper ID exactly once.",json!({"papers":[{"candidateId":1,"rank":1,"reason":"...","uncertainty":"..."}]}))
+            context["papers"]=json!(p.papers.iter().rev().filter_map(|p|p.assessment.as_ref().map(|a|json!({"candidateId":p.candidate_id,"title":p.versions.last().map(|v|&v.manuscript.title),"assessment":a,"evidenceRequirementsMet":p.supported()}))).collect::<Vec<_>>());
+            ("Rank all assessed final papers using the saved priorities. Compare substantive contributions and evidence directly; proposal ranks and author histories are intentionally unavailable. Papers whose evidenceRequirementsMet is true must rank strictly above the others regardless of the raw assessor verdict. Equal ranks are allowed for close comparisons; explain uncertainty and pairwise distinctions. Include every supplied paper ID exactly once.",json!({"papers":[{"candidateId":1,"rank":1,"reason":"...","uncertainty":"..."}]}))
         }
         _ => return Err("This phase does not make a model call".into()),
     };
@@ -160,12 +172,25 @@ pub fn prompt(p: &Portfolio) -> Result<String> {
             break;
         }
         for (key, value) in context.as_object_mut().ok_or("Invalid research context")? {
-            if !["manuscript", "userPrompt", "reviewCatalog"].contains(&key.as_str()) {
+            if ![
+                "manuscript",
+                "userPrompt",
+                "reviewCatalog",
+                "claimSubjects",
+                "openObjections",
+            ]
+            .contains(&key.as_str())
+            {
                 compact(value, limit);
             }
         }
     }
-    let value=format!("{BASE}\n\n{instruction}\n\nRequired JSON shape (examples are not findings):\n{contract}\n\nResearch inputs:\n{context}");
+    let inspection = if matches!(r.phase, Phase::AssessPaper { .. }) {
+        crate::orchestration::claims::INSTRUCTIONS
+    } else {
+        ""
+    };
+    let value=format!("{BASE}\n\n{instruction} {inspection}\n\nRequired JSON shape (examples are not findings):\n{contract}\n\nResearch inputs:\n{context}");
     if value.len() > 250 * 1024 {
         return Err(
             "Research context exceeds 250 KiB; retain a smaller dossier or manuscript".into(),

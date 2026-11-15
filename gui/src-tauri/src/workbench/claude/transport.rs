@@ -186,7 +186,7 @@ impl Process {
         specs: &[Value],
         turn: Option<&Turn>,
     ) -> Result<(), String> {
-        let answer = control_answer(value, specs, turn).await?;
+        let answer = control_answer(value, specs, turn, None::<&tauri::AppHandle>).await?;
         self.write(&answer).await
     }
 
@@ -223,14 +223,12 @@ async fn control_answer(
     value: &Value,
     specs: &[Value],
     turn: Option<&Turn>,
+    events: Option<&impl TurnEvents>,
 ) -> Result<Value, String> {
     let request = &value["request"];
     let response = match request["subtype"].as_str() {
         Some("mcp_message") => tools::message(request, specs, turn).await?,
-        // Only sandboxed commands are pre-approved; nothing may expand that.
-        Some("can_use_tool") => {
-            json!({"behavior":"deny","message":"Only sandboxed shell commands and Pipeline's scoped project tools are available."})
-        }
+        Some("can_use_tool") => approval::answer(value, turn.zip(events)).await?,
         _ => return Err("Claude requested an unsupported control operation".into()),
     };
     Ok(protocol::control_response(&value["request_id"], response))
@@ -326,7 +324,7 @@ pub(super) async fn drive_within(
                     // Only the tool work is host time. Claude must still read
                     // the answer within the model time.
                     let answer = clock
-                        .host(control_answer(&value, &specs, Some(turn)))
+                        .host(control_answer(&value, &specs, Some(turn), Some(app)))
                         .await
                         .ok_or(HOST_TIMEOUT)??;
                     let written = clock

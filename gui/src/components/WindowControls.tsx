@@ -7,7 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Sits above dialogs, as native caption buttons would.
 
 const BUTTON_CLASS =
-  "inline-flex h-8 w-[46px] items-center justify-center text-gray-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent dark:text-neutral-300";
+  "inline-flex h-8 w-[46px] items-center justify-center text-ink-muted transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--ui-focus)]";
 const NEUTRAL_HOVER =
   "hover:bg-black/5 active:bg-black/10 dark:hover:bg-white/10 dark:active:bg-white/15";
 const CLOSE_HOVER =

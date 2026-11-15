@@ -1,7 +1,7 @@
 import { useRef, type Dispatch, type SetStateAction } from "react";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { WorkbenchEvent } from "../lib/workbenchTypes";
+import type { WorkbenchEvent } from "../lib/workbench/runtimeTypes";
 import { reportProblem } from "./workspace/reportProblem";
 
 export default function useWorkspaceRequestResolution(

@@ -20,6 +20,12 @@ fn escaped_at(bytes: &[u8], index: usize) -> bool {
     slashes % 2 == 1
 }
 
+fn starts_amount(text: &str) -> bool {
+    let number = text.strip_prefix(['+', '-']).unwrap_or(text);
+    let number = number.strip_prefix('.').unwrap_or(number);
+    number.as_bytes().first().is_some_and(u8::is_ascii_digit)
+}
+
 fn math_close(source: &str, mut index: usize, delimiter_len: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     while index < bytes.len() {
@@ -84,7 +90,24 @@ fn protect_math_chunk(
                         && !latex.chars().next_back().is_some_and(char::is_whitespace)
                         && !latex.contains('\n')
                         && !latex.contains('`'));
-                if !latex.trim().is_empty() && valid_inline_spacing {
+                // A price followed by a dollar-denominated vintage is prose,
+                // e.g. "$1M (1996$)"; successful TeX parsing cannot identify it.
+                let currency_vintage = latex.as_bytes().first().is_some_and(u8::is_ascii_digit)
+                    && latex.rsplit_once('(').is_some_and(|(_, year)| {
+                        year.len() == 4 && year.bytes().all(|byte| byte.is_ascii_digit())
+                    });
+                // Two monetary amounts cannot delimit inline math, even
+                // when punctuation precedes the second dollar sign, as in
+                // "$90.3M ... ($59.8M)" or "$5-$8". Numeric equations such
+                // as "$2x + 1$" and "$5$" still have a genuine closing sign.
+                let currency_pair = delimiter_len == 1
+                    && starts_amount(latex)
+                    && starts_amount(&source[close + 1..]);
+                if !latex.trim().is_empty()
+                    && valid_inline_spacing
+                    && !currency_pair
+                    && !currency_vintage
+                {
                     let token = format!("{token_base}{}END", protected.len());
                     protected.push(ProtectedMath {
                         token: token.clone(),
@@ -178,6 +201,15 @@ pub(super) fn restore_source_math(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn currency_vintage_is_not_math_but_numeric_equations_are() {
+        let source = "per $1M (1996$), followed by $1+2$";
+        let (text, protected) = protect_math(source);
+        assert!(text.contains("$1M (1996$)"));
+        assert_eq!(protected.len(), 1);
+        assert_eq!(protected[0].latex, "1+2");
+    }
 
     #[test]
     fn a_backslash_before_a_multibyte_character_ends_on_a_character() {

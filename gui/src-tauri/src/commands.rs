@@ -3,32 +3,37 @@
 use crate::models::PipelineReport;
 use crate::output;
 use crate::pipeline::{executor, extract, orient, reconcile};
-use crate::pipeline_config::{self, PipelineConfig, ProfileSummary};
-use std::io::{Read, Write};
+use crate::pipeline_config;
+#[cfg(test)]
+use crate::pipeline_config::PipelineConfig;
+use std::io::Write;
 use tauri::AppHandle;
 
 pub(crate) mod artifacts;
 pub(crate) mod batch;
-pub(crate) mod config;
 pub(crate) mod export;
 mod guard;
 pub(crate) mod lifecycle;
+pub(crate) mod maintenance;
 pub(crate) mod model_roster;
 pub(crate) mod orchestration;
 mod profile_import;
+pub(crate) mod profiles;
 pub(crate) mod rerun;
 mod reuse_artifacts;
 pub(crate) mod review_pdf;
+pub(crate) mod review_setup;
 mod run;
 mod run_context;
+mod run_contract;
 pub(crate) mod run_entry;
 pub(crate) mod run_queue;
 mod run_storage;
+pub(crate) mod settings;
 mod task;
 
 pub use artifacts::*;
 pub use batch::*;
-pub use config::*;
 pub use export::*;
 pub use lifecycle::{
     await_or_cancel, cancel_pass, is_cancelled, is_pass_cancelled, is_pipeline_cancellation_error,
@@ -38,12 +43,33 @@ pub(crate) use lifecycle::{
     kill_all_children, kill_pass_children, kill_process, register_engine_child_pid,
     unregister_engine_child_pid,
 };
+pub use maintenance::{
+    cancel_engine_install, check_for_update, get_storage_settings, install_engine, list_engines,
+    open_pipeline_dir, set_storage_directory, uninstall_engine, update_install_cancel,
+    update_install_restart, update_install_start, update_install_state, update_running_automations,
+    update_set_automatic, update_status,
+};
+pub use profiles::{
+    create_profile, delete_profile, duplicate_profile, export_bundle, export_item, export_profile,
+    get_active_profile, get_pipeline_config, import_bundle, import_item, import_profile,
+    list_profiles, rename_profile, reset_pipeline_config, save_pipeline_config, switch_profile,
+};
 pub use rerun::*;
+pub use review_setup::{
+    get_auto_review_catalog, get_auto_review_orientation_defaults, get_auto_review_specialist_step,
+    get_default_parallel_template, get_default_prompt, get_execution_plan,
+    get_findings_output_schema, get_model_roster, get_orientation_defaults, get_run_setup,
+    preview_provider_schema, resolve_orientation_schema_catalogs, AutoReviewOrientationDefaults,
+    ExecutionPlanResponse, OrientationDefaults, ProviderSchemaPreview, RunSetupResponse,
+};
 pub use run_context::{ReviewLimitOverrides, ReviewModelChoice, RunModelOverrides};
 pub use run_entry::{
     check_headless_dependencies, check_headless_plan, run_headless, run_headless_batch_item,
-    run_headless_with_options, run_pipeline, validate_headless_input, HeadlessBatchSnapshot,
-    HeadlessCheckReport, HeadlessRunOptions, HeadlessWorkflow,
+    run_headless_with_options, validate_headless_input, HeadlessBatchSnapshot, HeadlessCheckReport,
+    HeadlessRunOptions, HeadlessWorkflow,
+};
+pub use settings::{
+    discard_undecryptable_secret, get_model_catalog, get_settings, save_settings, SettingsResponse,
 };
 
 pub use guard::pipeline_is_running;

@@ -3,11 +3,11 @@ import { moduleName, harnessDiagnostic } from "./harnessCopy";
 // developer instructions as labelled host-owned bands, tools, and provenance.
 
 import { memo } from "react";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 import type {
-  ConversationSnapshot,
   EffectiveHarness,
   HarnessCatalog,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/harnessTypes";
 import {
   compactAccessSummary,
   compactHash,

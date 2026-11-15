@@ -29,11 +29,11 @@ fn required_and_quorum_dependencies_block_incomplete_synthesis() {
 fn input_processing_label_matches_the_declared_input_meaning() {
     assert_eq!(
         input_processing_label("document"),
-        "Creating document bundle"
+        "Preparing document bundle"
     );
     assert_eq!(
         input_processing_label("latex_project"),
-        "Creating document bundle"
+        "Preparing document bundle"
     );
     assert_eq!(
         input_processing_label("folder"),
@@ -108,7 +108,7 @@ fn execution_plan_uses_the_runtime_readiness_scheduler() {
         "x-pipeline-contract": crate::auto_review::AUTO_REVIEW_CONTRACT
     }));
     let auto_plan = execution_plan(&auto_config).unwrap();
-    assert_eq!(auto_plan[1].label, "Creating orientation map & review plan");
+    assert_eq!(auto_plan[1].label, "Choosing reviewers");
 }
 
 #[test]
@@ -214,7 +214,7 @@ fn zero_match_fan_out_is_terminal_and_unblocks_dependent_step() {
         &steps[0],
         &settings,
         temp.path().to_str().unwrap(),
-        None,
+        &[],
         &bus
     )
     .unwrap()

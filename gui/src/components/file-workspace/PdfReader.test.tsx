@@ -544,3 +544,56 @@ it("reads a streamed PDF on demand instead of loading the whole file", async () 
     vi.unstubAllGlobals();
   }
 });
+
+it("renews an evicted captured PDF token against the same revision and releases both tokens", async () => {
+  vi.stubGlobal("__TAURI_INTERNALS__", {
+    convertFileSrc: (token: string) => token,
+  });
+  const file = {
+    path: "doc.pdf",
+    hash: "verified",
+    bytes: 1000,
+    text: null,
+    base64: null,
+    mime: "application/pdf",
+    editable: false,
+    truncated: false,
+    externalPath: null,
+    rangeCapture: true,
+  };
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({ ...file, streamToken: "old" })
+    .mockResolvedValueOnce({ ...file, streamToken: "new" });
+  const release = vi.fn();
+  const fetchMock = vi.fn(async (url: string) =>
+    url === "old"
+      ? new Response(null, { status: 410 })
+      : new Response(new Uint8Array([1, 2]), { status: 206 }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const { unmount } = render(
+      <PdfReader
+        title="Paper"
+        documentKey="captured"
+        capture={{ id: "paper", read, release }}
+      />,
+    );
+    await screen.findByText("of 2");
+    expect(fetchMock).not.toHaveBeenCalled();
+    const { range } = last(mocks.getDocument.mock.calls)[0];
+    range.requestDataRange(20, 22);
+    await waitFor(() =>
+      expect(range.onDataRange).toHaveBeenCalledWith(
+        20,
+        new Uint8Array([1, 2]),
+      ),
+    );
+    expect(release.mock.calls).toEqual([["old"]]);
+    unmount();
+    expect(release.mock.calls).toEqual([["old"], ["new"]]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

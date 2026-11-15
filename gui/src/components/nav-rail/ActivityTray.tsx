@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { QueuedRun } from "../../lib/types";
+import type { QueuedRun } from "../../lib/reviewTypes";
 import Badge from "../../ui/Badge";
 import { Icon } from "../../ui/icons";
 import Popover from "../../ui/Popover";

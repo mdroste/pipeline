@@ -7,7 +7,8 @@ import {
   unsetModelOption,
   unsetModelSummary,
 } from "./modelChoice";
-import type { ModelCatalog, Settings } from "./types";
+import type { ModelCatalog } from "./reviewModelTypes";
+import type { Settings } from "./settingsTypes";
 
 const subscription = {
   preferred_provider: "codex",

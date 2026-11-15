@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WorkflowPanel from "./WorkflowPanel";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));

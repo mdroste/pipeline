@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import type { ResearchExecution } from "../../lib/workbenchTypes";
+import type { ResearchExecution } from "../../lib/workbench/executionTypes";
 import ReportIssueLink from "../ReportIssueLink";
 
 const streams = [

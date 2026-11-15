@@ -1,4 +1,9 @@
-use super::*;
+use super::markdown::{RUN_DETAILS_END, RUN_DETAILS_START};
+use super::summary::{format_duration, render_run_summary};
+use super::{normalize_math_delimiters, report_body, status_label, status_notes, strip_to_report};
+use crate::models::PipelineReport;
+use crate::settings::Settings;
+use std::time::Duration;
 
 /// Render a PipelineReport to a markdown string.
 pub fn render_markdown(
@@ -237,7 +242,7 @@ fn render_quality_section(md: &mut String, report: &PipelineReport, status_label
         quality.recovered_assets
     ));
     md.push_str(&format!(
-        "**Orientation coverage:** {} bytes included; {} omitted.  \n",
+        "**Document reading coverage:** {} bytes included; {} omitted.  \n",
         quality.orientation_included_bytes, quality.orientation_omitted_bytes
     ));
     md.push_str(&format!(

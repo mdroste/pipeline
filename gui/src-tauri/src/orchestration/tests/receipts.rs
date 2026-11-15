@@ -24,6 +24,7 @@ fn input_signal_is_consumed_once_and_cannot_resume_cancelled_task() {
     run.progress.receipts.insert(
         "answer".into(),
         Receipt {
+            action_kind: None,
             sequence: 0,
             address: "answer".into(),
             step_id: "answer".into(),
@@ -68,6 +69,7 @@ fn store_recovery_preserves_uncertain_actions_without_replay() {
     run.progress.receipts.insert(
         "one".into(),
         Receipt {
+            action_kind: None,
             sequence: 0,
             address: "one".into(),
             step_id: "one".into(),
@@ -247,6 +249,7 @@ fn paused_active_actions_are_recovered_too() {
     r.progress.receipts.insert(
         "a".into(),
         Receipt {
+            action_kind: None,
             sequence: 0,
             address: "a".into(),
             step_id: "a".into(),
@@ -296,6 +299,7 @@ fn waiting_past_its_deadline(s: &Store) -> TaskRun {
     run.progress.receipts.insert(
         "ask".into(),
         Receipt {
+            action_kind: None,
             sequence: 1,
             address: "ask".into(),
             step_id: "ask".into(),
@@ -446,4 +450,40 @@ fn startup_recovery_survives_a_bad_record_and_marks_an_over_budget_run() {
     let recovered = s.get("over-budget").unwrap();
     assert_eq!(recovered.state, "attention");
     assert_eq!(recovered.progress.receipts["ask"].state, "unknown");
+}
+
+#[tokio::test]
+async fn corrected_snapshot_retries_with_new_text_and_preserves_producer() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open(temp.path()).unwrap();
+    let mut run = failed_attempt(&store, "failed");
+    run.chain.steps[0].action = Action::Snapshot {
+        input: output("revise", "/answer"),
+        filename: "paper.md".into(),
+        require_change: true,
+    };
+    run.progress.receipts.get_mut("action").unwrap().error =
+        Some("The revised artifact is unchanged.".into());
+    let old = adapters::snapshot(&store, &run.scope, json!("unchanged"), "paper.md").unwrap();
+    run.progress.outputs = json!({"paper":old,"revise":{"answer":"unchanged"}});
+    let papers =
+        |text: &str| std::collections::BTreeMap::from([("action".into(), text.to_string())]);
+    assert!(commands::prepare_corrections(&store, &mut run, &papers("unchanged")).is_err());
+    commands::prepare_corrections(&store, &mut run, &papers("corrected")).unwrap();
+    store.retry(&mut run).unwrap();
+    let durable = store.get(&run.id).unwrap();
+    assert_eq!(durable.progress.outputs["revise"]["answer"], "unchanged");
+    let ready = state::Ready {
+        address: "action".into(),
+        step: durable.chain.steps[0].clone(),
+        inputs: json!({}),
+        groups: vec![],
+        timeout_secs: 60,
+    };
+    let (_sender, stop) = tokio::sync::watch::channel(false);
+    let captured = adapters::execute(None, store.clone(), durable, ready, store::id(), stop)
+        .await
+        .unwrap();
+    let path = adapters::artifact_path(&store, &captured).unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "corrected");
 }

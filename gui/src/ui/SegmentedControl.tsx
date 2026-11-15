@@ -53,7 +53,7 @@ export default function SegmentedControl<T extends string = string>({
       aria-label={label}
       aria-disabled={disabled || undefined}
       onKeyDown={onKeyDown}
-      className={`inline-flex max-w-full flex-wrap gap-0.5 rounded-ui-sm bg-sunken p-0.5 ${className}`}
+      className={`ui-segmented ${className}`}
     >
       {options.map((option) => {
         const checked = option.value === value;
@@ -69,11 +69,6 @@ export default function SegmentedControl<T extends string = string>({
             onClick={() => {
               if (!checked) onChange(option.value);
             }}
-            className={`rounded-[4px] px-2.5 py-1 text-ui-label focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 ${
-              checked
-                ? "bg-raised font-medium text-ink shadow-ui-1"
-                : "text-ink-muted hover:text-ink"
-            }`}
           >
             {option.label}
           </button>

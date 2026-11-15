@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  ProjectIssueLedger,
-  ProjectsResponse,
-  RunSummary,
-} from "../lib/types";
+import { reviewCollectionClient } from "../lib/reviewCollectionClient";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { studioClient } from "../lib/studioClient";
 import type {
   BuildReceipt,
@@ -12,13 +8,12 @@ import type {
   ResponseRecord,
 } from "../lib/studioClient";
 import { taskClient } from "../lib/taskClient";
+import { listProjectReviewLinks } from "../lib/workbench/releaseClient";
 import { repositoryClient } from "../lib/repositoryClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import {
-  NO_SIGNALS,
-  underRoot,
-  type ProjectSignals,
-} from "../lib/projectOverview";
+import { NO_SIGNALS } from "../lib/project-overview/types";
+import { reviewsForProject } from "../lib/project-overview/projectPaths";
+import type { ProjectSignals } from "../lib/project-overview/types";
 
 /** A background data refresh reloads derived state only when it is older than this. */
 const FRESH_MS = 120_000;
@@ -118,7 +113,7 @@ export default function useProjectSignals({
       set("responses"),
     );
     load(async () => {
-      const tasks = await taskClient.list("session");
+      const tasks = await taskClient.projectActivity(sessions.current);
       const own = new Set(sessions.current);
       return tasks.filter((task) => task.sessionId && own.has(task.sessionId));
     }, set("automations"));
@@ -126,31 +121,29 @@ export default function useProjectSignals({
       load(() => repositoryClient.status(workspaceId), set("repository"));
     // Reviews are scoped the way the project's Reviews page scopes them: runs
     // whose input lies under the attached folder, and collections holding them.
-    if (root)
-      load(async () => {
-        const [runs, collections] = await Promise.all([
-          invoke<RunSummary[]>("list_runs"),
-          invoke<ProjectsResponse>("list_projects"),
-        ]);
-        const own = runs.filter((run) => underRoot(run.input_path, root));
-        const ids = new Set(own.map((run) => run.run_id));
-        if (live()) set("runs")(own);
-        const ledgers = await Promise.allSettled(
-          collections.projects
-            .filter((collection) =>
-              collection.run_ids.some((id) => ids.has(id)),
-            )
-            .slice(0, LEDGER_LIMIT)
-            .map((collection) =>
-              invoke<ProjectIssueLedger>("sync_project_issue_ledger", {
-                projectId: collection.id,
-              }),
-            ),
-        );
-        return ledgers.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
-        );
-      }, set("ledgers"));
+    load(async () => {
+      const [runs, collections, links] = await Promise.all([
+        reviewHistoryClient.list(),
+        reviewCollectionClient.list(),
+        listProjectReviewLinks(workspaceId),
+      ]);
+      const own = reviewsForProject(runs, root, links);
+      const ids = new Set(own.map((run) => run.run_id));
+      if (live()) set("runs")(own);
+      const ledgers = await Promise.allSettled(
+        collections.projects
+          .filter((collection) => collection.run_ids.some((id) => ids.has(id)))
+          .slice(0, LEDGER_LIMIT)
+          .map((collection) =>
+            reviewCollectionClient.syncLedger({
+              projectId: collection.id,
+            }),
+          ),
+      );
+      return ledgers.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+    }, set("ledgers"));
   }, [enabled, workspaceId, root, request, stamp]);
 
   return {

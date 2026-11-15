@@ -103,7 +103,7 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
     let artifact = r#"{"findings":[{"id":"first","title":"A"},{"id":"second","title":"B"},{"id":"third","title":"C"}]}"#;
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let units = build_units(&step, &settings, "", Some(artifact), &bus)
+    let units = build_units(&step, &settings, "", &[artifact.to_owned()], &bus)
         .unwrap()
         .units;
     // The cap bounds expansion; suffixes are deterministic by index and
@@ -126,7 +126,7 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
     );
 
     assert_eq!(
-        build_units(&step, &settings, "", Some(artifact), &bus)
+        build_units(&step, &settings, "", &[artifact.to_owned()], &bus)
             .unwrap()
             .coverage_note
             .as_deref(),
@@ -135,8 +135,41 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
         )
     );
 
+    let outputs = [
+        findings_output("auto_synthesis/claude", r#"{"findings":[{"id":"one"}]}"#),
+        findings_output("auto_synthesis/codex", r#"{"findings":[]}"#),
+    ];
+    let sources = super::super::units::source_artifacts(&outputs, "auto_synthesis");
+    assert_eq!(
+        build_units(&step, &settings, "", &sources, &bus)
+            .unwrap()
+            .units[0]
+            .display,
+        "one"
+    );
+
+    // With merging disabled, or after a merge failure, both original products
+    // remain. The global dispatch cap and its coverage note apply to their union.
+    let outputs = [
+        findings_output("auto_synthesis/claude", r#"{"findings":[{"id":"one"}]}"#),
+        findings_output(
+            "auto_synthesis/codex",
+            r#"{"findings":[{"id":"two"},{"id":"three"}]}"#,
+        ),
+    ];
+    let sources = super::super::units::source_artifacts(&outputs, "auto_synthesis");
+    let plan = build_units(&step, &settings, "", &sources, &bus).unwrap();
+    assert_eq!(
+        plan.units
+            .iter()
+            .map(|unit| unit.display.as_str())
+            .collect::<Vec<_>>(),
+        ["one", "two"]
+    );
+    assert!(plan.coverage_note.unwrap().contains("2 of 3"));
+
     // A missing upstream artifact degrades to zero units with a warning.
-    let missing = build_units(&step, &settings, "", None, &bus).unwrap().units;
+    let missing = build_units(&step, &settings, "", &[], &bus).unwrap().units;
     assert!(missing.is_empty());
 }
 

@@ -20,8 +20,7 @@ export default function useRecentProjects(page: AppPage) {
           setRecentProjects(
             [...workspaces]
               .filter((p) => !p.archivedAt)
-              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-              .slice(0, 6),
+              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
           );
       })
       .catch(() => {

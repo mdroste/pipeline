@@ -1,5 +1,5 @@
 import { isMessage, payloadText, roleFor } from "../../lib/workspaceTranscript";
-import type { ConversationSnapshot } from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 
 /**
  * What a running turn has said so far, whichever conversation is on screen. The

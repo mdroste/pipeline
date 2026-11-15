@@ -129,6 +129,22 @@ pub(crate) fn run_profile_process(
         use std::os::windows::process::CommandExt as _;
         command.creation_flags(0x08000000);
     }
+    if cancelled_executions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(execution_id)
+    {
+        return Ok(ExecutionOutput {
+            outcome: "interrupted".into(),
+            status: None,
+            stdout: vec![],
+            stderr: vec![],
+            stdout_truncated: false,
+            stderr_truncated: false,
+            wrapper_completed_after_stop: true,
+            process_started: false,
+        });
+    }
     let mut child = crate::commands::lifecycle::spawn_independent(&mut command)
         .map_err(|error| format!("Failed to start research execution: {error}"))?;
     let pid = child.id();

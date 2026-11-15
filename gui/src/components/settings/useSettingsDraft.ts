@@ -1,7 +1,7 @@
 import { settingsClient } from "../../lib/settingsClient";
 import { useState, useEffect, useRef } from "react";
 
-import type { Settings } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
 
 import { useProviderCatalogs } from "./useProviderCatalogs";
 import { workbenchErrorMessage } from "../../lib/workbenchError";

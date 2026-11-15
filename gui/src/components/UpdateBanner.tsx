@@ -1,5 +1,6 @@
+import { flushDrafts } from "../lib/flushDrafts";
 import { useEffect, useState, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { updateClient } from "../lib/updateClient";
 import { listen } from "@tauri-apps/api/event";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import ReportIssueLink from "./ReportIssueLink";
@@ -7,7 +8,7 @@ import type {
   UpdateInfo,
   UpdateInstallState,
   UpdateStatus,
-} from "../lib/types";
+} from "../lib/updateTypes";
 
 const DISMISS_KEY = "pipeline:update-dismissed-version";
 const UPDATE_AVAILABLE_EVENT = "update-available";
@@ -21,10 +22,8 @@ const IDLE: UpdateInstallState = {
   error: null,
 };
 
-const PRIMARY_BUTTON =
-  "shrink-0 px-2.5 py-1 rounded-md bg-inverse text-on-inverse text-xs font-medium hover:opacity-85 transition-opacity";
-const QUIET_BUTTON =
-  "shrink-0 px-2 py-1 text-xs text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 transition-colors";
+const PRIMARY_BUTTON = "ui-button ui-button--sm ui-button--primary shrink-0";
+const QUIET_BUTTON = "ui-button ui-button--sm shrink-0";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -83,12 +82,13 @@ export default function UpdateBanner({
       .catch(() => {})
       .then(() => {
         if (cancelled) return;
-        void invoke<UpdateInstallState>("update_install_state")
+        void updateClient
+          .installState()
           .then((saved) => {
             if (!cancelled && !heardInstall && saved) setInstall(saved);
           })
           .catch(() => {});
-        return invoke<UpdateStatus>("update_status");
+        return updateClient.status();
       })
       .then((status) => {
         if (cancelled || !status) return;
@@ -118,20 +118,21 @@ export default function UpdateBanner({
     }
   };
 
-  const runCommand = async (command: string) => {
+  const runCommand = async (command: () => Promise<void>) => {
     setActionError(null);
     try {
-      await invoke(command);
+      if (command === updateClient.restart) flushDrafts();
+      await command();
     } catch (error) {
       setActionError(message(error));
     }
   };
 
-  const startInstall = () => runCommand("update_install_start");
-  const stopInstall = () => runCommand("update_install_cancel");
+  const startInstall = () => runCommand(updateClient.startInstall);
+  const stopInstall = () => runCommand(updateClient.cancelInstall);
 
   const restart = async () => {
-    if (await confirmRestart()) await runCommand("update_install_restart");
+    if (await confirmRestart()) await runCommand(updateClient.restart);
   };
 
   const later = async () => {
@@ -150,7 +151,7 @@ export default function UpdateBanner({
   const saveAutomatic = async (enabled: boolean) => {
     setActionError(null);
     try {
-      await invoke("update_set_automatic", { enabled });
+      await updateClient.setAutomatic({ enabled });
     } catch {
       setActionError("Could not save the update setting. Try again.");
     }
@@ -294,7 +295,7 @@ export default function UpdateBanner({
   return (
     <div
       role="status"
-      className="flex items-center gap-3 px-6 py-2 bg-blue-50 dark:bg-blue-950 border-b border-blue-200 dark:border-blue-900 text-sm text-blue-800 dark:text-blue-200"
+      className="flex flex-wrap items-center gap-2 border-b border-line bg-sunken px-[var(--ui-page-gutter)] py-2 text-ui-label text-ink"
     >
       <svg
         className="w-4 h-4 shrink-0"
@@ -309,15 +310,11 @@ export default function UpdateBanner({
         />
       </svg>
       {/* A failure explains itself, so it wraps rather than being cut off. */}
-      <span
-        className={`flex-1 min-w-0 ${install.phase === "failed" ? "" : "truncate"}`}
-      >
-        {summary}
-      </span>
+      <span className={"min-w-0 flex-[1_1_12rem] break-words"}>{summary}</span>
       {actionError && (
         <span
           role="alert"
-          className="min-w-0 truncate text-xs text-red-700 dark:text-red-300"
+          className="min-w-0 break-words text-ui-meta text-danger"
         >
           {actionError}
         </span>

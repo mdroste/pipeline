@@ -1,9 +1,9 @@
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { workflowProfileClient } from "../lib/workflowProfileClient";
 import type { AppPage } from "./NavRail";
-import type { ProfileSummary } from "../lib/types";
+import type { ProfileSummary } from "../lib/workflowTypes";
 import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
 import { workspaceSections } from "../lib/workspaceNavigation";
 import PageHeader from "../ui/PageHeader";
@@ -75,7 +75,8 @@ export default function AboutPage({
 
   useEffect(() => {
     let live = true;
-    void invoke<ProfileSummary[]>("list_profiles")
+    void workflowProfileClient
+      .profiles()
       .then((profiles) => {
         if (live)
           setBuiltinProfiles(profiles.filter((profile) => profile.builtin));
@@ -94,11 +95,7 @@ export default function AboutPage({
           description="How to get set up, what each part of the app does, and where your data goes."
           action={
             showBack ? (
-              <button
-                type="button"
-                className="ui-page-button"
-                onClick={onClose}
-              >
+              <button type="button" className="ui-button" onClick={onClose}>
                 Back
               </button>
             ) : undefined
@@ -188,7 +185,7 @@ function HelpContent({
       : BUILTIN_REVIEWS;
 
   return (
-    <div className="space-y-8 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
+    <div className="space-y-8 text-ui-body leading-relaxed text-ink-muted">
       {/* Overview */}
       <p>
         Pipeline is a desktop app for academic research. Chat with an AI
@@ -255,7 +252,7 @@ function HelpContent({
         </BadgeRow>
         <BadgeRow
           badge="Included"
-          badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+          badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
           title="PDF tools"
         >
           Pipeline can show PDFs and extract their plain text with nothing else
@@ -323,7 +320,8 @@ function HelpContent({
         <p>
           A project keeps a paper, its folder, your notes, and its conversations
           together. Create one with <Label>New project</Label> under{" "}
-          <Label>Projects</Label>. Every project has six areas:
+          <Label>Projects</Label>. Choose a view below the current project’s
+          name:
         </p>
         <TermList
           items={workspaceSections.map((section) => ({
@@ -372,7 +370,7 @@ function HelpContent({
       </Section>
 
       {/* Reference sections, collapsed by default */}
-      <div className="border-t border-gray-200 dark:border-gray-800">
+      <div className="border-t border-line">
         <Collapsible title="Reviews">
           <p>
             A review design is a saved set of steps, prompts, and settings.
@@ -418,7 +416,7 @@ function HelpContent({
             }))}
           />
           <p>
-            <Label>Export</Label> saves a report as HTML or Word.{" "}
+            <Label>Export</Label> saves a report as PDF, HTML, or Word.{" "}
             <Label>Word with comments on the original</Label> and{" "}
             <Label>PDF with highlights</Label> mark each finding on a copy of
             your document.
@@ -427,8 +425,9 @@ function HelpContent({
             <Label>Shareable report</Label> removes private information and
             leaves out unverified findings, your source documents, and raw model
             responses. <Label>Complete review archive</Label> includes all of
-            them, plus the logs. <Label>Save Markdown…</Label> and{" "}
-            <Label>Print / save as PDF…</Label> are in the same menu.
+            them, plus the logs. <Label>Save Markdown…</Label>,{" "}
+            <Label>Save as PDF…</Label>, and <Label>Print…</Label> are in the
+            same menu.
           </p>
         </Collapsible>
 
@@ -475,7 +474,7 @@ function HelpContent({
           <div className="space-y-2">
             <BadgeRow
               badge="Included"
-              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
               title="LaTeX and Word"
             >
               Read directly, so equations and tables come through intact. If a
@@ -501,7 +500,7 @@ function HelpContent({
             </BadgeRow>
             <BadgeRow
               badge="Included"
-              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
               title="pdftotext"
             >
               The fastest option. It runs on your computer, flattens the layout,
@@ -545,7 +544,7 @@ function HelpContent({
             <li>
               A conversation sends your messages, recent history, and any
               material you select or an allowed tool reads to the provider you
-              chose. Papers in your Library stay on your computer until then.
+              chose. Your project’s papers stay on your computer until then.
             </li>
             <li>
               A review step sends its prompt and the material it can read to
@@ -726,7 +725,7 @@ function CheckItem({ text }: { text: string }) {
   return (
     <li className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
       <svg
-        className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0"
+        className="w-4 h-4 text-ink-muted dark:text-green-400 mt-0.5 shrink-0"
         viewBox="0 0 20 20"
         fill="currentColor"
       >
@@ -839,7 +838,7 @@ function AboutFooter() {
   };
 
   return (
-    <div className="mt-10 pt-6 border-t border-gray-200 dark:border-gray-800">
+    <div className="mt-10 pt-6 border-t border-line">
       <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
         <span className="font-medium text-gray-700 dark:text-gray-300">
           Pipeline{version ? ` v${version}` : ""}

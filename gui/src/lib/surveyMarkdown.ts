@@ -3,8 +3,9 @@
 // dedicated renderer below; the generic renderer assumes nothing about keys.
 
 import { escapeTablePipes } from "./mathMarkdown";
-import { isPaperOrientation } from "./types";
-import type { OrientationMap, PaperMetadata, PipelineReport } from "./types";
+import { isPaperOrientation } from "./reviewOrientation";
+import type { OrientationMap, PaperMetadata } from "./reviewOrientationTypes";
+import type { PipelineReport } from "./reviewTypes";
 
 function titleCase(key: string): string {
   return key
@@ -91,7 +92,7 @@ export function renderGenericSurvey(survey: unknown): string {
 function renderOrientationMap(orientation: OrientationMap): string {
   // Defensive: paper-shaped surveys may omit fields the schema defaults.
   const metadata = (orientation.metadata ?? {}) as Partial<PaperMetadata>;
-  let md = `# Orientation Map\n\n`;
+  let md = `# Document overview\n\n`;
   md += `**Title**: ${metadata.title ?? ""}  \n`;
   if (metadata.authors?.length)
     md += `**Authors**: ${metadata.authors.join(", ")}  \n`;
@@ -102,9 +103,13 @@ function renderOrientationMap(orientation: OrientationMap): string {
   if (metadata.has_online_appendix) md += `**Online appendix**: yes  \n`;
   md += `\n`;
 
+  if (orientation.document_preparation?.version === 1) {
+    md +=
+      "The inventory lists observed document structure and may be incomplete.\n\n";
+  }
   if (orientation.review_plan) {
     const plan = orientation.review_plan;
-    md += `## Detected Review Plan\n\n`;
+    md += `## Review plan\n\n`;
     if (plan.primary_domain) md += `**Domain**: ${plan.primary_domain}  \n`;
     if (plan.subject) md += `**Subject**: ${plan.subject}  \n`;
     if (plan.paper_forms?.length) {
@@ -120,7 +125,21 @@ function renderOrientationMap(orientation: OrientationMap): string {
       md += `### Selected Specialists\n\n`;
       for (const note of plan.selection_notes) {
         const label = note.id.replace(/^subject_/, "").replace(/^field_/, "");
-        md += `- **${titleCase(label)}**: ${note.reason}\n`;
+        const references = Array.isArray(note.references)
+          ? note.references.flatMap((reference) => {
+              const match =
+                typeof reference === "string" &&
+                /^(?:input:([^:]+):)?(page|text):([1-9]\d*)$/.exec(reference);
+              if (!match) return [];
+              return [
+                `${match[1] ? `${match[1]} · ` : ""}${match[2] === "page" ? "p." : "Text section"} ${match[3]}`,
+              ];
+            })
+          : [];
+        const locations = references.length
+          ? ` (${references.join(", ")})`
+          : "";
+        md += `- **${titleCase(label)}**: ${note.reason}${locations}\n`;
       }
       md += `\n`;
     } else {

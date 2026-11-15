@@ -17,7 +17,7 @@ pub(super) fn coordinator_fixture() -> (tempfile::TempDir, Arc<Coordinator>) {
     });
     (temp, manager)
 }
-async fn drive(manager: &Arc<Coordinator>, id: &str, state: &str) -> TaskRun {
+pub(super) async fn drive(manager: &Arc<Coordinator>, id: &str, state: &str) -> TaskRun {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             manager.tick().await.unwrap();
@@ -393,6 +393,7 @@ pub(super) fn finished_run(
     run.progress.receipts.insert(
         "step".into(),
         Receipt {
+            action_kind: None,
             sequence: 1,
             address: "step".into(),
             step_id: "step".into(),

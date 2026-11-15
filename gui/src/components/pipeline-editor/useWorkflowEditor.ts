@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 
-import type { PipelineConfig } from "../../lib/types";
+import type { PipelineConfig } from "../../lib/workflowTypes";
 import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
 import { workflowDraftKey } from "../../lib/workflowDraftRecovery";
 

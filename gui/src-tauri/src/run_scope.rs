@@ -35,6 +35,8 @@ pub struct RunScope {
     /// Pass keys the user cancelled in this run. The executor's retry loop
     /// checks them so a cancelled pass fails instead of retrying.
     cancelled_passes: Mutex<Vec<String>>,
+    pub(crate) allowance: std::sync::OnceLock<crate::usage_allowance::Allowance>,
+    pub(crate) dispatch_budget: Mutex<crate::pipeline::executor::budget_dispatch::DispatchBudget>,
     usage: Mutex<CallUsage>,
     pub(crate) review_budget: Mutex<Option<Arc<Mutex<crate::pipeline::review_budget::State>>>>,
     log_sink: Mutex<Option<std::fs::File>>,
@@ -195,6 +197,8 @@ impl RunScope {
             child_pids: Mutex::new(Vec::new()),
             pass_pids: Mutex::new(Vec::new()),
             cancelled_passes: Mutex::new(Vec::new()),
+            allowance: Default::default(),
+            dispatch_budget: Mutex::default(),
             usage: Mutex::new(CallUsage::default()),
             review_budget: Mutex::new(None),
             log_sink: Mutex::new(None),
@@ -340,6 +344,11 @@ impl RunScope {
     /// releases exactly this snapshot.
     pub fn freeze_settings(&self, settings: Settings) -> u64 {
         let token = SETTINGS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        *lock(&self.dispatch_budget) =
+            crate::pipeline::executor::budget_dispatch::DispatchBudget::new(
+                crate::pipeline::executor::budget::RunBudget::from_settings(&settings),
+                token,
+            );
         *lock(&self.settings) = Some((token, settings));
         token
     }
@@ -348,6 +357,7 @@ impl RunScope {
         let mut snapshot = lock(&self.settings);
         if snapshot.as_ref().map(|(t, _)| *t) == Some(token) {
             *snapshot = None;
+            *lock(&self.dispatch_budget) = Default::default();
         }
     }
 
@@ -545,7 +555,7 @@ mod tests {
         // Each entry is one Review-reachable site outside any single run.
         const OWNED_OUTSIDE_A_RUN: &[(&str, usize)] = &[
             // The launch preview runs before a run exists.
-            ("pipeline/executor/budget.rs", 1),
+            ("pipeline/executor/budget_estimate.rs", 1),
             // The shared ChatGPT connection outlives every run that uses it.
             ("pipeline/codex_server/connection.rs", 1),
             // Interrupting a dropped turn outlives its run; it reads no scope.

@@ -81,6 +81,26 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
             sha256: None,
         });
     }
+    let rendered_slides = crate::pipeline::extract::slides::SLIDE_PDF_PATH;
+    if let Some(pdf) = asset_from_file(
+        run_dir,
+        rendered_slides,
+        "document",
+        "Rendered slide deck".into(),
+        None,
+        "slide-render",
+    ) {
+        origins.push(DocumentOrigin {
+            id: "origin-rendered-slides".into(),
+            kind: "pdf".into(),
+            path: run_dir.join(rendered_slides).to_string_lossy().into_owned(),
+            role: "visual-companion".into(),
+            sha256: Some(crate::pipeline::extract::compute_hash(
+                &run_dir.join(rendered_slides),
+            )?),
+        });
+        assets.push(pdf);
+    }
     let mut bundle = DocumentBundle {
         schema_version: DOCUMENT_BUNDLE_SCHEMA_VERSION.to_string(),
         bundle_id: format!("doc-{}", extraction.paper_hash),
@@ -127,6 +147,7 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
     }
     if kind == "latex" {
         add_tex_nodes(&mut bundle, &extraction.text, &extraction.method);
+        beamer::add_frames(&mut bundle, &extraction.text);
     } else if kind == "docx" {
         let parsed = parse_docx(Path::new(&extraction.source_path))?;
         bundle
@@ -173,6 +194,9 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
             );
             bundle.nodes.push(equation);
         }
+    }
+    if kind == "pptx" {
+        added_artifacts.extend(pptx::add_media(&mut bundle, run_dir)?);
     }
     bundle.validate()?;
     Ok(BundleBuild {

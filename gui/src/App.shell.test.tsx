@@ -32,7 +32,10 @@ const { reset } = createAppTestFixture(mocks, appearance);
 async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
 }) {
-  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  const expand = screen.queryByRole("button", {
+    name: "Reviews",
+    expanded: false,
+  });
   if (expand) await user.click(expand);
 }
 
@@ -156,7 +159,7 @@ describe("App shell", () => {
       render(<App />);
       const bar = screen.getByTestId("window-title-bar");
       const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
-      expect(bar).toHaveClass(height, "shrink-0", "bg-gray-100/90", "border-b");
+      expect(bar).toHaveClass(height, "shrink-0", "border-b");
       expect(bar.parentElement).toHaveClass("flex-col");
       expect(bar.contains(toggle)).toBe(true);
       if (isMac || isWindows) {

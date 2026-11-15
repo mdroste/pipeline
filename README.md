@@ -11,15 +11,6 @@ Pipeline is a desktop app for academic research. Use it to review a paper,
 work on a research project with an AI assistant, or automate a sequence of
 writing and review tasks.
 
-- **Reviews** ask several AI reviewers to assess a paper, slide deck, or grant
-  proposal, then combine and check their comments. You can read each
-  reviewer's response and the source material behind the report.
-- **Projects** keep manuscripts, sources, conversations, results, and review
-  comments together. Work with your connected AI provider to read, write, and
-  analyze your material.
-- **Automations** connect these. For example, draft a paper, review it, and
-  revise it up to a limit you choose, once or on a schedule.
-
 [Download](https://github.com/mdroste/pipeline/releases/latest) ·
 [User guides](docs/README.md) · [Changelog](CHANGELOG.md) ·
 [Privacy](PRIVACY.md) · [Contributing](.github/CONTRIBUTING.md)
@@ -27,17 +18,9 @@ writing and review tasks.
 ## Install
 
 Download the installer for your computer from
-[Releases](https://github.com/mdroste/pipeline/releases/latest). Each
-installer comes with a SHA-256 checksum.
+[Releases](https://github.com/mdroste/pipeline/releases/latest).
 
-macOS releases are signed and notarized. Windows releases are signed by
-**Michael Droste**. SmartScreen may still warn you about a new release. If you
-downloaded it from this repository's release page, choose **More info → Run
-anyway**.
-
-The app includes the Poppler PDF tools, and you don't need Python. Pipeline
-checks for new releases and lets you decide when to install them. See
-[Support](.github/SUPPORT.md) for system requirements.
+See [Support](.github/SUPPORT.md) for system requirements.
 
 On first launch, a short **Get started** guide shows which connections are
 ready and finds research tools on your computer, such as Stata, R, and
@@ -57,7 +40,7 @@ Open **Settings → Connections** and set up at least one connection.
 Choose the connection in the conversation’s **Model and thinking** picker.
 Reviews and conversations list the thinking levels available for each model.
 API and local connections can use project and research tools, web search,
-and browser interaction. See [conversation setup](docs/connections.md#api-conversations)
+and public page reading. See [conversation setup](docs/connections.md#api-conversations)
 for model requirements and the optional command engine.
 
 Reviews support **Web search** with every connection. Enable it on individual
@@ -133,10 +116,9 @@ Uninstalling the app leaves your research data in place. See
 - In Edit conversations, Pipeline prepares a separate copy of your project.
   Use **Review edits** to accept or discard changes; accepted changes can be undone.
   Large projects may need a smaller selection of files or **Direct edits**.
-- Searching the web, giving commands internet access, and letting the assistant
-  operate a browser are separate choices in
+- Searching the web and giving commands internet access are separate choices in
   **Assistant settings → Manage agent profiles… → Access & inheritance**. Pipeline
-  downloads command and browser software when needed. Web search needs no browser.
+  downloads command software when needed. Web search needs no additional software.
 - API and local models can run general commands on macOS, or Linux with
   `bubblewrap` and `socat`. On Windows, these models can run research commands you
   configure, but cannot run general commands. Claude Code needs Windows

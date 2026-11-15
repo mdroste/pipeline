@@ -1,0 +1,141 @@
+/* Setup uses the full page width. Only the active section grows; the preview
+   stays reachable when long research text or expanded tool lists need space. */
+.mission-builder {
+  min-width: 0;
+  container-type: inline-size;
+}
+.tasks-page .mission-builder-heading {
+  margin-bottom: 0.875rem;
+  align-items: center;
+}
+.tasks-page .mission-builder-heading h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+.mission-builder-heading h2:focus {
+  outline: none;
+}
+.mission-builder-heading button {
+  flex-shrink: 0;
+}
+.mission-builder .mission-fields {
+  gap: 0.875rem;
+}
+.mission-builder-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 0.875rem;
+}
+.mission-builder-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.875rem;
+  align-items: stretch;
+}
+.mission-builder-card {
+  min-width: 0;
+  padding: 0.875rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+.mission-builder-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.tasks-page .mission-builder label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin: 0;
+  min-width: 0;
+}
+.tasks-page .mission-builder input:not([type="checkbox"]),
+.tasks-page .mission-builder select,
+.tasks-page .mission-builder textarea {
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  line-height: 1.55;
+}
+.tasks-page .mission-builder select {
+  text-overflow: ellipsis;
+}
+.tasks-page .mission-builder p,
+.tasks-page .mission-builder h3 {
+  margin: 0;
+}
+.mission-builder label .task-muted {
+  font-weight: 400;
+}
+.tasks-page .mission-builder-criteria {
+  flex: 1;
+}
+.mission-builder-criteria textarea {
+  flex: 1;
+}
+.mission-builder .mission-budget-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 1rem;
+  gap: 1rem;
+  align-items: end;
+}
+.tasks-page .mission-builder .mission-check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.625rem;
+}
+.mission-builder-path {
+  overflow-wrap: anywhere;
+}
+.tasks-page .mission-builder details {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--ui-border);
+}
+.mission-builder summary {
+  padding: 0.625rem 0;
+}
+.mission-builder summary span {
+  float: right;
+  margin-left: 0.5rem;
+  font-size: 0.6875rem;
+  color: var(--ui-muted);
+}
+.tasks-page .mission-builder details label {
+  margin: 0.5rem 0;
+}
+.mission-builder-status {
+  min-width: 0;
+}
+.tasks-page .mission-builder-footer .task-error {
+  margin-bottom: 0.5rem;
+}
+.tasks-page .mission-builder-footer > button {
+  flex-shrink: 0;
+  min-height: 2.75rem;
+  font-weight: 600;
+}
+@container (max-width: 42rem) {
+  .mission-builder-context {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mission-builder-context > label:first-child {
+    grid-column: 1 / -1;
+  }
+  .mission-builder .mission-budget-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 34rem) {
+  .mission-builder-columns,
+  .mission-builder-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tasks-page .mission-builder-heading {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+}

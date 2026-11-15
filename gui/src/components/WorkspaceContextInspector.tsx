@@ -1,7 +1,9 @@
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 import { useEffect, useState } from "react";
 import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { EffectiveHarness } from "../lib/workbenchTypes";
+import type { EffectiveHarness } from "../lib/workbench/harnessTypes";
 import Spinner from "../ui/Spinner";
 import ReportIssueLink from "./ReportIssueLink";
 
@@ -46,17 +48,17 @@ export default function WorkspaceContextInspector({
     >
       <div className="workspace-inspector-heading">
         <h2>What the assistant sees</h2>
-        <button type="button" onClick={onClose} aria-label="Close inspector">
-          ×
-        </button>
+        <IconButton onClick={onClose} label="Close inspector">
+          <Icon name="close" />
+        </IconButton>
       </div>
       <p>{workspaceName ?? "Unfiled conversation"}</p>
       {!sessionId ? (
-        <p className="text-xs text-gray-500">
+        <p className="text-ui-meta text-ink-muted">
           Start a conversation to inspect its context.
         </p>
       ) : error ? (
-        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+        <p role="alert" className="text-ui-label text-danger">
           {error}
           <ReportIssueLink />
         </p>
@@ -93,7 +95,7 @@ export default function WorkspaceContextInspector({
               {harness.contextTruncated ? " (truncated to budget)" : ""}
             </h3>
             {harness.contextPreview ? (
-              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-2 font-mono text-[0.6875rem] leading-4 text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-ui-sm border border-line bg-sunken p-2 font-mono text-ui-meta leading-relaxed text-ink">
                 {harness.contextPreview}
               </pre>
             ) : (

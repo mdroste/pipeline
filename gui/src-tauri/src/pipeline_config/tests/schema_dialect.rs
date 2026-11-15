@@ -58,9 +58,9 @@ fn the_reference_preview_is_what_the_structure_view_shows() {
     let fixture = fixture();
     let reference = &fixture["reference"];
     assert!(reference["schema"].get(SCHEMA_REFERENCE_KEY).is_some());
-    let preview = tauri::async_runtime::block_on(crate::commands::config::preview_provider_schema(
-        reference["schema"].clone(),
-    ))
+    let preview = tauri::async_runtime::block_on(
+        crate::commands::review_setup::preview_provider_schema(reference["schema"].clone()),
+    )
     .unwrap();
     assert_eq!(preview.projected, reference["projected"]);
 }

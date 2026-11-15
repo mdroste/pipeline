@@ -4,7 +4,7 @@
 // follows it ("US$ and A$", against `Smith$^{1}$`). Inner spaces alone cannot
 // decide this, because PDF extraction writes real math as `$ ^{*} $`, and math
 // may wrap within a paragraph.
-const DOLLAR_MATH_SOURCE = String.raw`(?<![\\$])\$(?!\$)(?!(?<=[A-Za-z0-9/]\$)(?:\s(?![\^_\\{])|[).,;:\]]))(?!\d(?:\\.|[^$\\])*(?:\s\$|\$\d))(?:\\.|[^$\\])+\$`;
+const DOLLAR_MATH_SOURCE = String.raw`(?<![\\$])\$(?!\$)(?!\d[^$\n]*\(\d{4}\$)(?!(?<=[A-Za-z0-9/^]\$)(?:\s(?![\^_\\{])|[).,;:\]]))(?!\d(?:\\.|[^$\\])*(?:\s\$|\$\d))(?:\\.|[^$\\])+\$`;
 const DOLLAR_MATH_AT = new RegExp(DOLLAR_MATH_SOURCE, "y");
 const PLAIN_TEXT_MATH_RE = new RegExp(
   String.raw`\$\$[\s\S]*?\$\$|` + DOLLAR_MATH_SOURCE,
@@ -454,8 +454,11 @@ const ASCII_PUNCTUATION_RE = /[!-/:-@[-`{-~]/g;
  * are text to Markdown, so a title cannot turn into a list or emphasis. A bare
  * URL still becomes a link, which `InlineMathText` renders as text.
  */
-export function mathOnlyMarkdown(text: string): string | null {
-  if (text.search(MATH_SPAN_RE) < 0) return null;
+export function mathOnlyMarkdown(
+  text: string,
+  repairBareMath = false,
+): string | null {
+  if (text.search(MATH_SPAN_RE) < 0 && !repairBareMath) return null;
   return normalizeMathDelimiters(
     mapMathSpans(
       text,

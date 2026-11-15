@@ -1,4 +1,7 @@
-import type { HarnessModule, HarnessPreset } from "../../lib/workbenchTypes";
+import type {
+  HarnessModule,
+  HarnessPreset,
+} from "../../lib/workbench/harnessTypes";
 
 // Display aliases only: the backend metadata is part of saved harness
 // fingerprints and must remain unchanged when interface wording changes.

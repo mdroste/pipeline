@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPage from "./HistoryPage";
-import type { RunSummary } from "../lib/types";
+import type { RunSummary } from "../lib/reviewTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -64,6 +64,7 @@ describe("HistoryPage", () => {
 
     await screen.findByText("one.pdf");
     expect(screen.queryByText("degraded")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     const filter = screen.getByRole("combobox", { name: "Filter by status" });
     expect(
       within(filter).queryByRole("option", { name: "degraded" }),
@@ -316,6 +317,7 @@ describe("HistoryPage", () => {
     expect(await screen.findByText("Page 1 of 2")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByText("Page 2 of 2")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Filter by status" }),
       "partial",
@@ -325,6 +327,14 @@ describe("HistoryPage", () => {
       "codex",
     );
     expect(screen.getByText("5 matching")).toBeVisible();
+    const calls = invoke.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Filters (2)" }));
+    expect(
+      screen.queryByRole("combobox", { name: "Filter by status" }),
+    ).toBeNull();
+    expect(screen.getByText("Status: partial")).toBeVisible();
+    expect(screen.getByText("Provider: codex")).toBeVisible();
+    expect(invoke.mock.calls).toHaveLength(calls);
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Sort reports" }),
       "name",
@@ -356,7 +366,7 @@ describe("HistoryPage", () => {
 
     expect(await screen.findByText("Live review")).toBeVisible();
     expect(screen.getByText("running", { selector: "span" })).toHaveClass(
-      "bg-blue-100",
+      "ui-status--running",
     );
     expect(
       screen.queryByRole("button", { name: "Live review" }),
@@ -375,6 +385,7 @@ describe("HistoryPage", () => {
     expect(
       screen.getByLabelText("More actions for Finished review"),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Filters" }));
     expect(screen.getByRole("option", { name: "running" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Compare" }));
@@ -433,7 +444,7 @@ describe("HistoryPage", () => {
 
     list().scrollTop = 300;
     await user.type(
-      screen.getByRole("textbox", { name: "Filter report history" }),
+      screen.getByRole("searchbox", { name: "Filter report history" }),
       "Report",
     );
     expect(list().scrollTop).toBe(0);

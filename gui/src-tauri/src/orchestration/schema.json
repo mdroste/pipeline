@@ -21,6 +21,7 @@
     "limits": {
       "type": "object",
       "properties": {
+        "maxApiCostCents": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
         "maxActions": {
           "type": "integer",
           "minimum": 1,

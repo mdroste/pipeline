@@ -38,6 +38,7 @@ export function useAppController() {
     enqueueRerun,
     cancel: cancelRun,
     dismiss: dismissRuns,
+    retryResult,
   } = usePipeline();
   const setup = useReviewSetup();
   const navigation = useAppNavigation();
@@ -166,6 +167,8 @@ export function useAppController() {
       state,
       runQueue,
       selectedRun,
+      resultError: selectedView?.resultError ?? null,
+      retryResult,
       seenRuns,
       runningReviews,
       continueRunKey,

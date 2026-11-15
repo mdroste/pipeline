@@ -1,5 +1,7 @@
 //! Lazy persistent App Server ownership and qualified thread operations.
 
+mod thread_contract;
+
 use super::process::write_runtime_config;
 #[cfg(test)]
 use super::transport::AppServerClient;
@@ -9,6 +11,7 @@ use super::wire::InitializeResult;
 use super::wire::NormalizedEvent;
 use crate::agent_runtime::codex::invocation::{NativeThreadStart, TextTurnStart};
 use crate::agent_runtime::codex::session::{same_existing_path as same_path, NativeSession};
+use crate::agent_runtime::codex::wire::required_string;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -16,6 +19,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
+use thread_contract::{
+    approval_settings, parse_thread_connection, same_roots, validate_thread_contract,
+};
 use tokio::sync::{broadcast, Mutex};
 
 const MAX_TURN_TEXT_BYTES: usize = 2 * 1024 * 1024;
@@ -45,6 +51,8 @@ pub struct StartThreadRequest {
     pub cwd: String,
     pub runtime_workspace_roots: Vec<String>,
     pub permissions: String,
+    #[serde(skip)]
+    pub(crate) approval_mode: super::super::chat_approval::Mode,
     pub developer_instructions: String,
     #[serde(default)]
     pub base_instructions: Option<String>,
@@ -294,6 +302,7 @@ impl AppServerSupervisor {
         let expected_cwd = request.cwd.clone();
         let expected_roots = request.runtime_workspace_roots.clone();
         let expected_permissions = request.permissions.clone();
+        let approval = approval_settings(&expected_permissions, request.approval_mode);
         let expected_model = request.model.clone();
         let result = self
             .native
@@ -302,7 +311,8 @@ impl AppServerSupervisor {
                 cwd: Path::new(&request.cwd),
                 runtime_workspace_roots: &request.runtime_workspace_roots,
                 permissions: &request.permissions,
-                approval_policy: approval_policy(&expected_permissions),
+                approval_policy: approval.policy,
+                approvals_reviewer: approval.reviewer,
                 developer_instructions: Some(&request.developer_instructions),
                 base_instructions: request.base_instructions.as_deref(),
                 dynamic_tools: &request.dynamic_tools,
@@ -319,6 +329,7 @@ impl AppServerSupervisor {
             Some(&expected_cwd),
             &expected_roots,
             &expected_permissions,
+            approval,
             expected_model.as_deref(),
         )?;
         Ok(connection)
@@ -333,207 +344,23 @@ impl AppServerSupervisor {
             .contains(thread_id)
     }
 
-    /// Runs one bounded, tool-free turn in an ephemeral thread and returns the
-    /// final assistant text. Server requests are declined and the turn is
-    /// interrupted, so a side call can never wait on the user.
-    pub async fn run_side_turn(&self, request: SideTurnRequest) -> Result<String, RequestError> {
-        // Side calls own a separate process. Their teardown must never interrupt
-        // the foreground conversation, even on an ambiguous acknowledgement.
-        let account = self.account.as_ref().ok_or_else(|| {
-            RequestError::unavailable("A managed account is required for a side turn")
-        })?;
-        let home = tempfile::tempdir().map_err(|e| RequestError::unavailable(e.to_string()))?;
-        let mut side = Self::launch_with_codex_home(self.epoch, home.path().join("codex")).await?;
-        account
-            .attach(&side.native.client)
-            .await
-            .map_err(RequestError::unavailable)?;
-        side.account = Some(account.clone());
-        side.projection_enabled = false;
-        side.run_owned_side_turn(request, Some(home)).await
-    }
-
-    async fn run_owned_side_turn(
-        &self,
-        request: SideTurnRequest,
-        home: Option<tempfile::TempDir>,
-    ) -> Result<String, RequestError> {
-        if request.text.is_empty() || request.text.len() > MAX_SIDE_TURN_TEXT_BYTES {
-            return Err(RequestError::invalid(format!(
-                "Side turn text must contain 1 to {MAX_SIDE_TURN_TEXT_BYTES} bytes"
-            )));
-        }
-        let mut account_use = SideAccountUse {
-            permit: self.account_lease().await?,
-            native: self.native.clone(),
-            completed: false,
-            submitted: false,
-            home,
-        };
-        let mut events = self.native.client.subscribe();
-        let connection = self
-            .start_thread_unbound(
-                StartThreadRequest {
-                    workbench_session_id: "side-turn".to_string(),
-                    base_instructions: None,
-                    cwd: request.cwd.clone(),
-                    runtime_workspace_roots: vec![request.cwd],
-                    permissions: request.permissions,
-                    developer_instructions: request.developer_instructions,
-                    model: request.model.clone(),
-                    effort: request.effort.clone(),
-                    dynamic_tools: Vec::new(),
-                    config: Some(json!({"web_search":"disabled"})),
-                },
-                true,
-            )
-            .await?;
-        let thread_id = connection.thread_id;
-        let _registration = SideThreadRegistration::register(&self.side_threads, &thread_id);
-        account_use.submitted = true;
-        let result = self
-            .native
-            .client
-            .start_text_turn(TextTurnStart {
-                thread_id: &thread_id,
-                text: &request.text,
-                client_user_message_id: None,
-                model: request.model.as_deref(),
-                effort: request.effort.as_deref(),
-                output_schema: None,
-            })
-            .await?;
-        let turn_id = required_string(&result, &["turn", "id"], "turn/start response")?;
-        let collected = tokio::time::timeout(
-            request.timeout,
-            self.collect_side_turn(&mut events, &thread_id, &turn_id),
-        )
-        .await;
-        match collected {
-            Ok(Ok(text)) => {
-                account_use.completed = true;
-                Ok(text)
-            }
-            Ok(Err(error)) => Err(error),
-            Err(_) => {
-                let _ = self.interrupt_turn(&thread_id, &turn_id).await;
-                Err(RequestError::unavailable(
-                    "The side call did not finish within its time budget",
-                ))
-            }
-        }
-    }
-
-    async fn collect_side_turn(
-        &self,
-        events: &mut broadcast::Receiver<NormalizedEvent>,
-        thread_id: &str,
-        turn_id: &str,
-    ) -> Result<String, RequestError> {
-        let mut streamed = String::new();
-        let mut final_text: Option<String> = None;
-        let mut lagged = false;
-        loop {
-            match events.recv().await {
-                Ok(NormalizedEvent::ConnectionClosed { reason, .. }) => {
-                    return Err(RequestError::unavailable(format!(
-                        "Workspace connection closed during the side call: {reason}"
-                    )));
-                }
-                Ok(NormalizedEvent::ServerRequest {
-                    request_id, params, ..
-                }) if params.get("threadId").and_then(Value::as_str) == Some(thread_id) => {
-                    let _ = self
-                        .native
-                        .client
-                        .respond_to_server_request(
-                            request_id,
-                            Err(RequestError::invalid(
-                                "Side calls cannot request approvals or input",
-                            )),
-                        )
-                        .await;
-                    let _ = self.interrupt_turn(thread_id, turn_id).await;
-                    return Err(RequestError::unavailable(
-                        "The side call tried to use a tool and was stopped",
-                    ));
-                }
-                Ok(event) => {
-                    if event_thread_id(&event) != Some(thread_id) {
-                        continue;
-                    }
-                    match event {
-                        NormalizedEvent::AgentMessageDelta { delta, .. } => {
-                            streamed.push_str(&delta)
-                        }
-                        NormalizedEvent::ItemCompleted {
-                            item_kind, item, ..
-                        } if item_kind == "agentMessage" => {
-                            if let Some(text) = item.get("text").and_then(Value::as_str) {
-                                final_text = Some(text.to_string());
-                            }
-                        }
-                        NormalizedEvent::TurnCompleted {
-                            turn_id: completed,
-                            status,
-                            turn,
-                            ..
-                        } if completed == turn_id => {
-                            if status != "completed" {
-                                return Err(RequestError::unavailable(format!(
-                                    "The side call ended with status {status}"
-                                )));
-                            }
-                            if final_text.is_none() {
-                                final_text = last_agent_message(&turn);
-                            }
-                            if final_text.is_none() && lagged {
-                                if let Ok(snapshot) = self.read_thread(thread_id).await {
-                                    final_text = snapshot
-                                        .get("thread")
-                                        .and_then(|thread| thread.get("turns"))
-                                        .and_then(Value::as_array)
-                                        .and_then(|turns| {
-                                            turns.iter().rev().find_map(last_agent_message)
-                                        });
-                                }
-                            }
-                            let text = final_text.unwrap_or(streamed);
-                            if text.trim().is_empty() {
-                                return Err(RequestError::unavailable(
-                                    "The side call returned no assistant text",
-                                ));
-                            }
-                            return Ok(text);
-                        }
-                        _ => {}
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => lagged = true,
-                Err(broadcast::error::RecvError::Closed) => {
-                    return Err(RequestError::unavailable(
-                        "Workspace event stream closed during the side call",
-                    ));
-                }
-            }
-        }
-    }
-
     /// Reopens a bound thread at the project's current folder. `None` means
     /// the thread can't continue here, so the caller must move to a successor:
     /// Codex kept it at another folder, as it does for a thread it already has
     /// loaded, or holds no history for it, as after a first send that never
     /// became a turn. A folder or history problem is settled before anything
     /// is sent, so moving on can't repeat a message.
-    pub async fn resume_thread(
+    pub(crate) async fn resume_thread(
         &self,
         workbench_session_id: &str,
         thread_id: &str,
-        permissions: &str,
+        access: (&str, super::super::chat_approval::Mode),
         cwd: &str,
         runtime_workspace_roots: Vec<String>,
         config: Option<Value>,
     ) -> Result<Option<ThreadConnection>, RequestError> {
+        let (permissions, mode) = access;
+        let approval = approval_settings(permissions, mode);
         validate_identifier("Workbench session id", workbench_session_id)?;
         validate_identifier("thread id", thread_id)?;
         validate_identifier("permissions profile", permissions)?;
@@ -547,6 +374,8 @@ impl AppServerSupervisor {
                 json!({
                     "threadId": thread_id,
                     "permissions": permissions,
+                    "approvalPolicy": approval.policy,
+                    "approvalsReviewer": approval.reviewer,
                     "cwd": cwd,
                     "runtimeWorkspaceRoots": runtime_workspace_roots,
                     "modelProvider": "openai",
@@ -568,7 +397,14 @@ impl AppServerSupervisor {
         {
             return Ok(None);
         }
-        validate_thread_contract(&connection, Some(cwd), &expected_roots, permissions, None)?;
+        validate_thread_contract(
+            &connection,
+            Some(cwd),
+            &expected_roots,
+            permissions,
+            approval,
+            None,
+        )?;
         if self.projection_enabled {
             let binding = bind_session_projection(
                 workbench_session_id.to_string(),
@@ -699,6 +535,18 @@ impl AppServerSupervisor {
         self.native
             .client
             .respond_to_server_request(request_id, result)
+            .await
+    }
+
+    pub(crate) async fn respond_after_claim(
+        &self,
+        request_id: Value,
+        result: Result<Value, RequestError>,
+        claim: impl FnOnce() -> Result<(), RequestError>,
+    ) -> Result<(), RequestError> {
+        self.native
+            .client
+            .respond_after_claim(request_id, result, claim)
             .await
     }
 
@@ -945,115 +793,10 @@ fn validate_identifier(label: &str, value: &str) -> Result<(), RequestError> {
     Ok(())
 }
 
-fn parse_thread_connection(value: Value) -> Result<ThreadConnection, RequestError> {
-    let thread_id = required_string(&value, &["thread", "id"], "thread response")?;
-    let provider_session_id = required_string(&value, &["thread", "sessionId"], "thread response")?;
-    let model = required_string(&value, &["model"], "thread response")?;
-    let model_provider = required_string(&value, &["modelProvider"], "thread response")?;
-    let cwd = required_string(&value, &["cwd"], "thread response")?;
-    let instruction_sources = string_array(&value, "instructionSources")?;
-    let runtime_workspace_roots = string_array(&value, "runtimeWorkspaceRoots")?;
-    let active_permission_profile = value
-        .get("activePermissionProfile")
-        .and_then(|profile| profile.get("id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let approval_policy = value
-        .get("approvalPolicy")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let approvals_reviewer = value
-        .get("approvalsReviewer")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok(ThreadConnection {
-        workbench_binding_id: None,
-        thread_id,
-        provider_session_id,
-        model,
-        model_provider,
-        cwd,
-        instruction_sources,
-        runtime_workspace_roots,
-        active_permission_profile,
-        approval_policy,
-        approvals_reviewer,
-    })
-}
-
-fn approval_policy(permissions: &str) -> &'static str {
-    if matches!(permissions, "discovery-inspect" | "discovery-edit") {
-        "never"
-    } else {
-        "untrusted"
-    }
-}
-
 /// Codex's definite answer that it holds nothing to resume. A timeout or a
 /// dropped connection says nothing about the thread and stays an error.
 fn has_no_history(error: &RequestError) -> bool {
     error.rpc_code == Some(-32600) && error.message.contains("no rollout found")
-}
-
-fn same_roots(connection: &ThreadConnection, expected_roots: &[String]) -> bool {
-    connection.runtime_workspace_roots.len() == expected_roots.len()
-        && expected_roots.iter().all(|expected| {
-            connection
-                .runtime_workspace_roots
-                .iter()
-                .any(|actual| same_path(Path::new(actual), Path::new(expected)))
-        })
-}
-
-fn validate_thread_contract(
-    connection: &ThreadConnection,
-    expected_cwd: Option<&str>,
-    expected_roots: &[String],
-    expected_permissions: &str,
-    expected_model: Option<&str>,
-) -> Result<(), RequestError> {
-    if connection.model_provider != "openai" {
-        return Err(RequestError::unavailable(
-            "Codex App Server did not honor Workspace's OpenAI-only provider boundary",
-        ));
-    }
-    let cwd_matches = expected_cwd
-        .map(|expected| same_path(Path::new(&connection.cwd), Path::new(expected)))
-        .unwrap_or_else(|| {
-            expected_roots
-                .iter()
-                .any(|root| same_path(Path::new(&connection.cwd), Path::new(root)))
-        });
-    if !cwd_matches {
-        return Err(RequestError::unavailable(
-            "Codex App Server did not honor the requested Workspace working directory",
-        ));
-    }
-    if !same_roots(connection, expected_roots) {
-        return Err(RequestError::unavailable(
-            "Codex App Server did not honor the requested Workspace filesystem roots",
-        ));
-    }
-    if connection.active_permission_profile.as_deref() != Some(expected_permissions) {
-        return Err(RequestError::unavailable(format!(
-            "Codex App Server did not activate Workspace permission profile {expected_permissions}"
-        )));
-    }
-    if connection.approval_policy.as_deref() != Some(approval_policy(expected_permissions))
-        || connection.approvals_reviewer.as_deref() != Some("user")
-    {
-        return Err(RequestError::unavailable(
-            "Codex App Server did not preserve Workspace's approval policy",
-        ));
-    }
-    if let Some(expected_model) = expected_model {
-        if connection.model != expected_model {
-            return Err(RequestError::unavailable(
-                "Codex App Server substituted a different model despite fallback being disabled",
-            ));
-        }
-    }
-    Ok(())
 }
 
 async fn bind_session_projection(
@@ -1137,21 +880,6 @@ pub(crate) fn event_thread_id(event: &NormalizedEvent) -> Option<&str> {
     }
 }
 
-fn required_string(value: &Value, path: &[&str], context: &str) -> Result<String, RequestError> {
-    let mut cursor = value;
-    for key in path {
-        cursor = cursor.get(key).ok_or_else(|| {
-            RequestError::unavailable(format!("{context} omitted {}", path.join(".")))
-        })?;
-    }
-    cursor.as_str().map(str::to_string).ok_or_else(|| {
-        RequestError::unavailable(format!(
-            "{context} field {} was not a string",
-            path.join(".")
-        ))
-    })
-}
-
 fn string_array(value: &Value, key: &str) -> Result<Vec<String>, RequestError> {
     let values = value
         .get(key)
@@ -1168,6 +896,8 @@ fn string_array(value: &Value, key: &str) -> Result<Vec<String>, RequestError> {
         .collect()
 }
 
+mod idea_team;
+mod side_turn;
 #[cfg(test)]
 mod tests;
 mod turns;

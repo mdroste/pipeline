@@ -10,9 +10,9 @@ import WorkspaceIcon from "./WorkspaceIcon";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
-  ReviewHandoff,
   Workspace,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
+import type { ReviewHandoff } from "../lib/workbench/releaseTypes";
 
 export default function WorkspaceResearchPanel({
   snapshot,
@@ -153,7 +153,7 @@ export default function WorkspaceResearchPanel({
             </button>
           }
         >
-          <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">
+          <p className="mt-1 truncate text-ui-meta text-ink-muted">
             {tab === "setup"
               ? (effective?.preset.name ?? "Loading assistant settings…")
               : workspace?.name}
@@ -161,7 +161,7 @@ export default function WorkspaceResearchPanel({
         </SidebarHeader>
       )}
       {(!allowedTabs || allowedTabs.length > 1) && (
-        <div className="workspace-research-tabs flex shrink-0 flex-wrap gap-1 border-b border-gray-200 px-5 pb-4 dark:border-gray-800">
+        <div className="workspace-research-tabs ui-segmented mx-4 mb-2 shrink-0 self-start">
           {tabs
             .filter(([id]) => !allowedTabs || allowedTabs.includes(id))
             .map(([id, label]) => (
@@ -170,7 +170,6 @@ export default function WorkspaceResearchPanel({
                 type="button"
                 aria-pressed={tab === id}
                 onClick={() => setTab(id)}
-                className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${tab === id ? "bg-gray-100 text-gray-950 dark:bg-gray-800 dark:text-gray-100" : "text-gray-500 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100"}`}
               >
                 {label}
               </button>

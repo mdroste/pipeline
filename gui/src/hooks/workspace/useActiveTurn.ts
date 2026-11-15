@@ -1,5 +1,8 @@
 import { useCallback, useRef, useState } from "react";
-import type { ActiveTurn, WorkbenchEvent } from "../../lib/workbenchTypes";
+import type {
+  ActiveTurn,
+  WorkbenchEvent,
+} from "../../lib/workbench/runtimeTypes";
 
 /** Events after which the host's running turn may have changed. */
 const TURN_EVENTS = new Set([

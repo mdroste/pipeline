@@ -18,6 +18,32 @@ pub struct MergeConfig {
     pub agents: Vec<String>,
 }
 
+impl MergeConfig {
+    /// Workflow-pinned providers use their own default; inherited providers
+    /// use the Merge stage exception. Execution, roster and price preview
+    /// must agree on all three values.
+    pub fn call_policy(
+        &self,
+        settings: &crate::settings::Settings,
+    ) -> (String, crate::settings::ModelSelection, String) {
+        if let Some(provider) = self.agents.first() {
+            return (
+                provider.clone(),
+                settings.model_selection(provider),
+                settings.model_effort(provider).into(),
+            );
+        }
+        let provider = settings.merge_agent();
+        (
+            provider.into(),
+            settings
+                .merge_model_selection(provider)
+                .unwrap_or_else(|| settings.model_selection(provider)),
+            settings.merge_effort(provider),
+        )
+    }
+}
+
 /// Combined config returned to callers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {

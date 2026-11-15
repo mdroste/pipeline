@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Workspace } from "../lib/workbenchTypes";
+import type { Workspace } from "../lib/workbench/sessionTypes";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import Button from "../ui/Button";

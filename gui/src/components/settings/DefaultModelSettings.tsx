@@ -11,7 +11,8 @@ import {
   withDefaultConnection,
   type Provider,
 } from "../../lib/providers";
-import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
+import type { DepsReport, Settings } from "../../lib/settingsTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 import { SectionHeader, selectClass } from "./controls";
 
 const labelClass =

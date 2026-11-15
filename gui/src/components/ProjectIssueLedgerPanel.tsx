@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { reportExportClient } from "../lib/reportExportClient";
+import { reviewCollectionClient } from "../lib/reviewCollectionClient";
 import { confirmDialog } from "./DialogService";
 import type {
   Project,
@@ -8,8 +9,8 @@ import type {
   ProjectIssueLedger,
   ProjectIssueOccurrence,
   ProjectIssueStatus,
-  RunSummary,
-} from "../lib/types";
+} from "../lib/reviewCollectionTypes";
+import type { RunSummary } from "../lib/reviewTypes";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
@@ -214,10 +215,9 @@ export default function ProjectIssueLedgerPanel({
     setLoading(true);
     setError(null);
     try {
-      const next = await invoke<ProjectIssueLedger>(
-        "sync_project_issue_ledger",
-        { projectId: project.id },
-      );
+      const next = await reviewCollectionClient.syncLedger({
+        projectId: project.id,
+      });
       if (isCurrent()) installLedger(next);
     } catch (caught) {
       if (isCurrent())
@@ -344,7 +344,7 @@ export default function ProjectIssueLedgerPanel({
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      const updated = await invoke<ProjectIssueLedger>("update_project_issue", {
+      const updated = await reviewCollectionClient.updateIssue({
         projectId: project.id,
         issueId: issue.id,
         status,
@@ -379,7 +379,7 @@ export default function ProjectIssueLedgerPanel({
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      const merged = await invoke<ProjectIssueLedger>("merge_project_issues", {
+      const merged = await reviewCollectionClient.mergeIssues({
         projectId: project.id,
         sourceIssueId: issue.id,
         targetIssueId,
@@ -414,7 +414,7 @@ export default function ProjectIssueLedgerPanel({
       }-issues.md`;
       // The backend runs the native save dialog and writes only to the
       // user-chosen path; the webview never supplies a filesystem path.
-      await invoke("save_text_file", {
+      await reportExportClient.saveText({
         content: exportLedger(project, visibleIssues),
         suggestedName,
       });
@@ -440,7 +440,7 @@ export default function ProjectIssueLedgerPanel({
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Findings across reviews
           </h2>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-ink-muted">
             Track related findings across reports. Pipeline links clear matches
             and keeps your decisions. A finding stays open when a later report
             omits it, until you mark it addressed.
@@ -501,7 +501,7 @@ export default function ProjectIssueLedgerPanel({
               }
               className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${statusFilter === status ? "border-gray-500 ring-1 ring-gray-400" : "border-gray-200 dark:border-gray-800"}`}
             >
-              <span className="block text-[0.625rem] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span className="block text-[0.625rem] font-medium uppercase tracking-wide text-ink-muted">
                 {status}
               </span>
               <span className="mt-1 block text-xl font-semibold text-gray-950 dark:text-gray-50">
@@ -610,12 +610,12 @@ export default function ProjectIssueLedgerPanel({
                       {issue.status}
                     </span>
                     {issue.severity && (
-                      <span className="text-[0.625rem] font-medium uppercase text-gray-500 dark:text-gray-400">
+                      <span className="text-[0.625rem] font-medium uppercase text-ink-muted">
                         {issue.severity}
                       </span>
                     )}
                     {issue.section && (
-                      <span className="truncate text-[0.6875rem] text-gray-500 dark:text-gray-400">
+                      <span className="truncate text-[0.6875rem] text-ink-muted">
                         {issue.section}
                       </span>
                     )}
@@ -623,7 +623,7 @@ export default function ProjectIssueLedgerPanel({
                   <h3 className="mt-1.5 text-sm font-medium text-gray-950 dark:text-gray-50">
                     {issue.title}
                   </h3>
-                  <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+                  <p className="mt-1 text-[0.6875rem] text-ink-muted">
                     {issue.occurrences.length} observation
                     {issue.occurrences.length === 1 ? "" : "s"} · first{" "}
                     {formatDate(issueFirstObserved(issue))} · last{" "}
@@ -702,7 +702,7 @@ export default function ProjectIssueLedgerPanel({
                           <option value="regressed">Regressed</option>
                         </select>
                       </label>
-                      <p className="text-[0.625rem] leading-4 text-gray-500 dark:text-gray-400">
+                      <p className="text-[0.625rem] leading-4 text-ink-muted">
                         {issue.decision_updated
                           ? `Collection decision updated ${formatDate(issue.decision_updated, true)}.`
                           : "Based on your accept, reject, and done choices in the reports."}
@@ -751,7 +751,7 @@ export default function ProjectIssueLedgerPanel({
                   </div>
 
                   <div className="mt-5 space-y-3">
-                    <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-ink-muted">
                       Report observations
                     </h4>
                     {[...issue.occurrences].reverse().map((occurrence) => {
@@ -766,7 +766,7 @@ export default function ProjectIssueLedgerPanel({
                               <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">
                                 {occurrenceLabel(occurrence, run)}
                               </p>
-                              <p className="mt-0.5 text-[0.625rem] text-gray-500 dark:text-gray-400">
+                              <p className="mt-0.5 text-[0.625rem] text-ink-muted">
                                 {formatDate(occurrence.observed_at, true)} ·{" "}
                                 {occurrence.profile_name} ·{" "}
                                 {occurrence.step_label}
@@ -789,7 +789,7 @@ export default function ProjectIssueLedgerPanel({
                             </p>
                           )}
                           {occurrence.annotation_status && (
-                            <p className="mt-2 text-[0.625rem] text-gray-500 dark:text-gray-400">
+                            <p className="mt-2 text-[0.625rem] text-ink-muted">
                               Report annotation: {occurrence.annotation_status}
                               {occurrence.annotation_note
                                 ? ` — ${occurrence.annotation_note}`
@@ -843,7 +843,7 @@ export default function ProjectIssueLedgerPanel({
                 ? "No issues match these filters."
                 : "No structured issues were found in this collection’s reports."}
             </p>
-            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">
+            <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-ink-muted">
               Findings appear here when a review saves them as individual items.
               Reports containing only prose do not add items to this list.
             </p>

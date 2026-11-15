@@ -1,10 +1,8 @@
 import WorkspaceReleasePanel from "../WorkspaceReleasePanel";
 import { compactHash } from "./format";
 import type { useResearchPanelController } from "./useResearchPanelController";
-import type {
-  ConversationSnapshot,
-  ReviewHandoff,
-} from "../../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
+import type { ReviewHandoff } from "../../lib/workbench/releaseTypes";
 
 type Panel = ReturnType<typeof useResearchPanelController>;
 type Props = Pick<

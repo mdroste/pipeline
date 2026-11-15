@@ -97,6 +97,14 @@ impl RunWriter {
                     return stop(added);
                 }
                 let path = entry.path();
+                // These host receipts survive checkpoint cleanup and never
+                // consume or compete for the model-output retention allowance.
+                if subdir == "artifacts"
+                    && d == self.dir.join("artifacts")
+                    && entry.file_name() == "step-receipts"
+                {
+                    continue;
+                }
                 let Ok(ft) = entry.file_type() else { continue };
                 if ft.is_symlink() {
                     if !policy.delete_excess {

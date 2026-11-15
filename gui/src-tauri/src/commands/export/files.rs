@@ -17,14 +17,22 @@ fn safe_export_relative_path(relative: &str) -> Result<std::path::PathBuf, Strin
 }
 
 pub(in crate::commands) fn copy_export_file(
-    source_root: &std::path::Path,
+    source_root: &crate::safety::ReadRoot,
     destination_root: &std::path::Path,
     relative: &str,
+    expected: Option<&crate::runs::ArtifactEntry>,
+    remaining: &mut u64,
 ) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Write};
     let relative = safe_export_relative_path(relative)?;
-    let source = source_root.join(&relative);
-    let mut input = crate::safety::open_regular_file(&source)
+    let mut input = source_root
+        .open_regular(&relative)
         .map_err(|error| format!("Could not export '{}': {error}", relative.display()))?;
+    let size = input.metadata().map_err(|error| error.to_string())?.len();
+    if size > *remaining || expected.is_some_and(|entry| entry.bytes != size) {
+        return Err("Artifact size changed or exceeds the export limit".into());
+    }
     let target = destination_root.join(&relative);
     let parent = target
         .parent()
@@ -36,9 +44,64 @@ pub(in crate::commands) fn copy_export_file(
         .write(true)
         .open(&target)
         .map_err(|error| format!("Could not create '{}': {error}", target.display()))?;
-    std::io::copy(&mut input, &mut output)
-        .map_err(|error| format!("Could not copy '{}': {error}", relative.display()))?;
+    let mut digest = Sha256::new();
+    let mut bytes = 0;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = input.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        bytes += n as u64;
+        if bytes > size {
+            return Err("Artifact grew during export".into());
+        }
+        digest.update(&buffer[..n]);
+        output.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+    }
+    let hash = format!("{:x}", digest.finalize());
+    if bytes != size
+        || expected.is_some_and(|entry| entry.sha256 != hash[..16] && entry.sha256 != hash)
+    {
+        return Err(format!(
+            "Artifact changed since capture: {}",
+            relative.display()
+        ));
+    }
+    *remaining -= bytes;
     Ok(())
+}
+
+/// Preserve accepted report sizes, but never follow links, block on a special
+/// file, or keep reading bytes appended beyond the opened file's initial size.
+pub(super) fn read_export_text(
+    root: &crate::safety::ReadRoot,
+    relative: &str,
+    limit: usize,
+) -> Result<String, String> {
+    use std::io::Read as _;
+    let mut file = root
+        .open_regular(&safe_export_relative_path(relative)?)
+        .map_err(|error| format!("Could not read '{relative}': {error}"))?;
+    let size = file.metadata().map_err(|error| error.to_string())?.len();
+    if size > limit as u64 {
+        return Err("Run artifact exceeds the read limit".into());
+    }
+    let capacity =
+        usize::try_from(size).map_err(|_| format!("'{relative}' is too large to read"))?;
+    let mut text = String::new();
+    text.try_reserve_exact(capacity)
+        .map_err(|_| format!("Not enough memory to read '{relative}'"))?;
+    (&mut file)
+        .take(size.saturating_add(1))
+        .read_to_string(&mut text)
+        .map_err(|error| format!("Could not read '{relative}': {error}"))?;
+    if text.len() as u64 != size
+        || file.metadata().map_err(|error| error.to_string())?.len() != size
+    {
+        return Err(format!("Run artifact '{relative}' changed during export"));
+    }
+    Ok(text)
 }
 
 pub(in crate::commands) fn write_export_json(
@@ -111,6 +174,7 @@ pub(in crate::commands) fn copy_export_tree(
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(u64, u64), String> {
+    let root = crate::safety::ReadRoot::open(source).map_err(|error| error.to_string())?;
     let mut pending = vec![(source.to_path_buf(), destination.to_path_buf())];
     let mut file_count = 0u64;
     let mut directory_count = 1usize;
@@ -162,7 +226,14 @@ pub(in crate::commands) fn copy_export_tree(
                     "Run export exceeds the {MAX_RUN_EXPORT_FILES}-file safety limit"
                 ));
             }
-            let mut input = crate::safety::open_regular_file(&entry.path())?;
+            let mut input = root
+                .open_regular(
+                    entry
+                        .path()
+                        .strip_prefix(source)
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| format!("Could not open run artifact: {error}"))?;
             let size = input
                 .metadata()
                 .map_err(|error| format!("Failed to inspect run artifact: {error}"))?
@@ -197,4 +268,44 @@ pub(in crate::commands) fn copy_export_tree(
         }
     }
     Ok((file_count, total_bytes))
+}
+
+#[cfg(all(test, unix))]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn custom_copy_rejects_redirected_parents_and_modified_content() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("x"), "outside").unwrap();
+        std::os::unix::fs::symlink(outside.path(), source.path().join("context")).unwrap();
+        let mut remaining = 1024;
+        assert!(copy_export_file(
+            &crate::safety::ReadRoot::open(source.path()).unwrap(),
+            target.path(),
+            "context/x",
+            None,
+            &mut remaining
+        )
+        .is_err());
+        assert!(!target.path().join("context/x").exists());
+        let entry = crate::runs::ArtifactEntry {
+            rel_path: "x".into(),
+            bytes: 3,
+            sha256: "ba7816bf8f01cfea".into(),
+            kind: String::new(),
+            group: String::new(),
+            label: String::new(),
+        };
+        std::fs::write(source.path().join("x"), "xyz").unwrap();
+        assert!(copy_export_file(
+            &crate::safety::ReadRoot::open(source.path()).unwrap(),
+            target.path(),
+            "x",
+            Some(&entry),
+            &mut remaining
+        )
+        .is_err());
+    }
 }

@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import NavRail, { NAV_RAIL_WIDTH } from "./NavRail";
 import { NavRailSlotProvider, useNavRailSlot } from "./nav-rail/navRailSlot";
 import { queuedRun } from "../test/queuedRunFixture";
-import type { QueuedRun } from "../lib/types";
+import type { QueuedRun } from "../lib/reviewTypes";
 
 // Times relative to now so the rail's relative labels are stable.
 function run(
@@ -119,12 +119,16 @@ describe("NavRail", () => {
     expect(screen.queryByRole("button", { name: "Conversations" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("project-index");
-    await user.click(screen.getByRole("button", { name: "All automations" }));
+    await user.click(screen.getByRole("button", { name: "Automations" }));
     expect(props.onNavigate).toHaveBeenCalledWith("tasks");
-    await user.click(screen.getByRole("button", { name: "Reviews" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("history");
+    const reviewsToggle = screen.getByRole("button", {
+      name: "Reviews",
+      expanded: false,
+    });
+    await user.click(reviewsToggle);
+    expect(reviewsToggle).toHaveAttribute("aria-expanded", "true");
+    expect(props.onNavigate).toHaveBeenCalledTimes(2);
 
-    await expand(user, "Reviews");
     const reviews = within(screen.getByRole("group", { name: "Reviews" }));
     await user.click(reviews.getByRole("button", { name: "Designer" }));
     expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
@@ -169,12 +173,13 @@ describe("NavRail", () => {
     rerender(<NavRail {...railProps({ activePage: "home" })} />);
     expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
 
-    await expand(user, "Reviews");
+    const reviews = screen.getByRole("button", { name: "Reviews" });
+    await user.click(reviews);
     rerender(<NavRail {...railProps({ activePage: "tasks" })} />);
     expect(screen.getByRole("button", { name: "Designer" })).toBeVisible();
 
     // Closing a section by hand does not stop a later visit from opening it.
-    await user.click(screen.getByRole("button", { name: "Collapse Reviews" }));
+    await user.click(reviews);
     expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
     rerender(<NavRail {...railProps({ activePage: "history" })} />);
     await waitFor(() =>
@@ -373,10 +378,10 @@ describe("NavRail", () => {
       name: "Resize primary navigation",
     });
 
-    expect(divider).toHaveAttribute("aria-valuenow", "240");
+    expect(divider).toHaveAttribute("aria-valuenow", "216");
     await user.click(divider);
     await user.keyboard("{ArrowRight}");
-    expect(props.onResize).toHaveBeenCalledWith(248);
+    expect(props.onResize).toHaveBeenCalledWith(224);
   });
 
   it("keeps every destination as an icon, with sections in a flyout", async () => {
@@ -389,6 +394,8 @@ describe("NavRail", () => {
 
     await user.click(screen.getByRole("button", { name: "Reviews" }));
     const flyout = within(screen.getByRole("dialog", { name: "Reviews" }));
+    expect(flyout.queryByRole("button", { name: "Open" })).toBeNull();
+    expect(props.onNavigate).toHaveBeenCalledOnce();
     await user.click(flyout.getByRole("button", { name: "History" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
     expect(screen.queryByRole("dialog", { name: "Reviews" })).toBeNull();

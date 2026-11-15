@@ -26,7 +26,7 @@ import {
 
 import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
 import WaveDiagram from "./WaveDiagram";
-import type { PipelineConfig } from "../lib/types";
+import type { PipelineConfig } from "../lib/workflowTypes";
 
 interface Props {
   onClose: () => void;

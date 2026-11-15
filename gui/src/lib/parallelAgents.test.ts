@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { workflowParallelAgents } from "./parallelAgents";
-import type { PipelineConfig, Settings, StepConfig } from "./types";
+import type { PipelineConfig, StepConfig } from "./workflowTypes";
+import type { Settings } from "./settingsTypes";
 
 const settings = {
   preferred_provider: "claude",

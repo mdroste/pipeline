@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vitest";
 import WorkspaceRailNavigation from "./WorkspaceRailNavigation";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
+import type {
+  WorkbenchSession,
+  Workspace,
+} from "../lib/workbench/sessionTypes";
 
 const project = (id: string, name: string, extra: Partial<Workspace> = {}) =>
   ({

@@ -1,10 +1,7 @@
 import ResearchTablePreview from "./ResearchTablePreview";
 import { fileLanguage, highlightedSource } from "../lib/fileLanguages";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
-import {
-  readCapturedPdf,
-  workspaceFileAdapter,
-} from "../lib/fileWorkspaceClient";
+import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import type { FileLocation } from "../lib/fileLinks";
 import "./file-workspace/files.css";
 const PdfReader = lazy(() => import("./file-workspace/PdfReader"));
@@ -469,7 +466,7 @@ export default function WorkspaceDocumentReader({
                   title={view.title}
                   position={pdfPosition}
                   onPosition={(value) => setPage(value.page)}
-                  load={() => readCapturedPdf(adapter)}
+                  capture={adapter}
                   highlight={
                     selection?.page && selection.region
                       ? {

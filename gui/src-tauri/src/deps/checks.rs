@@ -220,7 +220,7 @@ fn document_path_may_need_pdf(path: &str) -> bool {
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            ["tex", "docx", "md", "markdown", "txt"]
+            ["tex", "docx", "pptx", "md", "markdown", "txt"]
                 .iter()
                 .any(|kind| extension.eq_ignore_ascii_case(kind))
         })

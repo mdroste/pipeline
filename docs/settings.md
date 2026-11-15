@@ -26,7 +26,7 @@ override them, and a running review keeps the settings it started with.
 
 Choose each conversation’s provider, model, and thinking level in its
 **Model and thinking** picker. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
-file access, including browser and command setup. See
+file access, including command setup. See
 [Conversation access](connections.md#conversation-access).
 
 ## Default model
@@ -51,6 +51,13 @@ By default, Pipeline follows your system theme, uses 100% text size and
 comfortable spacing, and shows the editor in a 13-pixel font without
 wrapping. You can also adjust the open editor or report without changing the
 default.
+
+**Spacing** adjusts the room between controls and sections. Control labels
+keep the same text size in **Comfortable** and **Compact**. Use
+**Interface text size** to enlarge both text and spacing.
+
+Drag the sidebar's right edge to adjust its width. Pipeline remembers the
+width you choose. Double-click the edge to restore the compact default width.
 
 Enter sends a message. If you prefer, choose Command+Enter on macOS or
 Ctrl+Enter on Windows and Linux.
@@ -80,8 +87,7 @@ results, reviews, annotations, saved workflows, automations, and their logs.
 Your manuscripts and datasets stay in your own project folders.
 
 Some files always stay in `~/.pipeline/` on this computer: device settings,
-API keys, provider sign-ins, installed parsers, the conversation browser and
-its sign-ins, the command engine, and caches.
+API keys, provider sign-ins, installed parsers and caches.
 
 **Choosing a folder doesn't move your existing data.** To get back to earlier
 work, choose the previous folder and restart. To move projects and

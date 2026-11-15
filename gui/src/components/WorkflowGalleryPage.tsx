@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import { workflowProfileClient } from "../lib/workflowProfileClient";
+import { workflowSchemaClient } from "../lib/workflowSchemaClient";
+import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
 import { router } from "../lib/router";
 import {
   cloneGalleryConfig,
@@ -40,7 +41,8 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<ProfileSummary[]>("list_profiles")
+    workflowProfileClient
+      .profiles()
       .then(setProfiles)
       .catch((caught) =>
         setError(caught instanceof Error ? caught.message : String(caught)),
@@ -64,21 +66,20 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
     let created: ProfileSummary | null = null;
     try {
       const name = uniqueProfileName(item.name, profiles);
-      created = await invoke<ProfileSummary>("create_profile", { name });
+      created = await workflowProfileClient.create({ name });
       const config = cloneGalleryConfig(item);
       if (!config.orientation_schema) {
         const surveyName =
           config.extraction?.input_mode === "folder"
             ? "orientation_folder"
             : "orientation";
-        const defaults = await invoke<{ schema: Record<string, unknown> }>(
-          "get_orientation_defaults",
-          { name: surveyName },
-        );
+        const defaults = await workflowSchemaClient.orientationDefaults({
+          name: surveyName,
+        });
         config.orientation_schema = defaults.schema;
       }
-      await invoke("save_pipeline_config", { config, profileId: created.id });
-      const activeConfig = await invoke<PipelineConfig>("switch_profile", {
+      await workflowProfileClient.save({ config, profileId: created.id });
+      const activeConfig = await workflowProfileClient.switch({
         id: created.id,
       });
       setProfiles((current) => [...current, created!]);
@@ -86,9 +87,9 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
       onInstalled(activeConfig);
     } catch (caught) {
       if (created) {
-        await invoke("delete_profile", { id: created.id }).catch(
-          () => undefined,
-        );
+        await workflowProfileClient
+          .remove({ id: created.id })
+          .catch(() => undefined);
       }
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -104,10 +105,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
       />
 
       {error && (
-        <div
-          role="alert"
-          className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
-        >
+        <div role="alert" className="mb-6 ui-notice ui-notice--error">
           Workflow installation failed: {error}
           <ReportIssueLink />
         </div>
@@ -123,7 +121,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
           <button
             type="button"
             onClick={() => void router.navigate({ page: "pipeline" })}
-            className="shrink-0 rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
+            className="shrink-0 rounded-md border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunken dark:bg-transparent dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
           >
             Open in the designer
           </button>
@@ -163,7 +161,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
             >
               <div className="flex items-start gap-4">
                 <div className="min-w-0 flex-1">
-                  <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-ink-muted">
                     {item.category}
                   </span>
                   <h2
@@ -185,22 +183,18 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
                   <dt className="font-medium text-gray-900 dark:text-gray-200">
                     Inputs
                   </dt>
-                  <dd className="mt-0.5 text-gray-500 dark:text-gray-400">
-                    {item.inputs}
-                  </dd>
+                  <dd className="mt-0.5 text-ink-muted">{item.inputs}</dd>
                 </div>
                 <div>
                   <dt className="font-medium text-gray-900 dark:text-gray-200">
                     Produces
                   </dt>
-                  <dd className="mt-0.5 text-gray-500 dark:text-gray-400">
-                    {item.outcome}
-                  </dd>
+                  <dd className="mt-0.5 text-ink-muted">{item.outcome}</dd>
                 </div>
               </dl>
               <div className="mt-auto flex items-center gap-3 pt-6">
                 {previouslyInstalled && (
-                  <span className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.6875rem] text-ink-muted">
                     Installed locally
                   </span>
                 )}

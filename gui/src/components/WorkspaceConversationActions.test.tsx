@@ -8,7 +8,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
+import type {
+  WorkbenchSession,
+  Workspace,
+} from "../lib/workbench/sessionTypes";
 import {
   ConversationMenu,
   MoveConversationDialog,

@@ -1,27 +1,38 @@
 /** Status dot with the app-wide attention vocabulary:
  * running = accent (blue in light, gray in dark), needs-you = amber,
  * ok = emerald, error = red. */
+export type StatusTone = "running" | "attention" | "ok" | "error" | "idle";
+const tones: Record<StatusTone, string> = {
+  running: "ui-status--running",
+  attention: "ui-status--attention",
+  ok: "ui-status--ok",
+  error: "ui-status--error",
+  idle: "ui-status--idle",
+};
+
 export default function Badge({
   kind,
   label,
+  showLabel = false,
+  className = "",
 }: {
-  kind: "running" | "attention" | "ok" | "error" | "idle";
+  kind: StatusTone;
   label: string;
+  /** Runtime owners supply the label and tone; this component owns no state. */
+  showLabel?: boolean;
+  className?: string;
 }) {
-  const color =
-    kind === "running"
-      ? "bg-blue-500"
-      : kind === "attention"
-        ? "bg-amber-500"
-        : kind === "ok"
-          ? "bg-emerald-500"
-          : kind === "error"
-            ? "bg-red-500"
-            : "bg-gray-400";
+  if (showLabel)
+    return (
+      <span className={`ui-status ${tones[kind]} ${className}`}>
+        <i aria-hidden="true" className="ui-status-dot" />
+        {label}
+      </span>
+    );
   return (
     <span
       aria-label={label}
-      className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${color}`}
+      className={`ui-status-dot ${tones[kind]} ${className}`}
     />
   );
 }

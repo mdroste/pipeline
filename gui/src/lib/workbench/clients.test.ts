@@ -6,9 +6,9 @@ import { harnessClient } from "./harnessClient";
 import { researchClient } from "./researchClient";
 import { executionClient } from "./executionClient";
 import { recipeClient } from "./recipeClient";
-import { releaseClient } from "./releaseClient";
+import { listProjectReviewLinks, releaseClient } from "./releaseClient";
 import { runtimeClient } from "./runtimeClient";
-import { isSessionSnapshot, type SessionSnapshot } from "../workbenchTypes";
+import type { SessionSnapshot } from "./sessionTypes";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -18,29 +18,8 @@ describe("Workbench DTO boundary", () => {
 
   it("accepts the shared Rust/TypeScript snapshot fixture", () => {
     const snapshot = snapshotFixture satisfies SessionSnapshot;
-    expect(isSessionSnapshot(snapshot)).toBe(true);
     expect(snapshot.session.workspaceId).toBe(snapshot.workspace?.id);
     expect(snapshot.session.overrides.reasoningEffort).toBe("high");
-  });
-
-  it("accepts unfiled snapshots and rejects cross-workspace snapshots", () => {
-    expect(isSessionSnapshot(null)).toBe(false);
-    expect(
-      isSessionSnapshot({
-        ...snapshotFixture,
-        workspace: null,
-        session: { ...snapshotFixture.session, workspaceId: null },
-      }),
-    ).toBe(true);
-    expect(
-      isSessionSnapshot({
-        ...snapshotFixture,
-        session: {
-          ...snapshotFixture.session,
-          workspaceId: "another-workspace",
-        },
-      }),
-    ).toBe(false);
   });
 
   it("maps typed operations to the Tauri command contract", async () => {
@@ -235,6 +214,7 @@ describe("Workbench DTO boundary", () => {
       workspaceId: null,
       includeArchived: false,
     });
+    invoke.mockResolvedValueOnce({ workspaces: [], sequence: 0 });
     await workspaceClient.listWorkspaces();
     expect(invoke).toHaveBeenLastCalledWith("workbench_list_workspaces", {
       includeArchived: false,
@@ -279,5 +259,23 @@ describe("Workbench DTO boundary", () => {
     const failure = { code: "native-error", detail: "unchanged" };
     invoke.mockRejectedValueOnce(failure);
     await expect(researchClient.listPapers("workspace")).rejects.toBe(failure);
+  });
+});
+
+it("continues a full page of project handoffs with its last durable ID", async () => {
+  invoke.mockReset();
+  const page = Array.from({ length: 200 }, (_, index) => ({
+    id: String(index).padStart(3, "0"),
+    stagedPath: "",
+    contentHash: "hash",
+    externalReference: null,
+  }));
+  invoke
+    .mockResolvedValueOnce(page)
+    .mockResolvedValueOnce([{ ...page[0], id: "200" }]);
+  expect(await listProjectReviewLinks("ws")).toHaveLength(201);
+  expect(invoke).toHaveBeenNthCalledWith(2, "workbench_project_review_links", {
+    workspaceId: "ws",
+    after: "199",
   });
 });

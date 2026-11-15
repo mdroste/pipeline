@@ -7,27 +7,17 @@
   min-height: 100%;
   background: transparent;
 }
-.project-index-create,
 .project-chat-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.project-index-page .project-index-create {
-  flex: 0 0 auto;
-}
-.project-index-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 2.5rem;
-}
-.project-index-projects,
 .project-index-chats {
   min-width: 0;
   container-type: inline-size;
 }
 .project-index-section-heading {
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--ui-section-gap);
 }
 .project-index-section-heading h2 {
   font-size: 1.0625rem;
@@ -39,25 +29,12 @@
 .project-chat-filters {
   margin-bottom: 0.5rem;
 }
-.project-chat-filters [aria-pressed="true"] {
-  background: var(--ui-page-soft);
-  border-color: var(--ui-page-muted);
-}
 .project-chat-row .project-index-name {
   display: block;
 }
 .project-chat-move {
   display: inline-block;
   margin-top: 0.625rem;
-}
-.project-index-layout .project-home-empty {
-  padding: 2.25rem 0.75rem;
-}
-@container (max-width: 900px) {
-  .project-index-layout {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
 }
 .project-home-heading {
   display: flex;
@@ -101,38 +78,13 @@
   overflow-wrap: anywhere;
 }
 .project-home-attention {
-  color: #875b13;
+  color: var(--ui-warning);
   font-size: 0.75rem;
 }
-.dark .project-home-attention {
-  color: #e6bf7a;
-}
 .project-home-error {
-  color: #b91c1c;
+  color: var(--ui-danger);
   margin-top: 1rem;
   font-size: 0.8125rem;
-}
-.dark .project-home-error {
-  color: #fca5a5;
-}
-.project-index-search input {
-  flex: 1 1 280px;
-  min-width: 0;
-  max-width: 26.25rem;
-  border: 1px solid var(--ui-page-line);
-  border-radius: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.8125rem;
-  background: transparent;
-}
-.project-index-group + .project-index-group {
-  margin-top: 1.75rem;
-}
-.project-index-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1.5rem;
-  align-items: center;
 }
 .project-index-name {
   font-size: 0.875rem;
@@ -143,23 +95,6 @@
 .project-index-name:hover {
   text-decoration: underline;
   text-underline-offset: 4px;
-}
-.project-index-brief {
-  font-size: 0.75rem;
-  line-height: 1.7;
-  margin-top: 0.3125rem;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-}
-.project-index-info > .project-home-link {
-  display: block;
-  margin-top: 0.5rem;
-}
-.project-index-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.75rem;
 }
 .project-home-empty {
   margin: auto;
@@ -271,7 +206,7 @@
   margin-right: 0.375rem;
 }
 .project-overview-block + .project-overview-block {
-  margin-top: 1.875rem;
+  margin-top: var(--ui-section-gap);
 }
 .project-overview-block > h2 {
   padding-bottom: 0.5rem;
@@ -337,23 +272,12 @@
   margin-top: 1.5rem;
 }
 @container (max-width: 700px) {
-  .project-index-row {
-    gap: 1rem;
-  }
   .project-overview-columns {
     grid-template-columns: 1fr;
     gap: 1.875rem;
   }
 }
 @container (max-width: 480px) {
-  .project-index-row {
-    grid-template-columns: 1fr;
-  }
-  .project-index-actions {
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-  }
   .project-home-heading h1 {
     font-size: 1.5625rem;
   }

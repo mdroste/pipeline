@@ -39,6 +39,11 @@ impl Store {
             }
             return Ok(run);
         }
+        if let Some(group) = run.progress.expired_group(now()) {
+            return Err(format!(
+                "Group {group} reached its elapsed deadline. Start a new run to give it more time."
+            ));
+        }
         // Past its deadline a run sits in attention with the wait still open.
         // The researcher's answer is the decision to continue, so it starts a
         // new deadline rather than sending the run straight back.

@@ -1,3 +1,5 @@
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import useConversationIndex from "../hooks/useConversationIndex";
@@ -60,7 +62,7 @@ export default function AppSearch({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const { projects, runs, tasks, states, retry } = useSearchSources();
-  const chats = useConversationIndex(true, false, true);
+  const chats = useConversationIndex(true, false, query, false, true);
   const { conversations } = chats;
   const [expanded, setExpanded] = useState<string[]>([]);
   const workspace = useNavRailSlot()?.workspace;
@@ -197,16 +199,17 @@ export default function AppSearch({
         role="dialog"
         aria-modal="true"
         aria-labelledby={title}
-        className="workspace-tool-picker"
+        className="workspace-tool-picker ui-overlay-frame"
         tabIndex={-1}
       >
-        <div className="workspace-picker-heading">
+        <div className="workspace-picker-heading ui-overlay-header">
           <h2 id={title}>Search</h2>
-          <button type="button" aria-label="Close search" onClick={onClose}>
-            ×
-          </button>
+          <IconButton label="Close search" onClick={onClose}>
+            <Icon name="close" />
+          </IconButton>
         </div>
         <input
+          className="ui-input"
           data-autofocus
           type="search"
           role="combobox"

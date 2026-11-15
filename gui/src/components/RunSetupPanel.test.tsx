@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import RunSetupPanel from "./RunSetupPanel";
-import type { PrimaryInputSelection } from "../lib/types";
+import type { PrimaryInputSelection } from "../lib/workflowTypes";
 
 vi.mock("./PaperSelector", () => ({
   default: ({ selection }: { selection?: PrimaryInputSelection | null }) => (
@@ -19,9 +19,9 @@ const selection: PrimaryInputSelection = {
   selectionKind: "file",
 };
 
-function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
+function panel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
   localStorage.setItem("pipeline.privacyNoticeAcknowledged.v1", "true");
-  return render(
+  return (
     <RunSetupPanel
       authorNote=""
       onAuthorNoteChange={vi.fn()}
@@ -47,11 +47,23 @@ function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
       onRetryConfig={vi.fn()}
       onRetryDependencies={vi.fn()}
       {...props}
-    />,
+    />
   );
 }
 
+function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
+  return render(panel(props));
+}
+
 describe("RunSetupPanel", () => {
+  it("replaces the previous input picker when starting a new review", () => {
+    const { rerender } = renderPanel();
+    rerender(panel({ selectionKey: 1, inputSelection: null, paperPath: null }));
+
+    expect(screen.queryByText("Shown input: /papers/draft.pdf")).toBeNull();
+    expect(screen.getByText("Shown input: none")).toBeVisible();
+  });
+
   it("shows the input the app holds, so a remount does not hide it", () => {
     renderPanel();
     expect(

@@ -1,13 +1,54 @@
 import { stateLabel } from "../../lib/taskPresentation";
 import { type Chain, type Step } from "../../lib/taskTypes";
 import { describeStep } from "./language";
+import Badge, { type StatusTone } from "../../ui/Badge";
 
 export function Status({ state }: { state: string }) {
+  const tones: Record<string, StatusTone> = {
+    running: "running",
+    queued: "running",
+    attention: "attention",
+    unknown: "attention",
+    finished: "ok",
+    completed: "ok",
+    failed: "error",
+  };
   return (
-    <span className={`task-status task-status--${state}`}>
-      <i />
-      {stateLabel(state)}
-    </span>
+    <Badge
+      className="task-status"
+      kind={tones[state] ?? "idle"}
+      label={stateLabel(state)}
+      showLabel
+    />
+  );
+}
+
+/** Research runtimes supply their own labels; the list shares only visual tone. */
+export function ResearchStatus({
+  state,
+  label,
+}: {
+  state: string;
+  label: string;
+}) {
+  const tones: Record<string, StatusTone> = {
+    running: "running",
+    stopping: "running",
+    awaitingSelection: "attention",
+    attention: "attention",
+    blocked: "attention",
+    partial: "attention",
+    exhausted: "attention",
+    completed: "ok",
+    failed: "error",
+  };
+  return (
+    <Badge
+      kind={tones[state] ?? "idle"}
+      label={label}
+      showLabel
+      className="task-status whitespace-normal"
+    />
   );
 }
 

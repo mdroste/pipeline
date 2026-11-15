@@ -459,6 +459,18 @@ impl AppServerClient {
         request_id: Value,
         result: Result<Value, RequestError>,
     ) -> Result<(), RequestError> {
+        self.respond_after_claim(request_id, result, || Ok(()))
+            .await
+    }
+
+    /// Encode and reserve a writer slot before the owner consumes a pending
+    /// decision. Once claimed, publication is synchronous and cannot time out.
+    pub(crate) async fn respond_after_claim(
+        &self,
+        request_id: Value,
+        result: Result<Value, RequestError>,
+        claim: impl FnOnce() -> Result<(), RequestError>,
+    ) -> Result<(), RequestError> {
         if !request_id.is_string() && !request_id.is_number() {
             return Err(RequestError::transport(
                 "Server request id must be a string or number",
@@ -477,13 +489,13 @@ impl AppServerClient {
             }),
         };
         let bytes = encode_frame(&value)?;
-        tokio::time::timeout(
-            WRITE_QUEUE_TIMEOUT,
-            self.outbound.send(Outbound::Frame(bytes)),
-        )
-        .await
-        .map_err(|_| RequestError::transport("App Server write queue is backpressured", true))?
-        .map_err(|_| RequestError::transport("App Server writer stopped", true))
+        let permit = tokio::time::timeout(WRITE_QUEUE_TIMEOUT, self.outbound.reserve())
+            .await
+            .map_err(|_| RequestError::transport("App Server write queue is backpressured", true))?
+            .map_err(|_| RequestError::transport("App Server writer stopped", true))?;
+        claim()?;
+        permit.send(Outbound::Frame(bytes));
+        Ok(())
     }
 
     pub async fn close_writer(&self) -> Result<(), RequestError> {
@@ -1128,38 +1140,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod backpressure_tests {
-    use super::*;
-    #[tokio::test]
-    async fn full_queue_bounds_close_and_response_and_cleans_requests() {
-        let (io, _stalled_peer) = tokio::io::duplex(1);
-        let (read, write) = tokio::io::split(io);
-        let client = AppServerClient::from_io(1, read, write);
-        client
-            .outbound
-            .send(Outbound::Frame(vec![0; 8]))
-            .await
-            .unwrap();
-        tokio::task::yield_now().await;
-        while client
-            .outbound
-            .try_send(Outbound::Frame(vec![0; 8]))
-            .is_ok()
-        {}
-        let close = client.close_writer();
-        let response = client.respond_to_server_request(json!(1), Ok(json!({})));
-        let request = client.request("fixture", json!({}), Duration::from_secs(1));
-        let (close, response, request) = tokio::time::timeout(Duration::from_secs(4), async {
-            tokio::join!(close, response, request)
-        })
-        .await
-        .expect("All writes must be bounded");
-        assert!(close.is_err() && response.is_err() && request.is_err());
-        assert!(client.shared.pending.lock().unwrap().is_empty());
-        let request = client.request("fixture", json!({}), Duration::from_secs(60));
-        assert!(tokio::time::timeout(Duration::from_millis(10), request)
-            .await
-            .is_err());
-        assert!(client.shared.pending.lock().unwrap().is_empty());
-    }
-}
+mod backpressure_tests;

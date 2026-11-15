@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 mod persist;
 pub use persist::persist_file;
+mod read_root;
+pub(crate) use read_root::ReadRoot;
 
 static SPAN_TAG_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"(?is)<\s*/?\s*span\b(?:[^>"']|"[^"]*"|'[^']*')*>"#)
@@ -581,7 +583,6 @@ mod tests {
             "workbench/programs/capsule.rs",
             "workbench/release/exchange/export.rs",
             "workbench/shell.rs",
-            "workbench/tool_setup.rs",
             "workbench/release/archive/export.rs",
             "commands/reuse_artifacts.rs",
             "commands/run_storage.rs",

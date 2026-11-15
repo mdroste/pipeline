@@ -1,3 +1,8 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
+import { ResearchStatus } from "../tasks/shared";
+import ClaimAssessment from "../tasks/ClaimAssessment";
+import { RecordedUsage } from "../tasks/Budget";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   missionClient,
@@ -144,7 +149,22 @@ export default function MissionDetail({
     }
   }
   const terminal = ["completed", "exhausted", "stopped"].includes(m.state);
-  const latest = [...m.rounds].reverse().find((r) => r.challenge)?.challenge;
+  const assessedRound = [...m.rounds].reverse().find((r) => r.challenge);
+  const latest = assessedRound?.challenge;
+  async function acceptAssessment() {
+    if (!assessedRound?.claimRecord) return;
+    setBusy(true);
+    setError("");
+    try {
+      onUpdated(
+        await missionClient.accept(m, assessedRound.claimRecord.subjectVersion),
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   const navigate = (
     callback: ((id: string) => void | Promise<void>) | undefined,
     id: string,
@@ -159,17 +179,12 @@ export default function MissionDetail({
     >
       <div className="task-section-heading">
         <div>
-          <span className={`task-status task-status--${m.state}`}>
-            {missionState(m.state)}
-          </span>
+          <ResearchStatus state={m.state} label={missionState(m.state)} />
           <h2>{m.definition.name}</h2>
         </div>
-        <button
-          aria-label="Close research automation details"
-          onClick={onClose}
-        >
-          ×
-        </button>
+        <IconButton label="Close research automation details" onClick={onClose}>
+          <Icon name="close" />
+        </IconButton>
       </div>
       <p>{m.definition.objective}</p>
       <p className="mission-reason" role="status">
@@ -289,10 +304,11 @@ export default function MissionDetail({
           Results view.
         </p>
       )}
+      <RecordedUsage id={m.id} revision={m.revision} />
       <div className="task-actions">
         {m.state === "draft" && (
           <button
-            className="task-primary"
+            className="ui-button ui-button--primary"
             disabled={busy}
             onClick={() => void control("start")}
           >
@@ -306,7 +322,7 @@ export default function MissionDetail({
         )}
         {m.state === "paused" && (
           <button
-            className="task-primary"
+            className="ui-button ui-button--primary"
             disabled={busy}
             onClick={() => void control("resume")}
           >
@@ -390,6 +406,19 @@ export default function MissionDetail({
       >
         {tab === "agenda" && (
           <>
+            {m.rounds.some((r) => r.finding) && (
+              <p>Investigation brief retained.</p>
+            )}
+            <ClaimAssessment
+              record={assessedRound?.claimRecord}
+              earlier={!!latest}
+              busy={busy}
+              onAccept={
+                assessedRound === m.rounds.at(-1)
+                  ? () => void acceptAssessment()
+                  : undefined
+              }
+            />
             <h3>Original completion criteria</h3>
             <ol className="mission-criteria">
               {m.definition.criteria.map((criterion, i) => {
@@ -401,7 +430,7 @@ export default function MissionDetail({
                     <strong>{criterion}</strong>
                     <span className="task-muted">
                       {assessment
-                        ? `${assessment.status === "met" ? "Assessed as met" : assessment.status}: ${assessment.explanation}`
+                        ? `${assessment.status === "met" ? "Challenger reported met" : assessment.status}: ${assessment.explanation}`
                         : "Awaiting assessment"}
                     </span>
                     {assessment?.evidenceIds.map((id) => (
@@ -489,6 +518,11 @@ export default function MissionDetail({
                   {r.challenge && (
                     <>
                       <h4>Independent challenge · {r.challenge.outcome}</h4>
+                      <ClaimAssessment
+                        record={r.claimRecord}
+                        earlier={true}
+                        busy={busy}
+                      />
                       <p>{r.challenge.summary}</p>
                       <p className="task-muted">{r.challenge.testedDomain}</p>
                       {r.challenge.unresolved.length > 0 && (

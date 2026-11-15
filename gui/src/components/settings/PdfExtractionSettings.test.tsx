@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { EngineStatus } from "../../lib/types";
+import type { EngineStatus } from "../../lib/engineTypes";
 import { paddleEngine, makeSettings } from "../../test/settingsFixtures";
 import { ExtractionSection } from "./PdfExtractionSettings";
 

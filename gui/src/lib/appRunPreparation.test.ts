@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { configForRunPreview } from "./appRunPreparation";
-import type { PipelineConfig, StepConfig } from "./types";
+import type { PipelineConfig, StepConfig } from "./workflowTypes";
 
 const step = (id: string, patch: Partial<StepConfig>): StepConfig => ({
   id,

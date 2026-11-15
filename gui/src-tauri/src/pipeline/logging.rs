@@ -311,22 +311,6 @@ pub fn classify_tool_name(name: &str) -> crate::models::ToolCallKind {
     }
 }
 
-/// Record and emit completed model generations from a provider integration.
-/// Direct API loops call this once per model response; CLI parsers may report
-/// several generations at once.
-pub fn emit_model_round_trips(app: &crate::emit::EventBus, count: u64) {
-    if count == 0 {
-        return;
-    }
-    emit_usage(
-        app,
-        CallUsage {
-            model_round_trips: count,
-            ..Default::default()
-        },
-    );
-}
-
 /// Record and emit provider-reported tool calls. Counts may be partially
 /// classified; the `unknown` bucket is intentionally retained.
 pub fn emit_tool_calls(app: &crate::emit::EventBus, counts: crate::models::ToolCallCounts) {

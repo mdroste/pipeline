@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ResultsTab from "./ResultsTab";
-import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 
 const mocks = vi.hoisted(() => ({ save: vi.fn() }));
 vi.mock("../../lib/workbench/executionClient", () => ({

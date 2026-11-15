@@ -403,26 +403,6 @@ pub struct PreparedSchemaFile {
     _temp_dir: tempfile::TempDir,
 }
 
-pub fn prepare_provider_schema_file(
-    schema: &serde_json::Value,
-) -> Result<PreparedSchemaFile, String> {
-    let projected = provider_schema(schema)?;
-    let temp_dir = tempfile::Builder::new()
-        .prefix("pipeline_schema_")
-        .tempdir()
-        .map_err(|error| format!("Failed to create output-schema directory: {error}"))?;
-    let path = temp_dir.path().join("output-schema.json");
-    let file = std::fs::File::create(&path)
-        .map_err(|error| format!("Failed to create output-schema file: {error}"))?;
-    serde_json::to_writer(file, &projected)
-        .map_err(|error| format!("Failed to write output-schema file: {error}"))?;
-    Ok(PreparedSchemaFile {
-        path: path.to_string_lossy().replace('\\', "/"),
-        read_root: temp_dir.path().to_string_lossy().replace('\\', "/"),
-        _temp_dir: temp_dir,
-    })
-}
-
 /// Pull a JSON value out of a model's text response: the whole string, any
 /// fenced block, or any object/array embedded in prose. Candidates are tried
 /// in source order, so malformed prose before a valid payload cannot hide it.

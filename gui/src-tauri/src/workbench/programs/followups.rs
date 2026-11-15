@@ -342,11 +342,14 @@ pub fn branch(
         }
         exact(store, &ws, &i.object)?;
     }
-    let created = store.create_session(super::super::store::CreateSessionRequest {
-        workspace_id: Some(ws),
-        title: format!("Context branch: {title}"),
-        operation_id: operation.into(),
-    })?;
+    let created = store.create_session_with_overrides(
+        super::super::store::CreateSessionRequest {
+            workspace_id: Some(ws),
+            title: format!("Context branch: {title}"),
+            operation_id: operation.into(),
+        },
+        Some(&json!({"mode":"inspect", "fileMode":"review"})),
+    )?;
     desk::save_context(store, &created.record.id, 0, items)?;
     Ok(
         json!({"session":created.record,"sourceSessionId":session,"notice":"New conversation from selected retained context. History, source-root write grants, and task bindings were not copied."}),

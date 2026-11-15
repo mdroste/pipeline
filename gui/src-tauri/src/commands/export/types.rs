@@ -1,13 +1,5 @@
 //! App-owned export command records; serialization remains unchanged.
 
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportRunArtifactsResult {
-    pub exported_path: String,
-    pub file_count: u64,
-    pub bytes: u64,
-}
-
 #[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportMode {

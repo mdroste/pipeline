@@ -2,7 +2,101 @@
 
 use super::*;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexCursor {
+    updated_at: String,
+    project_updated_at: String,
+    workspace_id: String,
+    id: String,
+}
+
 impl Store {
+    /// Global summary page. Preserve the former stable per-project ordering
+    /// for simultaneous updates and omit draft and runtime configuration data.
+    pub fn conversation_index(
+        &self,
+        archived: bool,
+        unfiled: bool,
+        query: &str,
+        palette: bool,
+        cursor: Option<&IndexCursor>,
+    ) -> WorkbenchResult<Value> {
+        let c = self.connection()?;
+        let mut sql = String::from(
+            "SELECT s.id,s.workspace_id,s.title,s.archived_at,s.updated_at,w.name,
+            COALESCE(w.updated_at,'~') AS project_time, COALESCE(s.workspace_id,'') AS project_key
+            FROM sessions s LEFT JOIN workspaces w ON w.id=s.workspace_id
+            WHERE w.archived_at IS NULL AND (s.archived_at IS NOT NULL)=?1
+            AND (?2=0 OR s.workspace_id IS NULL)
+            AND NOT EXISTS(SELECT 1 FROM discovery_roles d WHERE d.session_id=s.id)",
+        );
+        if cursor.is_some() {
+            sql.push_str(
+                " AND (s.updated_at < ?3 OR (s.updated_at=?3 AND
+                (project_time < ?4 OR (project_time=?4 AND (project_key,s.id)>(?5,?6)))))",
+            );
+        }
+        sql.push_str(" ORDER BY s.updated_at DESC,project_time DESC,project_key,s.id");
+        let mut stmt = c.prepare(&sql).map_err(index_error)?;
+        let mut rows = if let Some(after) = cursor {
+            stmt.query(params![
+                archived,
+                unfiled,
+                after.updated_at,
+                after.project_updated_at,
+                after.workspace_id,
+                after.id
+            ])
+        } else {
+            stmt.query(params![archived, unfiled])
+        }
+        .map_err(index_error)?;
+        let query = query.trim().to_lowercase();
+        let mut items = Vec::new();
+        let mut last = None;
+        let limit = if palette { 40 } else { 200 };
+        while let Some(row) = rows.next().map_err(index_error)? {
+            let title: String = row.get(2).map_err(index_error)?;
+            let project: Option<String> = row.get(5).map_err(index_error)?;
+            if !query.is_empty() {
+                let label = if palette {
+                    format!(
+                        "{title} Conversation{}",
+                        project
+                            .as_ref()
+                            .map_or(String::new(), |p| format!(" · {p}"))
+                    )
+                } else {
+                    format!("{title} {}", project.as_deref().unwrap_or(""))
+                }
+                .to_lowercase();
+                let matches = if palette {
+                    query.split_whitespace().all(|term| label.contains(term))
+                } else {
+                    label.contains(&query)
+                };
+                if !matches {
+                    continue;
+                }
+            }
+            if items.len() == limit {
+                return Ok(serde_json::json!({"items":items,"nextCursor":last}));
+            }
+            let id: String = row.get(0).map_err(index_error)?;
+            let workspace_id: Option<String> = row.get(1).map_err(index_error)?;
+            let updated_at: String = row.get(4).map_err(index_error)?;
+            items.push(serde_json::json!({"session":{"id":id,"workspaceId":workspace_id,"title":title,"updatedAt":updated_at,"archivedAt":row.get::<_,Option<String>>(3).map_err(index_error)?},"projectName":project}));
+            last = Some(IndexCursor {
+                id,
+                updated_at,
+                workspace_id: workspace_id.unwrap_or_default(),
+                project_updated_at: row.get(6).map_err(index_error)?,
+            });
+        }
+        Ok(serde_json::json!({"items":items,"nextCursor":null}))
+    }
+
     pub fn create_session(
         &self,
         request: CreateSessionRequest,
@@ -368,17 +462,17 @@ impl Store {
             &json!({ "title": current.title }),
             &timestamp,
         )?;
+        let marker = self.queue_session_cleanup(&request.session_id)?;
         transaction
             .commit()
             .map_err(|error| WorkbenchError::storage("Failed to commit session deletion", error))?;
-        // The conversation is gone either way; a folder that could not be
-        // removed still appears under Data & Storage.
-        let _ = std::fs::remove_dir_all(
-            self.root
-                .join("jobs")
-                .join("conversations")
-                .join(&request.session_id),
-        );
+        self.cleanup_session_files(&request.session_id, &marker)
+            .map_err(|mut error| {
+                error.code = "session_cleanup_pending".into();
+                error.recovery =
+                    Some("Restart Pipeline to retry removal of the remaining local files.".into());
+                error
+            })?;
         Ok(sequence)
     }
 
@@ -447,6 +541,10 @@ fn scoped_elsewhere(
     Ok(owner.and_then(|(workspace, name)| {
         (workspace.is_some() && workspace.as_deref() != target).then_some(name)
     }))
+}
+
+fn index_error(e: rusqlite::Error) -> WorkbenchError {
+    WorkbenchError::storage("Failed to list conversations", e)
 }
 
 #[cfg(test)]

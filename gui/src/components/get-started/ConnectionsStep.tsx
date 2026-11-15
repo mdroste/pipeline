@@ -4,7 +4,7 @@ import {
   type AccountStatus,
 } from "../../lib/chatgptAccountClient";
 import { settingsClient } from "../../lib/settingsClient";
-import type { DepsReport, Settings } from "../../lib/types";
+import type { DepsReport, Settings } from "../../lib/settingsTypes";
 import { Badge, Button } from "../../ui";
 import { connectionRows, connectionSummary } from "./guide";
 

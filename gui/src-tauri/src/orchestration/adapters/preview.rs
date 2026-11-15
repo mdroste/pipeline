@@ -46,6 +46,18 @@ pub(in crate::orchestration) fn oversized_reply(value: &Value) -> bool {
 }
 
 pub(in crate::orchestration) fn failure_message(value: &Value) -> String {
+    if value.get("reviewRunId").is_some() {
+        return value["error"]
+            .as_str()
+            .unwrap_or("The Review failed")
+            .to_string();
+    }
+    if value.get("receiptId").is_some() && value.get("query").is_some() {
+        return format!(
+            "Literature lookup failed: {}",
+            value["error"].as_str().unwrap_or("No reason was recorded.")
+        );
+    }
     if oversized_reply(value) {
         return "The assistant's reply is over 512 KiB, too long for this step to use. The complete reply stays in its conversation.".into();
     }

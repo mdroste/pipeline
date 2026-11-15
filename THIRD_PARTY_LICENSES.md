@@ -87,19 +87,12 @@ Pipeline checks the SHA-256 of every download before using it. The Python
 packages are pinned by URL and hash in a PEP 751 lock file in this
 repository.
 
-## Optional conversation tools
+## Native conversation commands
 
-Pipeline downloads these tools when command or browser setup is needed. Their packages and
-license notices stay under `~/.pipeline/native/` on this computer.
-
-| Component | License |
-| --- | --- |
-| Node.js, including npm | MIT and other component licenses; see the runtime's LICENSE and npm package notices |
-| Playwright | Apache-2.0 |
-| Chromium and its bundled libraries | BSD-style and other component licenses; see the downloaded distribution’s notices |
-| Anthropic Sandbox Runtime (`@anthropic-ai/sandbox-runtime`) | Apache-2.0 |
-
-The command engine runs locally and requires no Anthropic account.
+Pipeline includes the MIT-licensed Microsoft MXC Rust SDK for operating-system
+sandboxing. Its license and those of its Rust dependencies are included in the
+bundled library notices. Linux uses separately installed Bubblewrap,
+slirp4netns, iproute2, iptables, and util-linux.
 
 Operating-system components, such as WebView2, WebKit, and macOS frameworks,
 aren't redistributed with Pipeline.

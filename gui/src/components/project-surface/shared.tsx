@@ -9,10 +9,10 @@ import type {
 } from "../../lib/projectClient";
 import type {
   PaperWithRevision,
-  ResearchExecution,
   ResearchNote,
-  Workspace,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/researchTypes";
+import type { ResearchExecution } from "../../lib/workbench/executionTypes";
+import type { Workspace } from "../../lib/workbench/sessionTypes";
 
 export type ProjectTab =
   import("../../lib/workspaceNavigation").WorkspaceDestination;

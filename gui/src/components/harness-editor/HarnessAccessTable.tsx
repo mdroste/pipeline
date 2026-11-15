@@ -8,8 +8,7 @@ import {
   conversationProvider,
   isApiProvider,
 } from "../../lib/workspaceProviders";
-import BrowserSetup from "./BrowserSetup";
-import type { EffectiveHarness } from "../../lib/workbenchTypes";
+import type { EffectiveHarness } from "../../lib/workbench/harnessTypes";
 import {
   ACCESS_ROWS,
   ACCESS_SCOPES,
@@ -279,7 +278,6 @@ function HarnessAccessTable({
           </tbody>
         </table>
       </div>
-      {effective.capabilities?.browser && <BrowserSetup disabled={busy} />}
       {isApiProvider(conversationProvider(conversationOverrides.runtime)) && (
         <ShellSetup disabled={busy} />
       )}

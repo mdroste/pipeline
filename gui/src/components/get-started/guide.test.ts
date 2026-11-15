@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DepStatus, DepsReport } from "../../lib/types";
+import type { DepStatus, DepsReport } from "../../lib/settingsTypes";
 import { makeSettings } from "../../test/settingsFixtures";
 import { connectionRows, connectionSummary, pdfRows } from "./guide";
 

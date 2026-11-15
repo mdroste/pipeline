@@ -1,26 +1,30 @@
-import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import { selectHistoryRuns } from "./history-page/selectors";
 import {
-  lazy,
-  Suspense,
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useRef,
-} from "react";
+  isRunning,
+  RUNNING_TITLE,
+  fmtBytes,
+  fmtTokens,
+  freshInputTokens,
+  hasReportedUsage,
+  usageDescription,
+  fmtDuration,
+  fmtDate,
+} from "./history-page/presentation";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
+import Badge, { type StatusTone } from "../ui/Badge";
+import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { listedRunStatus } from "../lib/reportPresentation";
 import { router } from "../lib/router";
 import { confirmDialog, notify } from "./DialogService";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
 import useListScrollMemory from "./history-page/useListScrollMemory";
+import ReviewHistoryTrash from "./history-page/ReviewHistoryTrash";
+import { useHistoryData } from "./history-page/useHistoryData";
 import useRefreshWhenRunsFinish from "./history-page/useRefreshWhenRunsFinish";
-import type {
-  Project,
-  RunSummary,
-  RunsDiskUsage,
-  TrashedRun,
-} from "../lib/types";
+import type { RunSummary } from "../lib/reviewTypes";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
@@ -38,85 +42,21 @@ interface Props {
   runInProgress?: boolean;
 }
 
-function fmtBytes(n: number): string {
-  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + " GB";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + " MB";
-  if (n >= 1_000) return (n / 1_000).toFixed(0) + " KB";
-  return n + " B";
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000)
-    return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
-  return String(n);
-}
-
-function freshInputTokens(run: RunSummary): number {
-  return Math.max(
-    0,
-    run.input_tokens -
-      (run.cached_input_tokens ?? 0) -
-      (run.cache_write_input_tokens ?? 0),
-  );
-}
-
-function hasReportedUsage(run: RunSummary): boolean {
-  return run.input_tokens + run.output_tokens > 0;
-}
-
-function usageDescription(run: RunSummary): string {
-  const cacheRead = run.cached_input_tokens ?? 0;
-  const cacheWrite = run.cache_write_input_tokens ?? 0;
-  return [
-    `Token usage: ${run.input_tokens.toLocaleString()} logical input tokens equals ${freshInputTokens(run).toLocaleString()} fresh input tokens plus ${cacheRead.toLocaleString()} cache-read tokens plus ${cacheWrite.toLocaleString()} cache-write tokens; ${run.output_tokens.toLocaleString()} output tokens.`,
-    "Cache reads and cache writes are subsets of logical input, not additional tokens.",
-    "Fresh input equals logical input minus cache reads minus cache writes.",
-    "The completed report's summary prices these categories separately for a labelled API-equivalent estimate when the model is recognized.",
-    "Only providers that report usage are included.",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function fmtDuration(secs: number): string {
-  if (secs <= 0) return "—";
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return m > 0 ? `${m}m ${s}s` : `${s}s`;
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-const isRunning = (run: RunSummary) => run.status === "running";
-const RUNNING_TITLE =
-  "This review is still running. Its report opens here when it finishes.";
-
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    running: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
-    done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-    partial:
-      "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-    failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-    interrupted: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-    cancelled: "bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300",
+  const tones: Record<string, StatusTone> = {
+    running: "running",
+    done: "ok",
+    partial: "attention",
+    failed: "error",
+    interrupted: "error",
+    cancelled: "idle",
   };
-  const cls = map[status] || map.done;
   return (
-    <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${cls}`}>
-      {status || "done"}
-    </span>
+    <Badge
+      kind={tones[status] ?? "idle"}
+      label={status || "Unknown"}
+      showLabel
+    />
   );
 }
 
@@ -128,11 +68,7 @@ export default function HistoryPage({
   onRerun,
   runInProgress = false,
 }: Props) {
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [usage, setUsage] = useState<RunsDiskUsage | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -155,9 +91,21 @@ export default function HistoryPage({
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [comparing, setComparing] = useState<[string, string] | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
-  const [trashedRuns, setTrashedRuns] = useState<TrashedRun[]>([]);
-  const [trashLoading, setTrashLoading] = useState(false);
-  const refreshRequestRef = useRef(0);
+  const {
+    runs,
+    projects,
+    usage,
+    loading,
+    error,
+    setError,
+    refresh,
+    refreshRequestRef,
+    trashedRuns,
+    trashLoading,
+    refreshTrash,
+    restoreRun,
+    permanentlyDeleteRun,
+  } = useHistoryData(setCompareIds);
 
   useEffect(
     () => () => {
@@ -225,47 +173,9 @@ export default function HistoryPage({
     }
   };
 
-  const refresh = useCallback(async () => {
-    const request = ++refreshRequestRef.current;
-    setLoading(true);
-    try {
-      const [nextRuns, nextUsage, nextProjects] = await Promise.all([
-        reviewHistoryClient.list(),
-        reviewHistoryClient.usage().catch(() => null),
-        reviewHistoryClient.projects().catch(() => null),
-      ]);
-      if (request !== refreshRequestRef.current) return;
-      setRuns(nextRuns);
-      // A report that left the list cannot be compared, and its row is gone.
-      setCompareIds((prev) =>
-        prev.filter((id) => nextRuns.some((run) => run.run_id === id)),
-      );
-      setUsage(nextUsage);
-      if (nextProjects) setProjects(nextProjects.projects);
-      setError(null);
-    } catch (e) {
-      if (request === refreshRequestRef.current) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      if (request === refreshRequestRef.current) setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const refreshTrash = useCallback(async () => {
-    setTrashLoading(true);
-    try {
-      setTrashedRuns(await reviewHistoryClient.trashed());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setTrashLoading(false);
-    }
-  }, []);
 
   useEffect(() => {
     if (trashOpen) void refreshTrash();
@@ -290,62 +200,31 @@ export default function HistoryPage({
       ).sort(),
     [runs],
   );
-  const visible = useMemo(() => {
-    const matching = runs.filter((run) => {
-      if (
-        statusFilter !== "all" &&
-        listedRunStatus(run.status) !== statusFilter
-      )
-        return false;
-      if (providerFilter !== "all" && run.provider !== providerFilter)
-        return false;
-      if (
-        profileFilter !== "all" &&
-        (run.profile_name || run.profile_id) !== profileFilter
-      )
-        return false;
-      if (projectFilter !== "all") {
-        const project = projects.find(
-          (candidate) => candidate.id === projectFilter,
-        );
-        if (!project?.run_ids.includes(run.run_id)) return false;
-      }
-      if (dateFilter !== "all") {
-        const age = Date.now() - Date.parse(run.created);
-        if (
-          !Number.isFinite(age) ||
-          age > Number(dateFilter) * 24 * 60 * 60 * 1000
-        )
-          return false;
-      }
-      return (
-        !needle ||
-        [run.title, run.input_name, run.profile_name, run.provider, ...run.tags]
-          .join(" ")
-          .toLowerCase()
-          .includes(needle)
-      );
-    });
-    return matching.sort((left, right) => {
-      if (sortOrder === "oldest")
-        return Date.parse(left.created) - Date.parse(right.created);
-      if (sortOrder === "name")
-        return (left.title || left.input_name).localeCompare(
-          right.title || right.input_name,
-        );
-      return Date.parse(right.created) - Date.parse(left.created);
-    });
-  }, [
-    runs,
-    needle,
-    dateFilter,
-    profileFilter,
-    projectFilter,
-    projects,
-    providerFilter,
-    sortOrder,
-    statusFilter,
-  ]);
+  const visible = useMemo(
+    () =>
+      selectHistoryRuns({
+        runs,
+        needle,
+        dateFilter,
+        profileFilter,
+        projectFilter,
+        projects,
+        providerFilter,
+        sortOrder,
+        statusFilter,
+      }),
+    [
+      runs,
+      needle,
+      dateFilter,
+      profileFilter,
+      projectFilter,
+      projects,
+      providerFilter,
+      sortOrder,
+      statusFilter,
+    ],
+  );
   const pageSize = 25;
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const pagedRuns = visible.slice(
@@ -417,38 +296,6 @@ export default function HistoryPage({
     }
   };
 
-  const restoreRun = async (run: TrashedRun) => {
-    try {
-      await reviewHistoryClient.restore({ runId: run.run_id });
-      notify("Report restored to History.", "success");
-      await Promise.all([refresh(), refreshTrash()]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const permanentlyDeleteRun = async (run: TrashedRun) => {
-    const label = run.title || run.input_name || run.run_id;
-    if (
-      !(await confirmDialog(
-        `Permanently delete “${label}” and all its artifacts? This cannot be undone.`,
-        {
-          title: "Delete report forever",
-          confirmLabel: "Delete forever",
-          destructive: true,
-        },
-      ))
-    )
-      return;
-    try {
-      await reviewHistoryClient.remove({ runId: run.run_id });
-      notify("Report permanently deleted.", "success");
-      await refreshTrash();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   // ── Compare view: diff two runs ──
   if (comparing) {
     return (
@@ -481,224 +328,219 @@ export default function HistoryPage({
     );
   }
 
+  const filterSummary = [
+    statusFilter !== "all" && `Status: ${statusFilter}`,
+    providerFilter !== "all" && `Provider: ${providerFilter}`,
+    profileFilter !== "all" && `Workflow: ${profileFilter}`,
+    projectFilter !== "all" &&
+      `Collection: ${projects.find((project) => project.id === projectFilter)?.name ?? projectFilter}`,
+    dateFilter !== "all" &&
+      (dateFilter === "365" ? "Last year" : `Last ${dateFilter} days`),
+  ].filter(Boolean);
   // ── List view ──
   return (
     <div ref={scroll.rootRef} className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Review history
-        </h2>
+      <header className="shrink-0 space-y-3 border-b border-line bg-surface px-[var(--ui-page-gutter)] py-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="mr-auto text-xl font-semibold tracking-tight text-ink">
+            Review history
+          </h2>
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="History actions"
+          >
+            <button
+              className="ui-button ui-button--sm"
+              onClick={() => void router.navigate({ page: "projects" })}
+            >
+              Collections
+            </button>
+            <button
+              className="ui-button ui-button--sm"
+              aria-expanded={trashOpen}
+              aria-controls="report-trash"
+              onClick={() => setTrashOpen((value) => !value)}
+            >
+              Trash{trashedRuns.length > 0 ? ` (${trashedRuns.length})` : ""}
+            </button>
+            <button
+              className="ui-button ui-button--sm"
+              onClick={() => void refresh()}
+            >
+              Refresh
+            </button>
+            {showClose && (
+              <IconButton label="Close report history" onClick={onClose}>
+                <Icon name="close" />
+              </IconButton>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            aria-label="Filter report history"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter by name, profile, tag…"
+            className="ui-input min-w-0 flex-[1_1_12rem]"
+          />
+          <button
+            type="button"
+            className="ui-button"
+            aria-expanded={filtersOpen}
+            aria-controls="review-history-filters"
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            Filters
+            {filterSummary.length > 0 ? ` (${filterSummary.length})` : ""}
+          </button>
+          <button
+            onClick={() => {
+              setCompareMode((v) => !v);
+              setCompareIds([]);
+            }}
+            aria-pressed={compareMode}
+            className="ui-button aria-pressed:bg-sunken"
+            title="Select two reports to compare"
+          >
+            Compare
+          </button>
+          <select
+            aria-label="Sort reports"
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value)}
+            className="max-w-full"
+          >
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name">Name</option>
+          </select>
+          <span className="text-ui-meta text-ink-muted">
+            {visible.length} matching
+          </span>
+        </div>
+        {filterSummary.length > 0 && (
+          <ul
+            aria-label="Active filters"
+            className="flex flex-wrap gap-2 text-ui-meta text-ink-muted"
+          >
+            {filterSummary.map((label) => (
+              <li
+                key={String(label)}
+                className="min-w-0 break-words rounded-ui-sm bg-sunken px-2 py-1"
+              >
+                {label}
+              </li>
+            ))}
+          </ul>
+        )}
         {usage && (
-          <span className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-ui-meta text-ink-muted">
             {usage.count} report{usage.count === 1 ? "" : "s"} ·{" "}
             {fmtBytes(usage.bytes)} on disk
-          </span>
+          </p>
         )}
-        <input
-          aria-label="Filter report history"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter by name, profile, tag…"
-          className="sm:ml-auto w-full sm:w-64 py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400"
-        />
-        <button
-          onClick={() => void router.navigate({ page: "projects" })}
-          className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-          title="Group related reports into collections with a findings ledger"
+        <div
+          id="review-history-filters"
+          role="group"
+          aria-label="Review filters"
+          hidden={!filtersOpen}
+          className={
+            filtersOpen
+              ? "flex flex-wrap gap-2 rounded-ui-md bg-sunken p-3"
+              : undefined
+          }
         >
-          Collections
-        </button>
-        <button
-          onClick={() => setTrashOpen((value) => !value)}
-          aria-expanded={trashOpen}
-          aria-controls="report-trash"
-          className={`text-sm transition-colors ${trashOpen ? "text-gray-900 dark:text-gray-100 font-medium" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"}`}
-          title="Restore or permanently delete reports"
-        >
-          Trash{trashedRuns.length > 0 ? ` (${trashedRuns.length})` : ""}
-        </button>
-        <button
-          onClick={() => {
-            setCompareMode((v) => !v);
-            setCompareIds([]);
-          }}
-          className={`text-sm transition-colors ${compareMode ? "text-gray-900 dark:text-gray-100 font-medium" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"}`}
-          title="Select two reports to compare"
-        >
-          Compare
-        </button>
-        <button
-          onClick={() => void refresh()}
-          className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-          title="Reload"
-        >
-          Refresh
-        </button>
-        {showClose && (
-          <button
-            onClick={onClose}
-            aria-label="Close report history"
-            className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
-            title="Close"
-          >
-            ✕
-          </button>
-        )}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs dark:border-gray-800 dark:bg-gray-900/60 sm:px-6">
-        <label>
-          <span className="sr-only">Status</span>
+          <label>
+            <span className="sr-only">Status</span>
+            <select
+              aria-label="Filter by status"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="max-w-full"
+            >
+              <option value="all">All statuses</option>
+              {[
+                "running",
+                "done",
+                "partial",
+                "failed",
+                "interrupted",
+                "cancelled",
+              ].map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
           <select
-            aria-label="Filter by status"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+            aria-label="Filter by provider"
+            value={providerFilter}
+            onChange={(event) => setProviderFilter(event.target.value)}
+            className="max-w-full"
           >
-            <option value="all">All statuses</option>
-            {[
-              "running",
-              "done",
-              "partial",
-              "failed",
-              "interrupted",
-              "cancelled",
-            ].map((status) => (
-              <option key={status} value={status}>
-                {status}
+            <option value="all">All providers</option>
+            {providers.map((provider) => (
+              <option key={provider} value={provider}>
+                {provider}
               </option>
             ))}
           </select>
-        </label>
-        <select
-          aria-label="Filter by provider"
-          value={providerFilter}
-          onChange={(event) => setProviderFilter(event.target.value)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">All providers</option>
-          {providers.map((provider) => (
-            <option key={provider} value={provider}>
-              {provider}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by workflow"
-          value={profileFilter}
-          onChange={(event) => setProfileFilter(event.target.value)}
-          className="max-w-56 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">All workflows</option>
-          {profiles.map((profile) => (
-            <option key={profile} value={profile}>
-              {profile}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by review collection"
-          value={projectFilter}
-          onChange={(event) => setProjectFilter(event.target.value)}
-          className="max-w-56 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">All review collections</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by date"
-          value={dateFilter}
-          onChange={(event) => setDateFilter(event.target.value)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">Any date</option>
-          <option value="7">Last 7 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="365">Last year</option>
-        </select>
-        <select
-          aria-label="Sort reports"
-          value={sortOrder}
-          onChange={(event) => setSortOrder(event.target.value)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900 sm:ml-auto"
-        >
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="name">Name</option>
-        </select>
-        <span className="text-gray-500 dark:text-gray-400">
-          {visible.length} matching
-        </span>
-      </div>
+          <select
+            aria-label="Filter by workflow"
+            value={profileFilter}
+            onChange={(event) => setProfileFilter(event.target.value)}
+            className="max-w-full sm:max-w-56"
+          >
+            <option value="all">All workflows</option>
+            {profiles.map((profile) => (
+              <option key={profile} value={profile}>
+                {profile}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter by review collection"
+            value={projectFilter}
+            onChange={(event) => setProjectFilter(event.target.value)}
+            className="max-w-full sm:max-w-56"
+          >
+            <option value="all">All review collections</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filter by date"
+            value={dateFilter}
+            onChange={(event) => setDateFilter(event.target.value)}
+            className="max-w-full"
+          >
+            <option value="all">Any date</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="365">Last year</option>
+          </select>
+        </div>
+      </header>
 
       {trashOpen && (
-        <section
-          id="report-trash"
-          aria-label="Report Trash"
-          className="px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/70 shrink-0"
-        >
-          <div className="flex items-center gap-3 mb-2">
-            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
-              Report Trash
-            </h3>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              Restore reports or delete them permanently.
-            </span>
-            <button
-              onClick={refreshTrash}
-              className="ml-auto text-xs text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-            >
-              Refresh Trash
-            </button>
-          </div>
-          {trashLoading ? (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Loading Trash…
-            </p>
-          ) : trashedRuns.length === 0 ? (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Trash is empty.
-            </p>
-          ) : (
-            <ul className="space-y-1 max-h-40 overflow-auto">
-              {trashedRuns.map((run) => (
-                <li
-                  key={run.run_id}
-                  className="flex items-center gap-3 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
-                      {run.title || run.input_name || run.run_id}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Moved {fmtDate(run.deleted_at)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => restoreRun(run)}
-                    className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
-                  >
-                    Restore
-                  </button>
-                  <button
-                    onClick={() => permanentlyDeleteRun(run)}
-                    className="px-2 py-1 text-xs rounded text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
-                  >
-                    Delete forever
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <ReviewHistoryTrash
+          runs={trashedRuns}
+          loading={trashLoading}
+          refresh={refreshTrash}
+          restore={restoreRun}
+          remove={permanentlyDeleteRun}
+        />
       )}
 
       {compareMode && (
-        <div className="flex items-center gap-3 px-6 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800 text-sm shrink-0">
+        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-sunken px-[var(--ui-page-gutter)] py-2 text-ui-label shrink-0">
           <span className="text-gray-500 dark:text-gray-400">
             {compareIds.length === 0
               ? "Select two reports to compare."
@@ -707,7 +549,7 @@ export default function HistoryPage({
           <button
             onClick={compareSelected}
             disabled={compareIds.length !== 2}
-            className="ml-auto px-3 py-1 text-xs rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="ui-button ui-button--sm ui-button--primary ml-auto"
           >
             Compare selected
           </button>
@@ -717,7 +559,7 @@ export default function HistoryPage({
       {error && (
         <div
           role="alert"
-          className="mx-4 mt-4 shrink-0 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
+          className="ui-notice ui-notice--error mx-4 mt-4 shrink-0"
         >
           {error}
           <ReportIssueLink />
@@ -834,7 +676,7 @@ export default function HistoryPage({
                               {fmtTokens(freshInputTokens(r))} fresh
                             </span>
                             {(r.cached_input_tokens ?? 0) > 0 && (
-                              <span className="text-green-700 dark:text-green-400">
+                              <span className="text-ink dark:text-green-400">
                                 {" "}
                                 + {fmtTokens(r.cached_input_tokens)} cache read
                               </span>
@@ -905,7 +747,7 @@ export default function HistoryPage({
                                 title={
                                   runInProgress
                                     ? "A report is already being generated"
-                                    : `Run ${r.profile_name || "this run's review design"} again using the saved document and input assessment.`
+                                    : `Run ${r.profile_name || "this run's review design"} again using the saved document and document bundle preparation.`
                                 }
                               >
                                 Regenerate

@@ -5,6 +5,64 @@ public release was not tracked as a stable release series.
 
 ## 1.4.6 — 2026-11-11
 
+- Simplify Projects around choosing or creating a project, with compact rows,
+  search, and pins. Keep conversations available under **Browse chats**.
+
+- Open existing automation stores created by Pipeline 1.4.5 and preserve saved
+  tasks when upgrading older stores.
+
+- Replace the downloaded Node command runtime with native Rust commands and a
+  filtered network proxy. Keep restricted file access, allowed sites, bounded
+  output, and cancellation. Add PowerShell commands on supported Windows 11
+  systems alongside Bash on macOS and Linux.
+
+- Align shared buttons, fields, status labels, menus, and page headers across
+  both themes. Keep help visible inside dialogs, support keyboard navigation
+  in the designer's tabs and export menu, and adapt setup forms to narrow panes.
+
+- Keep selected review exports inside the saved run, reject special files that
+  could stall an export, and stop copying a file if its size changes. Restore
+  backups when project folders swap locations, and read declared UTF-16 web text
+  correctly. Fix opening the data folder and browser print report on Linux, and
+  normalize custom data-folder paths before opening Explorer on Windows.
+
+- Remove Browser interaction and its Chromium download. Web search, public page
+  reading, and native PDF export remain available.
+
+- Save review reports directly with **Save as PDF…**, including typeset equations
+  and page numbers. Export uses native PDF printing on macOS, Windows, and Linux,
+  works offline, and needs no browser download.
+  **Print…** remains a separate choice.
+
+- Rename the preparation stage **Document bundle preparation**. Automatic
+  reviews start with relevant reviewer candidates and can look up more roles
+  and supporting passages together. Save the document bundle before choosing
+  reviewers, and include declared supporting inputs in planning.
+
+- Bring regular and research automation setup into one **New automation**
+  chooser. Both builders use the full page width, compact settings tabs, and
+  a persistent preview button.
+- List regular automations, investigations, and discovery together under
+  **Active** and **History**, with type labels in place of a separate Research tab.
+
+- Shorten the sidebar label to **Automations** and make the sidebar narrower
+  by default.
+
+- Typeset common mathematical notation in older review reports, including Greek
+  letters, accents, and scripts. Keep currency amounts as text and require
+  explicit math formatting in newly generated reviews.
+
+- Render PowerPoint and Beamer sources to PDF for visual slide review, retaining
+  the PDF, page images, and conversion log with the report. Windows Beamer
+  compilation uses installed native TeX Live or MiKTeX.
+
+- Stop **Paper Review**, **Paper Review (Fast)**, and **Slide Review** before
+  assigning reviewers when the document type cannot be identified, and explain why.
+- Accept PowerPoint `.pptx` and Beamer `.tex` decks in **Slide Review**, with
+  slide-order text, separate speaker notes, images, and source-frame references.
+
+- Make **New review** more compact, with a smaller header, simpler cards,
+  and a prominent **Preview** button beside the setup choices.
 - Reorganize projects around **Overview**, **Paper**, **Files**, **Reviews**,
   **Changes**, and **Notes**. The Overview suggests next steps based on the
   paper's stage, and the project list can sort by deadline.

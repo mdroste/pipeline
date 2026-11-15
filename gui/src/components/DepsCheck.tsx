@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { DepsReport } from "../lib/types";
+import type { DepsReport } from "../lib/settingsTypes";
 import useModalDialog from "../hooks/useModalDialog";
 import { Button, Skeleton, Spinner } from "../ui";
 import ReportIssueLink from "./ReportIssueLink";
@@ -380,7 +380,7 @@ export default function DepsCheck({
   return (
     <div
       data-testid="dependencies-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
     >
       <div
         ref={dialogRef}
@@ -389,11 +389,11 @@ export default function DepsCheck({
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-2xl border border-gray-200/80 bg-white p-6 shadow-2xl dark:border-gray-800 dark:bg-gray-900"
+        className="ui-overlay-frame max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto p-5"
       >
         <h2
           id={titleId}
-          className="text-xl font-semibold tracking-tight text-gray-950 dark:text-gray-50"
+          className="text-xl font-semibold tracking-tight text-ink"
         >
           Dependencies
         </h2>
@@ -425,7 +425,7 @@ export default function DepsCheck({
             <section
               aria-labelledby={modelsTitleId}
               aria-busy={checking}
-              className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+              className="overflow-hidden rounded-ui-md border border-line"
             >
               <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
                 <div>
@@ -475,7 +475,7 @@ export default function DepsCheck({
             <section
               aria-labelledby={pdfTitleId}
               aria-busy={checking}
-              className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+              className="overflow-hidden rounded-ui-md border border-line"
             >
               <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
                 <div>
@@ -524,7 +524,7 @@ export default function DepsCheck({
             onClick={onDismiss}
             data-testid="dependencies-dismiss"
             data-autofocus
-            className="rounded-lg bg-gray-900 px-4 py-1.5 text-sm text-white transition-colors hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+            className="ui-button ui-button--primary"
           >
             {hasBlockers ? "Dismiss" : "Close"}
           </button>

@@ -21,6 +21,8 @@ pub struct Chain {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Limits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_api_cost_cents: Option<u32>,
     pub max_actions: u32,
     pub deadline_hours: u32,
     pub action_timeout_secs: u32,
@@ -28,6 +30,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            max_api_cost_cents: None,
             max_actions: 64,
             deadline_hours: 168,
             action_timeout_secs: 7200,
@@ -353,6 +356,14 @@ fn validate_steps(steps: &[Step], depth: usize, ids: &mut BTreeSet<String>) -> R
             Action::Chain { chain } => {
                 if chain.schema_version != VERSION {
                     return Err("Unsupported subchain version".into());
+                }
+                if !(1..=1024).contains(&chain.limits.max_actions) {
+                    return Err("A group's action limit must be between 1 and 1,024".into());
+                }
+                if !(1..=8760).contains(&chain.limits.deadline_hours)
+                    || !(30..=28800).contains(&chain.limits.action_timeout_secs)
+                {
+                    return Err("A group's deadline must be 1–8,760 hours and its action timeout 30–28,800 seconds".into());
                 }
                 validate_steps(&chain.steps, depth + 1, ids)?;
             }

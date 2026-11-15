@@ -19,10 +19,8 @@ export function SummaryRow({
 }) {
   return (
     <div className="grid gap-x-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
-      <dt className="text-sm text-gray-500 dark:text-gray-400">{label}</dt>
-      <dd className="min-w-0 text-sm text-gray-900 dark:text-gray-100">
-        {children}
-      </dd>
+      <dt className="text-ui-label text-ink-muted">{label}</dt>
+      <dd className="min-w-0 text-ui-label text-ink">{children}</dd>
     </div>
   );
 }
@@ -67,14 +65,13 @@ export default function RunUsageEstimate({
           use.
           {estimate.subscriptionCallsHigh > 0 &&
             " Subscription calls count against your plan's limits and are not billed per token."}
+          {Boolean(estimate.localCallsHigh) &&
+            ` Up to ${estimate.localCallsHigh} local calls use the configured local model.`}
           {estimate.unpricedCalls > 0 &&
             ` ${estimate.unpricedCalls} API call${estimate.unpricedCalls === 1 ? " uses" : "s use"} a model without a known price.`}
         </p>
         {overLimit && (
-          <p
-            role="status"
-            className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-200"
-          >
+          <p role="status" className="ui-notice ui-notice--warning mt-2">
             The high end of this estimate is above your limit. If the limit is
             reached, steps not yet started are skipped and the completed results
             are saved as a partial report.

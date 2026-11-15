@@ -1,4 +1,4 @@
-import type { QueuedRun } from "../lib/types";
+import type { QueuedRun } from "../lib/reviewTypes";
 
 /** A run-queue entry for tests: `<key>.pdf`, started at t=1000 unless queued. */
 export function queuedRun(

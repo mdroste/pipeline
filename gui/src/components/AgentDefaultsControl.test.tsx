@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import type { ModelCatalog, Settings } from "../lib/types";
+import type { ModelCatalog } from "../lib/reviewModelTypes";
+import type { Settings } from "../lib/settingsTypes";
 import AgentDefaultsControl from "./AgentDefaultsControl";
 
 const catalog: ModelCatalog = {

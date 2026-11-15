@@ -134,6 +134,21 @@ const commandApproval = (fields: Record<string, unknown>) =>
     ...fields,
   });
 
+it("offers Always allow only for a command the backend can remember", () => {
+  const onResolve = vi.fn();
+  const event = { ...commandApproval({}), canRemember: true };
+  const view = render(<RequestCard event={event} onResolve={onResolve} />);
+  fireEvent.click(screen.getByRole("button", { name: "Always allow" }));
+  expect(onResolve).toHaveBeenCalledWith(event, { decision: "alwaysAllow" });
+  view.rerender(
+    <RequestCard
+      event={{ ...event, canRemember: false }}
+      onResolve={onResolve}
+    />,
+  );
+  expect(screen.queryByRole("button", { name: "Always allow" })).toBeNull();
+});
+
 it("command approval shows the extra permissions Allow once would grant", () => {
   const onResolve = vi.fn();
   const event = commandApproval({

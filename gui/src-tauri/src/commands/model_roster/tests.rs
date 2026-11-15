@@ -94,6 +94,24 @@ fn a_review_model_reaches_every_stage_that_inherits_the_default() {
 }
 
 #[test]
+fn paper_review_uses_medium_for_inherited_chatgpt_orientation_only() {
+    let mut raw = workflow(vec![
+        step("technical", Phase::Parallel, &[]),
+        step("synthesis", Phase::Sequential, &[]),
+    ]);
+    raw.orientation_schema = Some(crate::auto_review::orientation_schema());
+    let settings = Settings {
+        preferred_provider: "codex".into(),
+        default_effort: "xhigh".into(),
+        ..Default::default()
+    };
+    let roster = roster_for(settings, raw, None);
+    assert_eq!(find(&roster, "orientation").effort, "medium");
+    assert!(find(&roster, "orientation").note.is_some());
+    assert_eq!(find(&roster, "parallel").effort, "xhigh");
+}
+
+#[test]
 fn settings_exceptions_survive_and_are_named_until_cleared() {
     let raw = workflow(vec![
         step("technical", Phase::Parallel, &[]),
@@ -178,6 +196,68 @@ fn neighbouring_steps_on_one_model_share_a_line() {
     assert_eq!(parallel.len(), 2, "{parallel:#?}");
     assert_eq!(parallel[0].step_ids, ["a", "b"]);
     assert_eq!(parallel[1].step_ids, ["c"]);
+    assert!(roster.iter().all(|entry| entry.stage != "adaptive"));
+}
+
+#[test]
+fn adaptive_agents_inherit_the_first_enabled_parallel_reviewers_models() {
+    let mut disabled = step("disabled", Phase::Parallel, &["codex"]);
+    disabled.enabled = false;
+    let mut analyzer = step("check", Phase::Parallel, &[]);
+    analyzer.kind = crate::pipeline_config::StepKind::Analyzer;
+    let mut donor = step("donor", Phase::Parallel, &["claude", "codex"]);
+    donor.model_overrides.insert(
+        "claude".into(),
+        ModelSelection::Pinned {
+            model: "opus".into(),
+        },
+    );
+    donor.effort_overrides.insert("claude".into(), "max".into());
+    let mut raw = workflow(vec![disabled, analyzer, donor]);
+    raw.orientation_schema = Some(crate::auto_review::quick_orientation_schema());
+    let roster = roster_for(settings_with_exceptions(), raw, None);
+    let adaptive: Vec<_> = roster
+        .iter()
+        .filter(|entry| entry.stage == "adaptive")
+        .collect();
+    assert_eq!(adaptive.len(), 2);
+    for (entry, provider) in adaptive.into_iter().zip(["claude", "codex"]) {
+        let donor = roster
+            .iter()
+            .find(|entry| entry.step_ids == ["donor"] && entry.provider == provider)
+            .unwrap();
+        assert_eq!(entry.provider, donor.provider);
+        assert_eq!(entry.transport, donor.transport);
+        assert_eq!(entry.model, donor.model);
+        assert_eq!(entry.effort, donor.effort);
+        assert_eq!(entry.source, donor.source);
+        assert_eq!(entry.label, "Adaptive agents");
+        assert!(entry.step_ids.is_empty() && entry.step_labels.is_empty());
+        assert!(entry
+            .note
+            .as_deref()
+            .unwrap()
+            .starts_with("2–4 calls per document"));
+    }
+}
+
+#[test]
+fn adaptive_agents_show_the_fixed_count_and_one_review_model() {
+    let mut raw = workflow(vec![step("donor", Phase::Parallel, &[])]);
+    let mut schema = crate::auto_review::orientation_schema();
+    schema[crate::auto_review::ADAPTIVE_AGENT_COUNT_KEY] = 4.into();
+    raw.orientation_schema = Some(schema);
+    let roster = roster_for(settings_with_exceptions(), raw, Some(&opus_max()));
+    let adaptive = find(&roster, "adaptive");
+    assert_eq!(adaptive.provider, "claude");
+    assert_eq!(adaptive.model, find(&roster, "parallel").model);
+    assert_eq!(adaptive.effort, "max");
+    assert_eq!(adaptive.source, "review");
+    assert!(adaptive
+        .note
+        .as_deref()
+        .unwrap()
+        .starts_with("4 calls per document"));
 }
 
 #[test]

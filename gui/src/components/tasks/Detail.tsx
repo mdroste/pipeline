@@ -1,3 +1,6 @@
+import { RecordedUsage } from "./Budget";
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 import { useEffect, useRef, useState } from "react";
 import { stateLabel, taskTime } from "../../lib/taskPresentation";
 import { taskClient } from "../../lib/taskClient";
@@ -63,7 +66,10 @@ function InputForm({
           rows={3}
         />
       </label>
-      <button className="task-primary" disabled={busy || !value.trim()}>
+      <button
+        className="ui-button ui-button--primary"
+        disabled={busy || !value.trim()}
+      >
         Provide input
       </button>
       {receipt.wakeAt && (
@@ -96,6 +102,14 @@ export default function Detail({
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [correctedPapers, setCorrectedPapers] = useState<
+    Record<string, string>
+  >({});
+  const corrections = Object.values(run.progress.receipts).filter(
+    (r) =>
+      ["failed", "unknown"].includes(r.state) &&
+      r.error?.startsWith("The revised artifact is unchanged."),
+  );
   const [saved, setSaved] = useState(false);
   const terminal = ["finished", "cancelled", "failed"].includes(run.state);
   useEffect(() => {
@@ -120,7 +134,20 @@ export default function Detail({
     setBusy(true);
     setError("");
     try {
-      onUpdated(await taskClient.control(run, action));
+      onUpdated(
+        await taskClient.control(
+          run,
+          action,
+          action === "retry" && corrections.length
+            ? Object.fromEntries(
+                corrections.map((r) => [
+                  r.address,
+                  correctedPapers[r.address] ?? "",
+                ]),
+              )
+            : undefined,
+        ),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -140,15 +167,12 @@ export default function Detail({
           <Status state={run.state} />
           <h2>{run.name}</h2>
         </div>
-        <button
-          type="button"
-          aria-label="Close automation details"
-          onClick={onClose}
-        >
-          ×
-        </button>
+        <IconButton label="Close automation details" onClick={onClose}>
+          <Icon name="close" />
+        </IconButton>
       </div>
       <p>{run.reason || run.chain.description}</p>
+      <RecordedUsage id={run.id} revision={run.revision} />
       {run.state === "draft" && (
         <ScopePreview
           run={run}
@@ -161,7 +185,7 @@ export default function Detail({
           <>
             {run.state === "draft" && (
               <button
-                className="task-primary"
+                className="ui-button ui-button--primary"
                 disabled={busy}
                 onClick={() => void control("start")}
               >
@@ -175,7 +199,7 @@ export default function Detail({
             )}
             {run.state === "paused" && (
               <button
-                className="task-primary"
+                className="ui-button ui-button--primary"
                 disabled={busy}
                 onClick={() => void control("resume")}
               >
@@ -212,6 +236,8 @@ export default function Detail({
           key={run.revision}
           run={run}
           busy={busy}
+          correctedPapers={correctedPapers}
+          onCorrectedPapers={setCorrectedPapers}
           onControl={control}
         />
       )}

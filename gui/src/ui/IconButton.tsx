@@ -30,7 +30,7 @@ export default function IconButton({
         ref={ref}
         type={type}
         aria-label={label}
-        className={`inline-flex shrink-0 items-center justify-center rounded-ui-sm text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 aria-expanded:bg-sunken aria-expanded:text-ink ${
+        className={`ui-icon-button inline-flex shrink-0 items-center justify-center rounded-ui-sm text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)] disabled:opacity-40 aria-expanded:bg-sunken aria-expanded:text-ink ${
           size === "sm" ? "h-7 w-7" : "h-8 w-8"
         } ${className}`}
         {...rest}

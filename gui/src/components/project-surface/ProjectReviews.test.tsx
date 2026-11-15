@@ -233,7 +233,7 @@ it("shows why tracking failed", async () => {
 it("asks for a folder when the project has none", async () => {
   render(<ProjectReviews workspaceRoot={null} />);
   expect(
-    await screen.findByText(/Attach a folder to this project/),
+    await screen.findByText(/Reviews started from papers/),
   ).toBeInTheDocument();
   expect(
     screen.getByText("No reviews of this project's documents yet."),
@@ -248,4 +248,32 @@ it("opens the collection a button names", async () => {
   await waitFor(() =>
     expect(router.route).toEqual({ page: "projects", collectionId: "col-2" }),
   );
+});
+
+it("lists a folderless project's handed-off papers by immutable staged path or explicit run ID", async () => {
+  mocks.invoke.mockImplementation(async (command: string) => {
+    if (command === "list_runs")
+      return [
+        run("first", "/handoffs/one/manuscript.tex"),
+        run("linked", "/relocated/two.pdf"),
+        run("other", "/other/manuscript.tex"),
+      ];
+    if (command === "list_projects") return { projects: [] };
+    if (command === "workbench_project_review_links")
+      return [
+        {
+          id: "one",
+          stagedPath: "/handoffs/one/manuscript.tex",
+          externalReference: "linked",
+          contentHash: "hash",
+        },
+      ];
+    throw Error(command);
+  });
+  render(<ProjectReviews workspaceId="w" workspaceRoot={null} />);
+  expect(
+    await screen.findByText("Review of manuscript.tex"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Review of two.pdf")).toBeInTheDocument();
+  expect(screen.getAllByText("Review of manuscript.tex")).toHaveLength(1);
 });

@@ -18,7 +18,7 @@ export interface FileNavigation {
   /** Canonical registered root used only to map absolute Markdown links. */
   root?: string;
   open: (location: FileLocation) => void | Promise<void>;
-  openAbsolute?: (path: string) => void | Promise<void>;
+  openAbsolute?: (location: FileLocation) => void | Promise<void>;
   image: (path: string) => Promise<string>;
 }
 export const FileNavigationContext = createContext<FileNavigation | null>(null);

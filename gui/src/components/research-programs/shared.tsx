@@ -187,10 +187,10 @@ export function Artifacts({
                   setSelected(a.id);
                   setPreview({
                     artifact: a,
-                    ...(await programClient.call<{ base64: string }>(
-                      workspaceId,
-                      { action: "artifact", id: a.id },
-                    )),
+                    ...(await programClient.call(workspaceId, {
+                      action: "artifact",
+                      id: a.id,
+                    })),
                   });
                 })
               }

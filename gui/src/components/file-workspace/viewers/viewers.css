@@ -122,7 +122,8 @@
   font-weight: 400;
 }
 .file-table-note {
-  margin-left: 8px;
+  margin-inline-start: var(--ui-space-2);
+  color: var(--ui-muted);
 }
 .file-notebook {
   flex: 1;

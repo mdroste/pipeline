@@ -4,12 +4,8 @@ import { createRoot } from "react-dom/client";
 import WorkspaceHarnessEditor from "../src/components/WorkspaceHarnessEditor";
 import { conversationClient } from "../src/lib/workbench/conversationClient";
 import { harnessClient } from "../src/lib/workbench/harnessClient";
-import type {
-  ConversationSnapshot,
-  HarnessCatalog,
-  HarnessPreset,
-  BasePromptUpdate,
-} from "../src/lib/workbenchTypes";
+import type { ConversationSnapshot } from "../src/lib/workbench/sessionTypes";
+import type { HarnessCatalog, HarnessPreset, BasePromptUpdate } from "../src/lib/workbench/harnessTypes";
 import writing from "../src-tauri/prompts/agent_profiles/writing.md?raw";
 import review from "../src-tauri/prompts/agent_profiles/code_review.md?raw";
 import econ from "../src-tauri/prompts/agent_profiles/econ_research.md?raw";

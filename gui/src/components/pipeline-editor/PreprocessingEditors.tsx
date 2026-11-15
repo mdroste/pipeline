@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
 import { notify } from "../DialogService";
-import type { ExtractionConfig } from "../../lib/types";
+import type { ExtractionConfig } from "../../lib/workflowTypes";
 import { ADAPTIVE_AGENT_COUNT_KEY } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
 import { MemoizedExtraInputsEditor as ExtraInputsEditor } from "./ProfileSettingsEditors";
@@ -71,7 +71,7 @@ function ExtractionEditor({
                        focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-colors"
           >
             <option value="document">
-              Document — a PDF, LaTeX, or Word file
+              Document — a PDF, LaTeX, Word, or PowerPoint file
             </option>
             <option value="folder">
               Folder — inventory a directory; steps Read files on demand
@@ -162,10 +162,7 @@ function OrientationEditor({
   const insertDefault = async (name: string) => {
     const request = ++resetRequest.current;
     try {
-      const defaults = await invoke<{
-        prompt: string;
-        schema: Record<string, unknown>;
-      }>("get_orientation_defaults", { name });
+      const defaults = await workflowSchemaClient.orientationDefaults({ name });
       if (mounted.current && request === resetRequest.current) {
         onPromptChange(defaults.prompt);
         onSchemaChange(defaults.schema);
@@ -173,7 +170,7 @@ function OrientationEditor({
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
         notify(
-          `Failed to load the default orientation prompt: ${
+          `Failed to load the default document preparation prompt: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -185,9 +182,7 @@ function OrientationEditor({
     const request = ++resetRequest.current;
     const name = inputMode === "folder" ? "orientation_folder" : "orientation";
     try {
-      const defaults = await invoke<{
-        schema: Record<string, unknown>;
-      }>("get_orientation_defaults", { name });
+      const defaults = await workflowSchemaClient.orientationDefaults({ name });
       if (mounted.current && request === resetRequest.current) {
         onPromptChange("");
         onSchemaChange(defaults.schema);
@@ -195,7 +190,7 @@ function OrientationEditor({
     } catch (error) {
       if (mounted.current && request === resetRequest.current) {
         notify(
-          `Failed to load the default orientation schema: ${
+          `Failed to load the default document overview schema: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -216,10 +211,9 @@ function OrientationEditor({
       // validation. Restore both together, keeping only the configured
       // adaptive-agent count from the current schema. Built-ins restore
       // their own pair (Fast's method cap, Slide Review's genre pin).
-      const defaults = await invoke<{
-        prompt: string;
-        schema: Record<string, unknown>;
-      }>("get_auto_review_orientation_defaults", { profileId });
+      const defaults = await workflowSchemaClient.autoOrientationDefaults({
+        profileId,
+      });
       if (mounted.current && request === resetRequest.current) {
         const nextSchema = { ...defaults.schema };
         const count = schema?.[ADAPTIVE_AGENT_COUNT_KEY];
@@ -245,27 +239,22 @@ function OrientationEditor({
       <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
-            {autoReview ? "Orientation & Classification" : "Orientation Map"}
+            Document bundle preparation
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
             {autoReview ? (
               <>
-                Stage 0b. One LLM call builds the paper orientation map and
-                classifies the review it needs. Alongside sections, formal
-                results, tables, and notation, the validated map includes a
-                compact <span className="font-mono">review_plan</span> that
-                selects the subject and method specialists assembled for this
-                report and classifies the document genre shared with every
-                reviewer.
+                Prepares the document's text and structure, then chooses subject
+                and method reviewers. The planner starts with relevant
+                candidates and can look up more reviewers or supporting passages
+                together. The document overview and review plan are saved
+                separately.
               </>
             ) : (
               <>
-                Stage 0b. One LLM call that builds a structured JSON survey of
-                the input before any step runs — for a paper: sections,
-                theorems, tables, notation. Steps that select the survey receive
-                it via {"{orientation}"}, which keeps them grounded in what the
-                input actually contains. The survey can use any JSON schema your
-                prompt asks for.
+                Prepares a document overview before the review starts. Steps
+                that select the overview receive it through {"{orientation}"}.
+                The prompt and output schema determine what it contains.
               </>
             )}
           </p>
@@ -298,7 +287,7 @@ function OrientationEditor({
               type="button"
               onClick={() => void restoreRouterPrompt()}
               className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-              title="Restore the generated orientation & classification prompt and its matching output schema. A configured adaptive-agent count is kept."
+              title="Restore the generated document preparation and review planning prompt and its matching output schema. A configured adaptive-agent count is kept."
             >
               Restore adaptive router prompt & schema
             </button>
@@ -348,7 +337,7 @@ function OrientationEditor({
             value={prompt}
             onChange={changePrompt}
             context={{ kind: "orientation", autoReview }}
-            ariaLabel="Orientation map prompt"
+            ariaLabel="Document overview prompt"
           />
         </div>
         {autoReview && (

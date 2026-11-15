@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import PipelinePage from "../PipelinePage";
-import type { PipelineConfig, ProfileSummary } from "../../lib/types";
+import type { PipelineConfig, ProfileSummary } from "../../lib/workflowTypes";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));

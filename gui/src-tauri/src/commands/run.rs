@@ -4,7 +4,7 @@ mod document;
 mod inputs;
 mod orientation;
 mod preparation;
-mod report;
+pub(super) mod report;
 mod visuals;
 
 // This orchestration boundary carries the immutable launch snapshot together
@@ -37,6 +37,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     )?;
     validate_named_input_paths(&snapshot.config, &provided_inputs, true)?;
     let RunSnapshot {
+        review_handoff_id,
         author_note,
         settings,
         mut config,
@@ -121,15 +122,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     .await?;
     let captured_path = scoped_source.source_path.as_deref().unwrap_or(paper);
     let captured_path_text = captured_path.to_string_lossy();
-    let captured_visual_pdf = if captured_path
+    let mut captured_visual_pdf = if captured_path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
     {
         Some(captured_path.to_path_buf())
-    } else if let Some(companion) = crate::document_bundle::companion_pdf(paper_path) {
-        let destination = run_input_dir.path().join("visual-companion.pdf");
-        super::reuse_artifacts::copy_tree(&companion, &destination)?;
-        Some(destination)
     } else {
         None
     };
@@ -181,6 +178,40 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             return Err(error);
         }
     };
+    let slide_render = if preparation_stop.is_none()
+        && input_mode == "document"
+        && extract::slides::is_slide_source(&extraction)
+    {
+        crate::pipeline::logging::emit(app, "Rendering slide deck to PDF".into());
+        let source = extraction.clone();
+        let workspace = run_input_dir.path().join("slide-render");
+        let rendered = crate::run_scope::spawn_blocking(move || {
+            extract::slides::render_slide_pdf(&source, &workspace)
+        })
+        .await
+        .map_err(|error| format!("Slide rendering task failed: {error}"))?;
+        match rendered {
+            Ok(rendered) => {
+                captured_visual_pdf = rendered.pdf.clone();
+                visuals::apply_slide_render_note(&mut extraction, &rendered);
+                Some(rendered)
+            }
+            Err(error) if crate::pipeline::review_budget::stopped(&error) => {
+                preparation_stop = Some(error);
+                None
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        if captured_visual_pdf.is_none() {
+            if let Some(companion) = crate::document_bundle::companion_pdf(paper_path) {
+                let destination = run_input_dir.path().join("visual-companion.pdf");
+                super::reuse_artifacts::copy_tree(&companion, &destination)?;
+                captured_visual_pdf = Some(destination);
+            }
+        }
+        None
+    };
     let captured_document_path = std::path::PathBuf::from(&extraction.source_path);
     extraction.source_path = paper_path.to_string();
     let extract_secs = extract_start.elapsed().as_secs();
@@ -196,12 +227,14 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     for note in &extraction.quality_notes {
         crate::pipeline::logging::emit(app, format!("WARNING: {note}"));
     }
-    let input_identity = crate::runs::input_identity(
+    let mut input_identity = crate::runs::input_identity(
         paper_path,
         input_interpretation,
         &extraction.paper_hash,
         None,
     );
+
+    input_identity.review_handoff_id = review_handoff_id;
 
     // Close/flush the preprocessing sink before copying it into the newly
     // addressable run directory.
@@ -232,6 +265,9 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
     if let Some(w) = run_writer.as_mut() {
+        if let Some(rendered) = &slide_render {
+            visuals::retain_slide_render(w, rendered)?;
+        }
         crate::pipeline::author_note::save(w, author_note.as_deref())?;
         w.add_text(
             "context/workflow.json",
@@ -288,7 +324,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         input_path: paper_path.to_string(),
         input_mode: input_mode.to_string(),
         input_interpretation: input_interpretation.to_string(),
-        input_identity,
+        input_identity: input_identity.clone(),
         profile_name,
         workflow_source,
         workflow_fingerprint,
@@ -315,7 +351,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         app,
         input_mode,
         captured_visual_pdf,
-        &extraction,
+        &mut extraction,
         &mut run_writer,
     )
     .await;
@@ -324,8 +360,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
-    let mut document_bundle =
+    let document_bundle =
         document::build_document_bundle(app, &extraction, &captured_document_path, &mut run_writer);
+
+    let (bundle_json, bundle_markdown) =
+        document::persist_document_bundle(app, &document_bundle, &extraction, &mut run_writer)?;
 
     if let Some(writer) = run_writer.as_mut() {
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
@@ -339,6 +378,51 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .read_root
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
+    let inputs::NamedInputs {
+        resolved_inputs,
+        persisted_inputs,
+        extra_tmps,
+        runtime_extra_sources,
+        extra_sources,
+        planning_inputs,
+    } = match inputs::capture_named_inputs(
+        app,
+        &config,
+        &provided_inputs,
+        folder_files,
+        &run_input_dir,
+        &mut run_writer,
+    )
+    .await
+    {
+        Ok(inputs) => inputs,
+        Err(error) if crate::pipeline::review_budget::stopped(&error) => {
+            return preparation::finish(
+                app,
+                run_writer,
+                &config,
+                &extraction,
+                &settings,
+                completion,
+                pipeline_start.elapsed(),
+                &error,
+            );
+        }
+        Err(error) => return Err(error),
+    };
+    let source_record = super::rerun::files::read_run_file_in(
+        run_writer.as_ref().ok_or("Missing Review workspace")?.dir(),
+        "context/source-snapshot.json",
+    )?;
+    let recipe = super::run_contract::OrientationRecipe::new(
+        &config,
+        &settings,
+        input_mode,
+        &extraction.text,
+        Some(&source_record),
+        author_note.as_deref(),
+        &extraction.quality_notes,
+    )?;
     let usage_before_orientation = crate::pipeline::logging::run_usage();
     let orientation::OrientedDocument {
         orientation,
@@ -347,13 +431,16 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         _orient_tmp,
     } = match orientation::prepare_orientation(
         app,
-        &config,
+        &recipe,
         input_mode,
+        &config,
         &extraction,
+        document_bundle.as_ref(),
         &scoped_source_read_root,
         &run_input_dir,
         &mut run_writer,
         author_note.as_deref(),
+        &planning_inputs,
     )
     .await
     {
@@ -388,14 +475,6 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
-    let (bundle_json, bundle_markdown) = document::persist_oriented_bundle(
-        app,
-        &mut document_bundle,
-        &orientation,
-        &extraction,
-        &mut run_writer,
-    )?;
-
     // New steps receive the readable bundle projection. Runs where bundle
     // construction was unavailable receive the exact canonical document.
     let paper_document_text = bundle_markdown.as_deref().unwrap_or(&extraction.text);
@@ -427,41 +506,23 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .unwrap_or_default();
     let survey_hint = crate::models::survey_hint(&orientation);
 
-    let inputs::NamedInputs {
-        resolved_inputs,
-        persisted_inputs,
-        extra_tmps,
-        runtime_extra_sources,
-        extra_sources,
-    } = match inputs::capture_named_inputs(
-        app,
-        &config,
-        &provided_inputs,
-        folder_files,
-        &run_input_dir,
-        &mut run_writer,
-    )
-    .await
-    {
-        Ok(inputs) => inputs,
-        Err(error) if crate::pipeline::review_budget::stopped(&error) => {
-            return preparation::finish(
-                app,
-                run_writer,
-                &execution_config,
-                &extraction,
-                &settings,
-                completion,
-                pipeline_start.elapsed(),
-                &error,
-            );
-        }
-        Err(error) => return Err(error),
-    };
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
 
+    let writer = run_writer.as_mut().ok_or("Missing Review workspace")?;
+    let mut contract = super::run_contract::ExecutionContract::build(
+        &execution_config,
+        &settings,
+        &recipe,
+        &orientation,
+        extraction.quality_notes.clone(),
+        author_note.as_deref(),
+        &variables,
+        &persisted_inputs,
+        writer,
+    )?;
+    contract.save(writer, std::iter::empty())?;
     let result = executor::budget::counted_from(
         budget_start,
         executor::execute_steps(
@@ -505,7 +566,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     );
 
     let diff_text = if diff || settings.auto_revision_reconciliation {
-        revision_diff(app, paper_path, &extraction.paper_hash, &mut report).await
+        revision_diff(app, &input_identity, &mut report).await
     } else {
         None
     };
@@ -531,11 +592,10 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
 /// a paper with nothing to compare.
 async fn revision_diff(
     app: &crate::emit::EventBus,
-    paper_path: &str,
-    paper_hash: &str,
+    identity: &crate::runs::InputIdentity,
     report: &mut crate::models::PipelineReport,
 ) -> Option<String> {
-    let compared = match crate::runs::load_latest_report_for_input(paper_path, paper_hash) {
+    let compared = match crate::runs::load_latest_report_for_lineage(identity) {
         Ok(None) => return None,
         Ok(Some(prior)) => match crate::pipeline::review_budget::check() {
             Ok(()) => reconcile::reconcile(app, &prior, report).await,

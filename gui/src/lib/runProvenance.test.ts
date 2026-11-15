@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PipelineReport } from "./types";
+import type { PipelineReport } from "./reviewTypes";
 import {
   aggregateProviderModelUsage,
   aggregateStepModelUsage,

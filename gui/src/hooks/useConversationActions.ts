@@ -3,7 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { ConversationSnapshot } from "../lib/workbenchTypes";
+import type { ConversationSnapshot } from "../lib/workbench/sessionTypes";
 
 export function useConversationActions({
   sessionId,

@@ -15,7 +15,8 @@ try {
   await app.$("button=Automations").click();
   await app.$("h1=Automations").waitForDisplayed();
   await app.$("button=+ New automation").click();
-  await app.$("summary=Definition (advanced)").click();
+  await app.$("button=Start empty").click();
+  await app.$('[role="tab"]=Definition (advanced)').click();
   const chain = { schemaVersion: 1, name: title, description: "Native timer and input integration check", steps: [
     { id: "timer", label: "Wait briefly", kind: "delay", seconds: 0 },
     { id: "answer", label: "Wait for the paper", kind: "input", prompt: "Supply the test paper" },

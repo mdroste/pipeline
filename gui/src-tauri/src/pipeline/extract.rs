@@ -19,6 +19,7 @@ mod folder_snapshot;
 mod latex;
 mod pdf;
 mod rendering;
+pub(crate) mod slides;
 mod staged;
 mod structured;
 

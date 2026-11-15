@@ -1,4 +1,3 @@
-import { useState } from "react";
 import ReviewPdfOptions from "./ReviewPdfOptions";
 import AuthorNoteField from "./AuthorNoteField";
 import { authorNoteLength, AUTHOR_NOTE_MAX_CHARS } from "../lib/authorNote";
@@ -7,12 +6,13 @@ import WorkflowPanel from "./WorkflowPanel";
 import RunModelChoice from "./RunModelChoice";
 import RunPlanPreview from "./RunPlanPreview";
 import PageHeader from "../ui/PageHeader";
+import { Icon } from "../ui/icons";
+import type { DepsReport } from "../lib/settingsTypes";
 import type {
-  DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
-  RunModelOverrides,
-} from "../lib/types";
+} from "../lib/workflowTypes";
+import type { RunModelOverrides } from "../lib/reviewModelTypes";
 import "./RunSetupPanel.css";
 
 interface Props {
@@ -79,24 +79,21 @@ export default function RunSetupPanel({
   onRetryConfig,
   onRetryDependencies,
 }: Props) {
-  const [sampling, setSampling] = useState(false);
   const noteTooLong = authorNoteLength(authorNote) > AUTHOR_NOTE_MAX_CHARS;
   const missingInput = !paperPath && inputMode !== "none";
-  const reason = sampling
-    ? "Reading PDF sample…"
-    : preparingRun
-      ? "Preparing preview…"
-      : configLoading
-        ? "Loading workflow…"
-        : configError
-          ? "Reload the workflow to continue."
-          : missingInput
-            ? "Choose a document to preview this review."
-            : noteTooLong
-              ? "Shorten the author note to continue."
-              : !listenersReady
-                ? "Connecting to the review service…"
-                : null;
+  const reason = preparingRun
+    ? "Preparing preview…"
+    : configLoading
+      ? "Loading workflow…"
+      : configError
+        ? "Reload the workflow to continue."
+        : missingInput
+          ? "Choose a document to preview this review."
+          : noteTooLong
+            ? "Shorten the author note to continue."
+            : !listenersReady
+              ? "Connecting to the review service…"
+              : null;
   const target = configError
     ? "review-workflow"
     : missingInput
@@ -116,8 +113,9 @@ export default function RunSetupPanel({
   return (
     <div className="ui-page review-setup" data-testid="run-setup-panel">
       <PageHeader
+        variant="compact"
         title="New review"
-        description="Choose your document, workflow, and models. Preview the plan before starting."
+        description="Set up your review, then preview the plan."
       />
       <div className="review-setup-grid">
         <div className="review-setup-column">
@@ -136,7 +134,7 @@ export default function RunSetupPanel({
                 selection={inputSelection}
                 onPathChange={onPaperPathChange}
                 onSelectionChange={onInputSelectionChange}
-                disabled={configLoading || preparingRun || sampling}
+                disabled={configLoading || preparingRun}
               />
             )}
             {paperPath?.toLowerCase().endsWith(".pdf") &&
@@ -147,13 +145,12 @@ export default function RunSetupPanel({
                   onChange={onParallelOverridesChange}
                   disabled={configLoading || preparingRun}
                   refreshKey={configVersion}
-                  onBusy={setSampling}
                 />
               )}
           </section>
           <section
             id="review-note"
-            className="review-setup-card"
+            className="review-setup-note"
             aria-label="Review focus"
           >
             <AuthorNoteField
@@ -161,7 +158,7 @@ export default function RunSetupPanel({
               value={authorNote}
               onChange={onAuthorNoteChange}
               focusKey={authorNoteFocusKey}
-              disabled={configLoading || preparingRun || sampling}
+              disabled={configLoading || preparingRun}
             />
           </section>
         </div>
@@ -172,7 +169,7 @@ export default function RunSetupPanel({
             aria-label="Review workflow"
           >
             <WorkflowPanel
-              disabled={configLoading || preparingRun || sampling}
+              disabled={configLoading || preparingRun}
               onConfigure={() => onConfigureWorkflow()}
               onProfileChange={onProfileChange}
               refreshKey={configVersion}
@@ -189,7 +186,7 @@ export default function RunSetupPanel({
           </section>
           <RunModelChoice
             value={parallelOverrides}
-            disabled={configLoading || preparingRun || sampling}
+            disabled={configLoading || preparingRun}
             dependencies={dependencies}
             localLlmActive={localLlmActive}
             refreshKey={configVersion}
@@ -216,20 +213,12 @@ export default function RunSetupPanel({
       )}
       <footer className="review-setup-footer">
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-xs text-ink-muted">
-            The preview shows which providers receive your document.{" "}
-            <button
-              onClick={onPrivacyDetails}
-              className="underline underline-offset-2"
-            >
-              Data and privacy
-            </button>
-          </p>
-          {reason && (
+          <p className="review-preview-heading">Preview your review</p>
+          {reason ? (
             <p
               id="review-preview-reason"
               role="status"
-              className="text-sm text-ink"
+              className="text-ui-meta text-ink-muted"
             >
               {target ? (
                 <button
@@ -242,6 +231,11 @@ export default function RunSetupPanel({
                 reason
               )}
             </p>
+          ) : (
+            <p className="text-ui-meta text-ink-muted">
+              Check model calls, estimated use, and data sharing before
+              starting.
+            </p>
           )}
           {runActivity && runActivity.running + runActivity.queued > 0 && (
             <p className="text-xs text-ink-muted">
@@ -252,15 +246,21 @@ export default function RunSetupPanel({
             </p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onGenerate}
-          disabled={!!reason}
-          aria-describedby={reason ? "review-preview-reason" : undefined}
-          className="ui-page-button primary review-preview-button"
-        >
-          {preparingRun ? "Preparing preview…" : "Preview"}
-        </button>
+        <div className="review-preview-actions">
+          <button onClick={onPrivacyDetails} className="review-privacy-link">
+            Data and privacy
+          </button>
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={!!reason}
+            aria-describedby={reason ? "review-preview-reason" : undefined}
+            className="ui-button ui-button--primary review-preview-button"
+          >
+            {preparingRun ? "Preparing preview…" : "Preview"}
+            <Icon name="arrow" className="h-4 w-4" />
+          </button>
+        </div>
       </footer>
     </div>
   );

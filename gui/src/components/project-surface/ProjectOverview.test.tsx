@@ -9,7 +9,10 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ProjectOverview from "./ProjectOverview";
 import type { ProjectHome } from "../../lib/projectClient";
-import type { Workspace, WorkbenchSession } from "../../lib/workbenchTypes";
+import type {
+  Workspace,
+  WorkbenchSession,
+} from "../../lib/workbench/sessionTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -197,6 +200,7 @@ it("shows the draft's review state and what is out of sync, one action per row",
         title: "",
       },
     ],
+    workbench_project_review_links: [],
     list_projects: {
       projects: [{ id: "collection", name: "Reviews", run_ids: ["run"] }],
       warnings: [],

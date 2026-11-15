@@ -1,193 +1,29 @@
 use super::call::{execute_text, OwnedRequest};
 use crate::models::ExtractionResult;
 
-const MAX_PAPER_TEXT: usize = 250_000;
+mod document_type;
+mod index;
+mod planning;
+mod preparation;
+pub(crate) use preparation::{
+    document_preparation_snapshot, PreparedReview, SupportingInput, PREPARATION_PATH,
+    REGISTRY_PATH, REVIEW_PLAN_PATH,
+};
+
+mod sampling;
+
+use index::ManuscriptIndex;
+pub(crate) use index::{
+    FOLLOW_UP_BYTES, PATH as ORIENTATION_INDEX_PATH, PROMPT_BYTES as INDEX_PROMPT_BYTES,
+};
+pub use sampling::{orientation_sample, OrientationSample, OrientationSampleRange};
+pub(crate) use sampling::{
+    INDEXED_ORIENTATION_NOTICE, ORIENTATION_EXCERPTS_NOTICE, ORIENTATION_SAMPLING_PATH,
+};
+
 const MAX_RETRIES: usize = 2;
 /// Below every stock schema's 50-item cap, so host notes never fill the array.
 const MAX_HOST_QUALITY_NOTES: usize = 40;
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct OrientationSampleRange {
-    pub byte_start: usize,
-    pub byte_end: usize,
-    pub reasons: Vec<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct OrientationSample {
-    pub schema_version: u32,
-    pub original_bytes: usize,
-    pub included_bytes: usize,
-    pub omitted_bytes: usize,
-    pub truncated: bool,
-    pub ranges: Vec<OrientationSampleRange>,
-    #[serde(skip)]
-    pub text: String,
-}
-
-fn char_boundary_before(text: &str, mut index: usize) -> usize {
-    index = index.min(text.len());
-    while index > 0 && !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-fn normalize_sample_ranges(mut ranges: Vec<OrientationSampleRange>) -> Vec<OrientationSampleRange> {
-    ranges.sort_by_key(|range| range.byte_start);
-    let mut normalized: Vec<OrientationSampleRange> = Vec::new();
-    for range in ranges {
-        if let Some(previous) = normalized.last_mut() {
-            if range.byte_start <= previous.byte_end {
-                previous.byte_end = previous.byte_end.max(range.byte_end);
-                for reason in range.reasons {
-                    if !previous.reasons.contains(&reason) {
-                        previous.reasons.push(reason);
-                    }
-                }
-                continue;
-            }
-        }
-        normalized.push(range);
-    }
-    normalized
-}
-
-/// Deterministically sample a long document across its beginning, section
-/// starts, evenly spaced interior positions, and tail. The range ledger is
-/// persisted with the run so routing coverage is inspectable and reproducible.
-pub fn orientation_sample(text: &str) -> OrientationSample {
-    if text.len() <= MAX_PAPER_TEXT {
-        return OrientationSample {
-            schema_version: 1,
-            original_bytes: text.len(),
-            included_bytes: text.len(),
-            omitted_bytes: 0,
-            truncated: false,
-            ranges: vec![OrientationSampleRange {
-                byte_start: 0,
-                byte_end: text.len(),
-                reasons: vec!["complete_document".to_string()],
-            }],
-            text: text.to_string(),
-        };
-    }
-
-    let range = |start: usize, end: usize, reason: String| OrientationSampleRange {
-        byte_start: char_boundary_before(text, start),
-        byte_end: char_boundary_before(text, end).max(char_boundary_before(text, start)),
-        reasons: vec![reason],
-    };
-    let mut ranges = vec![
-        range(0, 50_000, "document_start".to_string()),
-        range(
-            text.len().saturating_sub(40_000),
-            text.len(),
-            "document_tail".to_string(),
-        ),
-    ];
-
-    let mut headings = Vec::new();
-    let mut offset = 0usize;
-    for line in text.split_inclusive('\n') {
-        let trimmed = line.trim();
-        let lower = trimmed.to_ascii_lowercase();
-        let keyword_heading = [
-            "abstract",
-            "introduction",
-            "background",
-            "method",
-            "methods",
-            "data",
-            "results",
-            "discussion",
-            "conclusion",
-            "conclusions",
-            "appendix",
-            "references",
-        ]
-        .iter()
-        .any(|keyword| {
-            lower == *keyword
-                || lower.ends_with(&format!(" {keyword}"))
-                || lower.starts_with(&format!("{keyword} "))
-                || lower.starts_with(&format!("{keyword}:"))
-        });
-        let markdown_heading = trimmed.starts_with('#') && trimmed.len() <= 240;
-        if (markdown_heading || keyword_heading) && !trimmed.is_empty() {
-            headings.push((offset, trimmed.chars().take(120).collect::<String>()));
-        }
-        offset += line.len();
-    }
-    if headings.len() > 24 {
-        headings = (0..24)
-            .map(|index| {
-                let selected = index * (headings.len() - 1) / 23;
-                headings[selected].clone()
-            })
-            .collect();
-        headings.dedup_by_key(|(offset, _)| *offset);
-    }
-    for (offset, heading) in headings {
-        let candidate = range(
-            offset,
-            offset.saturating_add(6_000),
-            format!("section_start:{heading}"),
-        );
-        let mut proposed = ranges.clone();
-        proposed.push(candidate);
-        let proposed = normalize_sample_ranges(proposed);
-        let bytes = proposed
-            .iter()
-            .map(|range| range.byte_end.saturating_sub(range.byte_start))
-            .sum::<usize>();
-        if bytes <= MAX_PAPER_TEXT {
-            ranges = proposed;
-        }
-    }
-    for (index, fraction) in [1usize, 2, 3, 4].into_iter().enumerate() {
-        let center = text.len().saturating_mul(fraction) / 5;
-        let candidate = range(
-            center.saturating_sub(2_500),
-            center.saturating_add(2_500),
-            format!("stratified_interior_{}", index + 1),
-        );
-        let mut proposed = ranges.clone();
-        proposed.push(candidate);
-        let proposed = normalize_sample_ranges(proposed);
-        let bytes = proposed
-            .iter()
-            .map(|range| range.byte_end.saturating_sub(range.byte_start))
-            .sum::<usize>();
-        if bytes <= MAX_PAPER_TEXT {
-            ranges = proposed;
-        }
-    }
-    let ranges = normalize_sample_ranges(ranges);
-    let included_bytes = ranges
-        .iter()
-        .map(|range| range.byte_end.saturating_sub(range.byte_start))
-        .sum();
-    let mut sampled = String::with_capacity(included_bytes + ranges.len() * 100);
-    for sample in &ranges {
-        sampled.push_str(&format!(
-            "\n\n[PIPELINE ORIENTATION SAMPLE bytes {}..{}; {}]\n",
-            sample.byte_start,
-            sample.byte_end,
-            sample.reasons.join(" | ")
-        ));
-        sampled.push_str(&text[sample.byte_start..sample.byte_end]);
-    }
-    OrientationSample {
-        schema_version: 1,
-        original_bytes: text.len(),
-        included_bytes,
-        omitted_bytes: text.len().saturating_sub(included_bytes),
-        truncated: true,
-        ranges,
-        text: sampled,
-    }
-}
 
 fn stock_survey_name(profile_prompt: &str) -> Option<&'static str> {
     let trimmed = profile_prompt.trim();
@@ -292,7 +128,101 @@ pub async fn build_orientation_map(
     source_read_root: Option<&str>,
     author_note: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let terminal_schema = output_schema
+    if output_schema
+        .and_then(document_type::expected_document)
+        .is_some()
+    {
+        return build_paper_orientation(
+            app,
+            extraction,
+            None,
+            prompt_template,
+            output_schema,
+            source_read_root,
+            author_note,
+            None,
+            &[],
+        )
+        .await
+        .map(|result| result.orientation);
+    }
+    build_indexed_orientation_map(
+        app,
+        extraction,
+        prompt_template,
+        output_schema,
+        source_read_root,
+        author_note,
+        None,
+    )
+    .await
+}
+
+pub(crate) fn uses_manuscript_index(schema: Option<&serde_json::Value>) -> bool {
+    schema.and_then(document_type::expected_document).is_some()
+}
+
+/// Run Paper Review orientation against an immutable extraction and its local
+/// structure, returning the saved index alongside the downstream map.
+#[allow(clippy::too_many_arguments)]
+pub async fn build_paper_orientation(
+    app: &crate::emit::EventBus,
+    extraction: &ExtractionResult,
+    bundle: Option<&crate::document_bundle::DocumentBundle>,
+    prompt_template: Option<&str>,
+    output_schema: Option<&serde_json::Value>,
+    source_read_root: Option<&str>,
+    author_note: Option<&str>,
+    artifact_root: Option<&std::path::Path>,
+    supporting_inputs: &[SupportingInput],
+) -> Result<PreparedReview, String> {
+    if let Some(schema) =
+        output_schema.filter(|schema| document_type::expected_document(schema).is_some())
+    {
+        return planning::build(
+            app,
+            extraction,
+            bundle,
+            prompt_template,
+            schema,
+            source_read_root,
+            author_note,
+            artifact_root,
+            supporting_inputs,
+        )
+        .await;
+    }
+    let mut index = uses_manuscript_index(output_schema)
+        .then(|| ManuscriptIndex::new(&extraction.text, bundle, artifact_root))
+        .flatten();
+    let map = build_indexed_orientation_map(
+        app,
+        extraction,
+        prompt_template,
+        output_schema,
+        source_read_root,
+        author_note,
+        index.as_mut(),
+    )
+    .await?;
+    Ok(PreparedReview {
+        orientation: map,
+        index: index.map(|index| index.serialize()).transpose()?,
+        preparation: None,
+        registry: None,
+    })
+}
+
+async fn build_indexed_orientation_map(
+    app: &crate::emit::EventBus,
+    extraction: &ExtractionResult,
+    prompt_template: Option<&str>,
+    output_schema: Option<&serde_json::Value>,
+    source_read_root: Option<&str>,
+    author_note: Option<&str>,
+    mut manuscript: Option<&mut ManuscriptIndex<'_>>,
+) -> Result<serde_json::Value, String> {
+    let mut terminal_schema = output_schema
         .map(|schema| {
             crate::auto_review::validate_schema_settings(schema)
                 .map_err(|error| format!("Invalid orientation schema setting: {error}"))?;
@@ -306,6 +236,23 @@ pub async fn build_orientation_map(
         })
         .transpose()?
         .unwrap_or_else(|| serde_json::json!({"type": "object"}));
+    if manuscript.is_some() {
+        ManuscriptIndex::extend_schema(&mut terminal_schema);
+    }
+    let expected_document = document_type::expected_document(&terminal_schema);
+    let response_schema = match expected_document {
+        Some(_) => document_type::response_schema(terminal_schema.clone()),
+        None => terminal_schema.clone(),
+    };
+    let follow_up_schema = manuscript
+        .is_some()
+        .then(|| index::follow_up_schema(&terminal_schema));
+    if let Some(follow_up) = &follow_up_schema {
+        for schema in [&response_schema, follow_up] {
+            crate::pipeline::structured::provider_schema(schema)
+                .map_err(|error| format!("Invalid indexed orientation schema: {error}"))?;
+        }
+    }
     let sample = orientation_sample(&extraction.text);
     let paper_text = sample.text.as_str();
 
@@ -317,13 +264,14 @@ pub async fn build_orientation_map(
         note_limit.saturating_sub(usize::from(sample.truncated)),
     );
     if sample.truncated && note_limit > 0 {
-        quality_notes.push(format!(
-            "Orientation used a deterministic section-aware sample of {} / {} bytes across {} ranges (including the document tail); {} bytes were omitted. See context/orientation_sampling.json.",
-            sample.included_bytes,
-            sample.original_bytes,
-            sample.ranges.len(),
-            sample.omitted_bytes,
-        ));
+        quality_notes.push(
+            if manuscript.is_some() {
+                INDEXED_ORIENTATION_NOTICE
+            } else {
+                ORIENTATION_EXCERPTS_NOTICE
+            }
+            .to_string(),
+        );
     }
 
     // Resolve the template from caller, then user prompts dir, then compiled default.
@@ -353,7 +301,25 @@ pub async fn build_orientation_map(
     let base_prompt = substitute_input_text(template, paper_text)?;
     let mut base_prompt =
         crate::auto_review::apply_agent_count_instruction(base_prompt, output_schema)?;
+    if let Some(index) = manuscript.as_deref() {
+        crate::safety::push_str_limited(
+            &mut base_prompt,
+            &index.prompt(),
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Orientation index",
+        )?;
+    }
     append_quality_note_instruction(&mut base_prompt, &quality_notes, output_schema)?;
+    if let Some(expected) = expected_document {
+        let mut instruction = document_type::instruction(expected);
+        crate::safety::push_str_limited(
+            &mut instruction,
+            &base_prompt,
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Orientation prompt",
+        )?;
+        base_prompt = instruction;
+    }
 
     let mut prompt = base_prompt.clone();
     let mut last_error = String::new();
@@ -363,13 +329,33 @@ pub async fn build_orientation_map(
     let resolution = crate::model_catalog::resolve(&provider, &settings, selection.as_ref())
         .await
         .map_err(|error| format!("Could not resolve the orientation model: {error}"))?;
-    let effort = settings.orientation_effort(&provider);
+    let effort = if manuscript.is_some() {
+        let effort = settings.paper_orientation_effort(&provider);
+        if resolution.supported_efforts.is_empty() || resolution.supported_efforts.contains(&effort)
+        {
+            effort
+        } else {
+            settings.orientation_effort(&provider)
+        }
+    } else {
+        settings.orientation_effort(&provider)
+    };
     let timeout = (settings.step_timeout_secs / 2).max(60);
-    for attempt in 0..=MAX_RETRIES {
+    let mut initial = None;
+    let mut targeted_files = None;
+    for attempt in 0..=MAX_RETRIES + 1 {
+        let follow_up = initial.is_some();
+        if attempt > MAX_RETRIES && !follow_up {
+            break;
+        }
         let mut request = OwnedRequest::new(
             app,
             "orientation",
-            "Orientation map",
+            if follow_up {
+                "Document evidence lookup"
+            } else {
+                "Document bundle preparation"
+            },
             prompt.clone(),
             timeout,
         );
@@ -380,12 +366,26 @@ pub async fn build_orientation_map(
         request.model_policy = Some(resolution.selection.label());
         request.effort = (!effort.trim().is_empty()).then(|| effort.clone());
         request.model_resolved = true;
-        request.output_schema = Some(terminal_schema.clone());
+        request.output_schema = Some(if follow_up {
+            follow_up_schema
+                .as_ref()
+                .expect("indexed follow-up schema")
+                .clone()
+        } else {
+            response_schema.clone()
+        });
         request.settings = std::sync::Arc::new(settings.clone());
-        if let Some(root) = source_read_root {
+        if let Some(root) = source_read_root.filter(|_| !follow_up) {
             request.tools = vec!["Read".to_string()];
             request.cwd = Some(root.to_string());
             request.read_dirs = vec![root.to_string()];
+        }
+        if let Some(root) = targeted_files.as_ref().and_then(|dir: &tempfile::TempDir| {
+            super::claude::normalize_cli_root(&dir.path().to_string_lossy())
+        }) {
+            request.tools = vec!["Read".to_string()];
+            request.cwd = Some(root.clone());
+            request.read_dirs = vec![root];
         }
         let raw = match execute_text(request).await {
             Ok(raw) => raw,
@@ -399,10 +399,14 @@ pub async fn build_orientation_map(
                 {
                     return Err(error);
                 }
+                if follow_up {
+                    last_error = error;
+                    break;
+                }
                 if super::provider_error::is_usage_limit_error(&error)
                     || super::provider_error::is_non_retryable_error(&error)
                 {
-                    return Err(format!("Orientation map stopped: {error}"));
+                    return Err(format!("Document bundle preparation stopped: {error}"));
                 }
                 last_error = format!("provider call failed: {error}");
                 if attempt < MAX_RETRIES {
@@ -421,19 +425,82 @@ pub async fn build_orientation_map(
         let cleaned = raw.trim();
 
         match serde_json::from_str::<serde_json::Value>(cleaned) {
-            Ok(mut value) if value.is_object() => {
-                // Strict transports return null for absent optional fields;
-                // strip them before host validation, like canonicalize does.
-                crate::pipeline::structured::strip_optional_nulls(&terminal_schema, &mut value);
-                if let Some(schema) = output_schema {
-                    let validation =
-                        crate::pipeline::structured::validate(&terminal_schema, &value)
-                            .and_then(|()| {
-                                crate::auto_review::validate_contract_for_schema(schema, &value)
-                            })
-                            .and_then(|()| validate_quality_notes(&value, &quality_notes, schema));
-                    if let Err(error) = validation {
+            Ok(value) if value.is_object() => {
+                let response = match (&initial, expected_document) {
+                    (Some(initial), _) => index::apply_follow_up(
+                        initial,
+                        value,
+                        follow_up_schema.as_ref().expect("indexed follow-up schema"),
+                        &quality_note_values(&quality_notes),
+                    )
+                    .map(|mut value| {
+                        manuscript
+                            .as_deref()
+                            .expect("indexed follow-up")
+                            .retain_valid_revisions(&mut value, initial);
+                        document_type::Response::Oriented(value)
+                    }),
+                    (None, Some(expected)) => document_type::decode(value, expected),
+                    (None, None) => Ok(document_type::Response::Oriented(value)),
+                };
+                let validation = response.and_then(|response| match response {
+                    document_type::Response::Rejected(_) => Ok(response),
+                    document_type::Response::Oriented(mut value) => {
+                        // Strict transports return null for absent optional fields.
+                        crate::pipeline::structured::strip_optional_nulls(
+                            &terminal_schema,
+                            &mut value,
+                        );
+                        if let Some(schema) = output_schema {
+                            crate::pipeline::structured::validate(&terminal_schema, &value)?;
+                            crate::auto_review::validate_contract_for_schema(schema, &value)?;
+                            validate_quality_notes(&value, &quality_notes, schema)?;
+                        }
+                        if let Some(index) = manuscript.as_deref() {
+                            index.validate(&value, !follow_up)?;
+                        }
+                        Ok(document_type::Response::Oriented(value))
+                    }
+                });
+                match validation {
+                    Ok(document_type::Response::Oriented(mut value)) => {
+                        if let Some(index) = manuscript.as_deref_mut() {
+                            if follow_up {
+                                index.follow_up_completed = true;
+                            } else if let Some((next_prompt, files)) =
+                                index.follow_up_prompt(&value)
+                            {
+                                prompt = next_prompt;
+                                targeted_files = files;
+                                if let Some(notes) = value.as_object_mut() {
+                                    notes.remove("follow_up");
+                                }
+                                initial = Some(value);
+                                continue;
+                            }
+                        }
+                        if manuscript.is_some() {
+                            value
+                                .as_object_mut()
+                                .expect("validated map")
+                                .remove("follow_up");
+                            value["orientation_indexed"] = serde_json::Value::Bool(true);
+                        }
+                        return Ok(value);
+                    }
+                    Ok(document_type::Response::Rejected(message)) => {
+                        if follow_up {
+                            last_error = message;
+                            break;
+                        }
+                        super::logging::emit(app, message.clone());
+                        return Err(message);
+                    }
+                    Err(error) => {
                         last_error = format!("orientation did not satisfy its schema: {error}");
+                        if follow_up {
+                            break;
+                        }
                         if attempt < MAX_RETRIES {
                             prompt = format!(
                                 "Your previous structured response failed orientation validation: {error}\nCorrect the response so it satisfies the supplied schema and the task requirements.\n\n"
@@ -445,13 +512,14 @@ pub async fn build_orientation_map(
                                 "Orientation retry prompt",
                             )?;
                         }
-                        continue;
                     }
                 }
-                return Ok(value);
             }
             Ok(_) => {
                 last_error = "top-level JSON value is not an object".to_string();
+                if follow_up {
+                    break;
+                }
                 if attempt < MAX_RETRIES {
                     prompt = "Your previous structured response did not satisfy the supplied object-root schema. Correct it and complete the task again.\n\n".to_string();
                     crate::safety::push_str_limited(
@@ -464,6 +532,9 @@ pub async fn build_orientation_map(
             }
             Err(e) => {
                 last_error = format!("{e}");
+                if follow_up {
+                    break;
+                }
                 if attempt < MAX_RETRIES {
                     prompt = format!(
                         "Pipeline could not decode your previous structured response: {e}\nCorrect it so it satisfies the supplied schema and complete the task again.\n\n"
@@ -479,8 +550,18 @@ pub async fn build_orientation_map(
         }
     }
 
+    if let Some(mut initial) = initial {
+        if let Some(index) = manuscript {
+            index.follow_up_incomplete = true;
+        }
+        initial["orientation_indexed"] = serde_json::Value::Bool(true);
+        initial["orientation_follow_up_incomplete"] = serde_json::Value::Bool(true);
+        super::logging::emit(app, format!("Orientation kept its initial plan. The requested follow-up could not be completed: {last_error}"));
+        return Ok(initial);
+    }
+
     Err(format!(
-        "Failed to build orientation map after {} attempts. Last error: {last_error}",
+        "Failed to build document overview after {} attempts. Last error: {last_error}",
         MAX_RETRIES + 1
     ))
 }
@@ -628,7 +709,7 @@ fn append_quality_note_instruction(
     let values = quality_note_values(notes);
     let instruction = if schema.is_some_and(schema_accepts_quality_notes) {
         format!(
-            "\n\nHOST EXTRACTION QUALITY NOTES\nThe host detected the following immutable extraction diagnostics. Include every object exactly once in the top-level `extraction_quality_notes` array. Do not alter their text. You may add other notes.\n{}\n",
+            "\n\nHOST EXTRACTION QUALITY NOTES\nThe host detected the following immutable extraction diagnostics. Include every object exactly once in the orientation map's `extraction_quality_notes` array. Do not alter their text. You may add other notes.\n{}\n",
             serde_json::to_string_pretty(&values)
                 .map_err(|error| format!("Could not serialize extraction diagnostics: {error}"))?
         )
@@ -741,416 +822,4 @@ fn substitute_input_text(template: &str, paper_text: &str) -> Result<String, Str
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strip_json_fences_clean_json() {
-        let input = r#"{"key": "value"}"#;
-        assert_eq!(strip_json_fences(input), input);
-    }
-
-    #[test]
-    fn strip_json_fences_with_markdown() {
-        let input = "```json\n{\"key\": \"value\"}\n```";
-        assert_eq!(strip_json_fences(input), r#"{"key": "value"}"#);
-    }
-
-    #[test]
-    fn strip_json_fences_with_preamble() {
-        let input = "Here is the JSON output:\n\n{\"metadata\": {\"title\": \"Test\"}}";
-        assert_eq!(
-            strip_json_fences(input),
-            r#"{"metadata": {"title": "Test"}}"#
-        );
-    }
-
-    #[test]
-    fn strip_json_fences_nested_braces() {
-        let input = r#"{"a": {"b": {"c": 1}}}"#;
-        assert_eq!(strip_json_fences(input), input);
-    }
-
-    #[test]
-    fn strip_json_fences_braces_in_strings() {
-        let input = r#"{"text": "contains {braces} inside"}"#;
-        assert_eq!(strip_json_fences(input), input);
-    }
-
-    #[test]
-    fn strip_json_fences_no_json() {
-        let input = "No JSON here at all";
-        assert_eq!(strip_json_fences(input), input);
-    }
-
-    #[test]
-    fn strip_json_fences_trailing_text() {
-        let input = "{\"key\": 1}\n\nSome trailing commentary.";
-        assert_eq!(strip_json_fences(input), r#"{"key": 1}"#);
-    }
-
-    #[test]
-    fn strip_json_fences_prefers_the_survey_over_a_preamble_object() {
-        // A small balanced object echoed in prose must not hijack the survey.
-        let input = "I return {} when unsure. Actual survey:\n{\"metadata\": {\"title\": \"T\"}, \"sections\": []}";
-        assert_eq!(
-            strip_json_fences(input),
-            r#"{"metadata": {"title": "T"}, "sections": []}"#
-        );
-        // Same when the junk object trails the real one.
-        let input =
-            "{\"metadata\": {\"title\": \"T\"}, \"sections\": []}\nAs requested: {\"ok\": 1}";
-        assert_eq!(
-            strip_json_fences(input),
-            r#"{"metadata": {"title": "T"}, "sections": []}"#
-        );
-    }
-
-    #[test]
-    fn strip_json_fences_rejects_an_empty_object_as_the_survey() {
-        // An empty object is not a survey; returning the raw text makes the
-        // caller's parse fail and triggers the retry with the error appended.
-        let input = "The result is {} — nothing else.";
-        assert_eq!(strip_json_fences(input), input.trim());
-    }
-
-    #[test]
-    fn strip_json_fences_invalid_then_valid() {
-        // First brace starts invalid JSON, second starts valid
-        let input = "text with {broken then {\"valid\": true}";
-        assert_eq!(strip_json_fences(input), r#"{"valid": true}"#);
-    }
-
-    // ── extraction quality notes ──────────────────────────────────
-
-    #[test]
-    fn quality_notes_are_required_by_compatible_schemas_without_host_mutation() {
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {"extraction_quality_notes": {"type": "array"}}
-        });
-        let notes = ["math broken".to_string()];
-        let good = serde_json::json!({
-            "extraction_quality_notes": [
-                {"page_range": "p. 3", "description": "garbled"},
-                {"page_range": "global", "description": "math broken"}
-            ]
-        });
-        assert!(validate_quality_notes(&good, &notes, &schema).is_ok());
-        let bad = serde_json::json!({"extraction_quality_notes": []});
-        assert!(validate_quality_notes(&bad, &notes, &schema).is_err());
-    }
-
-    #[test]
-    fn quality_note_instruction_respects_schema_shape() {
-        let schema = serde_json::json!({
-            "type": "object",
-            "properties": {"extraction_quality_notes": {"type": "array"}}
-        });
-        let mut prompt = "Survey".to_string();
-        append_quality_note_instruction(
-            &mut prompt,
-            &["ligatures mangled".to_string()],
-            Some(&schema),
-        )
-        .unwrap();
-        assert!(prompt.contains("Include every object exactly once"));
-        assert!(prompt.contains("ligatures mangled"));
-    }
-
-    #[test]
-    fn page_notes_coalesce_into_ranges_and_excess_notes_into_a_count() {
-        let mut notes = vec!["Math is garbled.".to_string()];
-        notes.extend((1..=30).map(|page| {
-            format!(
-                "Page {page}: recognized {} of 900 characters in the PDF text layer.",
-                page * 7
-            )
-        }));
-        notes.push("Page 40: recovered incomplete recognition".to_string());
-        notes.push("Page 41: recovered incomplete recognition".to_string());
-        notes.push("Page 43: recovered incomplete recognition".to_string());
-
-        let bounded = bounded_host_notes(&notes, 3);
-        assert_eq!(bounded[0], "Math is garbled.");
-        assert!(
-            bounded[1].starts_with("Pages 1-30: 30 similar notes"),
-            "{}",
-            bounded[1]
-        );
-        assert_eq!(
-            bounded[2],
-            "Pages 40-41, 43: 3 similar notes, for example: recovered incomplete recognition"
-        );
-
-        let capped = bounded_host_notes(&notes, 2);
-        assert_eq!(capped.len(), 2);
-        assert!(capped[1].starts_with("2 further extraction notes"));
-
-        // Under the limit the notes stay verbatim.
-        assert_eq!(bounded_host_notes(&notes, notes.len()), notes);
-    }
-
-    #[test]
-    fn host_note_limit_stays_below_the_schema_cap() {
-        let schema = |max_items: u64| {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "extraction_quality_notes": {"type": "array", "maxItems": max_items}
-                }
-            })
-        };
-        assert_eq!(host_note_limit(None), MAX_HOST_QUALITY_NOTES);
-        assert_eq!(host_note_limit(Some(&schema(50))), MAX_HOST_QUALITY_NOTES);
-        assert_eq!(host_note_limit(Some(&schema(5))), 4);
-        assert_eq!(host_note_limit(Some(&schema(1))), 1);
-        assert_eq!(host_note_limit(Some(&schema(0))), 0);
-    }
-
-    /// A local OpenAI-compatible server that returns a Paper Review survey
-    /// echoing exactly the host notes in the prompt it received, and counts
-    /// its calls.
-    fn serve_echoing_survey(calls: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> String {
-        use std::io::{BufRead, Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(stream) = stream else { continue };
-                let mut reader = std::io::BufReader::new(stream);
-                let mut length = 0usize;
-                loop {
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
-                        break;
-                    }
-                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-                        length = value.trim().parse().unwrap_or(0);
-                    }
-                }
-                let mut body = vec![0; length];
-                let _ = reader.read_exact(&mut body);
-                if body.is_empty() {
-                    // The model list request made while resolving the model.
-                    let models = r#"{"data":[{"id":"fixture"}]}"#;
-                    let _ = write!(
-                        reader.into_inner(),
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{models}",
-                        models.len()
-                    );
-                    continue;
-                }
-                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-                let prompt = body["messages"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter_map(|message| message["content"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let start = prompt.find("HOST EXTRACTION QUALITY NOTES").unwrap();
-                let start = start + prompt[start..].find("\n[").unwrap() + 1;
-                let notes = serde_json::Deserializer::from_str(&prompt[start..])
-                    .into_iter::<serde_json::Value>()
-                    .next()
-                    .unwrap()
-                    .unwrap();
-                let survey = serde_json::json!({
-                    "metadata": {
-                        "title": "T", "authors": [], "date": "", "paper_type": "mixed",
-                        "page_count": 0, "has_appendix": false, "has_online_appendix": false,
-                    },
-                    "sections": [], "formal_results": [], "tables_figures": [], "notation": [],
-                    "stated_contribution": "", "key_references": [],
-                    "extraction_quality_notes": notes,
-                });
-                let reply = serde_json::json!({
-                    "choices": [{
-                        "message": {"role": "assistant", "content": survey.to_string()},
-                        "finish_reason": "stop",
-                    }],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-                })
-                .to_string();
-                let _ = write!(
-                    reader.into_inner(),
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
-                    reply.len()
-                );
-            }
-        });
-        format!("http://{address}/v1")
-    }
-
-    #[tokio::test]
-    async fn orientation_succeeds_first_time_when_extraction_has_more_notes_than_the_schema_allows()
-    {
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let settings = crate::settings::Settings {
-            default_orientation_agent: "local".into(),
-            local_base_url: serve_echoing_survey(calls.clone()),
-            local_model: "fixture".into(),
-            ..Default::default()
-        };
-        let extraction = ExtractionResult {
-            text: "Paper text".to_string(),
-            quality_notes: (1..=60)
-                .map(|page| format!("Page {page}: recovered incomplete recognition"))
-                .collect(),
-            method: "full_structure".to_string(),
-            source_path: "paper.pdf".to_string(),
-            paper_hash: "hash".to_string(),
-        };
-        let schema = crate::orientation_contract::paper_schema();
-        let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-        // A private run scope, so the frozen settings reach only this call.
-        let run = crate::run_scope::ActiveScope::begin("orientation-host-notes-test");
-        let survey = crate::run_scope::scoped(run.scope().clone(), async {
-            let _settings = crate::settings::freeze_for_run(settings);
-            build_orientation_map(
-                &app,
-                &extraction,
-                Some("Survey {input_text}"),
-                Some(&schema),
-                None,
-                None,
-            )
-            .await
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        let notes = survey["extraction_quality_notes"].as_array().unwrap();
-        assert_eq!(notes.len(), 1);
-        assert!(notes[0]["description"]
-            .as_str()
-            .unwrap()
-            .starts_with("Pages 1-60: 60 similar notes"));
-    }
-
-    #[test]
-    fn long_document_sampling_includes_sections_and_tail_with_a_bounded_ledger() {
-        let mut text = "# Abstract\nStart evidence.\n".to_string();
-        text.push_str(&"middle filler\n".repeat(12_000));
-        text.push_str("# Methods\nMETHOD_SENTINEL\n");
-        text.push_str(&"more filler\n".repeat(12_000));
-        text.push_str("# Appendix A\nAPPENDIX_SENTINEL\n");
-        text.push_str(&"tail filler\n".repeat(8_000));
-        text.push_str("TAIL_SENTINEL");
-
-        let sample = orientation_sample(&text);
-        assert!(sample.truncated);
-        assert!(sample.included_bytes <= MAX_PAPER_TEXT);
-        assert!(sample.text.contains("METHOD_SENTINEL"));
-        assert!(sample.text.contains("APPENDIX_SENTINEL"));
-        assert!(sample.text.contains("TAIL_SENTINEL"));
-        assert!(sample.omitted_bytes > 0);
-    }
-
-    #[test]
-    fn short_document_sampling_is_lossless() {
-        let sample = orientation_sample("é complete document");
-        assert!(!sample.truncated);
-        assert_eq!(sample.text, "é complete document");
-        assert_eq!(sample.ranges.len(), 1);
-    }
-
-    // ── resolve_survey_template ────────────────────────────────────
-    // Note: load_prompt checks ~/.pipeline/prompts/ overrides first, so
-    // these assert against load_prompt output rather than literal text.
-
-    #[test]
-    fn resolve_empty_prompt_document_mode_uses_default() {
-        assert!(resolve_survey_template("", "document").is_none());
-        assert!(resolve_survey_template("  \n", "document").is_none());
-    }
-
-    #[test]
-    fn resolve_empty_prompt_folder_mode_uses_folder_survey() {
-        let resolved = resolve_survey_template("", "folder").expect("folder survey should load");
-        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
-        assert_eq!(resolved, folder);
-    }
-
-    #[test]
-    fn resolve_stock_generic_prompt_swaps_in_folder_mode() {
-        let generic = crate::prompts::compiled_default("orientation_generic").unwrap();
-        let resolved =
-            resolve_survey_template(generic, "folder").expect("folder survey should load");
-        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
-        assert_eq!(resolved, folder);
-        // ...but stays generic for document inputs.
-        assert_eq!(
-            resolve_survey_template(generic, "document").as_deref(),
-            Some(generic)
-        );
-    }
-
-    #[test]
-    fn resolve_stock_paper_prompt_swaps_in_folder_mode() {
-        let paper = crate::prompts::compiled_default("orientation").unwrap();
-        let resolved = resolve_survey_template(paper, "folder").expect("folder survey should load");
-        let folder = crate::prompts::load_prompt("orientation_folder").unwrap();
-        assert_eq!(resolved, folder);
-    }
-
-    #[test]
-    fn stock_prompt_resolution_keeps_schema_in_lockstep() {
-        assert_eq!(
-            resolve_survey_schema("", None, "document"),
-            Some(crate::orientation_contract::paper_schema())
-        );
-        assert_eq!(
-            resolve_survey_schema("", None, "folder"),
-            Some(crate::orientation_contract::folder_schema())
-        );
-
-        let generic_prompt = crate::prompts::compiled_default("orientation_generic").unwrap();
-        let generic_schema = crate::orientation_contract::generic_schema();
-        assert_eq!(
-            resolve_survey_schema(generic_prompt, Some(&generic_schema), "folder"),
-            Some(crate::orientation_contract::folder_schema())
-        );
-    }
-
-    #[test]
-    fn custom_prompt_and_schema_remain_authoritative() {
-        let prompt = "Survey this input using the supplied contract. {input_text}";
-        let schema = serde_json::json!({
-            "type": "object",
-            "required": ["custom"],
-            "properties": {"custom": {"type": "string"}}
-        });
-        assert_eq!(resolve_survey_schema(prompt, None, "folder"), None);
-        assert_eq!(
-            resolve_survey_schema(prompt, Some(&schema), "folder"),
-            Some(schema)
-        );
-    }
-
-    #[test]
-    fn resolve_custom_prompt_wins_in_any_mode() {
-        let custom = "Survey this thing my way. {input_text}";
-        assert_eq!(
-            resolve_survey_template(custom, "folder").as_deref(),
-            Some(custom)
-        );
-        assert_eq!(
-            resolve_survey_template(custom, "document").as_deref(),
-            Some(custom)
-        );
-    }
-
-    #[test]
-    fn document_text_containing_placeholder_tokens_is_not_rescanned() {
-        let paper = "This paper studies {paper_text} and {input_text} as literals.";
-        let prompt = substitute_input_text("Survey:\n{input_text}\nEnd.", paper).unwrap();
-        assert_eq!(prompt, format!("Survey:\n{paper}\nEnd."));
-        // Both aliases resolve, each exactly once, from the template only.
-        let both = substitute_input_text("A {input_text} B {paper_text} C", "X").unwrap();
-        assert_eq!(both, "A X B X C");
-    }
-}
+mod tests;

@@ -124,6 +124,7 @@ pub(super) fn read_profile(id: &str) -> Result<ProfileData, String> {
 }
 
 pub(super) fn save_profile_unlocked(id: &str, profile: &ProfileData) -> Result<(), String> {
+    crate::findings::validate_declaration(&profile.steps, profile.outputs.findings_step.trim())?;
     save_profile_unlocked_at(&profile_path(id)?, profile)
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { AppPage } from "../../components/NavRail";
-import type { WorkbenchEvent } from "../../lib/workbenchTypes";
+import type { WorkbenchEvent } from "../../lib/workbench/runtimeTypes";
 import { pendingRequestSessions } from "../../lib/workspaceAttention";
 import { useActiveTurn } from "../workspace/useActiveTurn";
 

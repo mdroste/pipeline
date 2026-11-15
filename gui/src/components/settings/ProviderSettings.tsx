@@ -2,7 +2,8 @@ import { useState } from "react";
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { withAccessMode } from "../../lib/providers";
-import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
+import type { DepsReport, Settings } from "../../lib/settingsTypes";
+import type { ModelCatalog } from "../../lib/reviewModelTypes";
 
 import InfoButton from "../InfoButton";
 import CredentialField from "./CredentialField";
@@ -81,7 +82,7 @@ export function LocalProviderSection({
         </InfoButton>
       </div>
       {externalLinkError && (
-        <p role="alert" className="text-xs text-red-700 dark:text-red-300">
+        <p role="alert" className="ui-notice ui-notice--error">
           Could not open ollama.com: {externalLinkError}
         </p>
       )}

@@ -234,6 +234,87 @@ fn an_archive_from_every_prior_schema_restores() {
 }
 
 #[test]
+fn a_schema_23_store_keeps_delivered_files_through_backup_and_restore() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("released");
+    fs::create_dir_all(root.join("blobs")).unwrap();
+    let database = root.join("research.sqlite3");
+    reference_schema(23)
+        .unwrap()
+        .execute("VACUUM INTO ?1", [database.to_string_lossy()])
+        .unwrap();
+    let connection = Connection::open(&database).unwrap();
+    connection.pragma_update(None, "user_version", 23).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO sessions(id,title,created_at,updated_at)
+             VALUES('session','Released conversation','t','t');
+             INSERT INTO task_exchanges(id,session_id,kind,value_json,created_at,files_adopted)
+             VALUES('result','session','result','{}','t',1);",
+        )
+        .unwrap();
+    let content = b"delivered report";
+    let file = root.join("blobs/report.txt");
+    fs::write(&file, content).unwrap();
+    connection
+        .execute(
+            "INSERT INTO task_delivery_files
+             (exchange_id,ordinal,filename,sha256,size_bytes,storage_reference)
+             VALUES('result',0,'report.txt',?1,?2,?3)",
+            params![
+                hash_reader(&content[..]).unwrap(),
+                content.len() as i64,
+                file.to_string_lossy()
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = Store::open_at(&root).unwrap();
+    let usage = crate::workbench::release::storage_report(&store).unwrap();
+    assert_eq!(
+        usage
+            .categories
+            .iter()
+            .find(|c| c.key == "blobs_unreferenced")
+            .unwrap()
+            .entries,
+        0
+    );
+    let archive = temporary.path().join("workspace.pwrx");
+    export_archive(
+        &store,
+        ExportArchiveRequest {
+            path: archive.to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    let restored = Store::open_at(&temporary.path().join("restored")).unwrap();
+    import_archive(
+        &restored,
+        ImportArchiveRequest {
+            path: archive.to_string_lossy().into_owned(),
+            root_mappings: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    let reference: String = restored
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT storage_reference FROM task_delivery_files",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        Path::new(&reference),
+        restored.root_path().join("blobs/report.txt")
+    );
+    assert_eq!(fs::read(reference).unwrap(), content);
+}
+
+#[test]
 fn archive_rejects_newer_and_mismatched_schema_declarations() {
     for declared in [CURRENT_SCHEMA_VERSION + 1, 11] {
         let source = tempfile::tempdir().unwrap();

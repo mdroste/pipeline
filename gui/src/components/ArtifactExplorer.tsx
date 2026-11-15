@@ -119,7 +119,7 @@ export default function ArtifactExplorer({
         {selectionNotice && (
           <p
             role="status"
-            className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+            className="shrink-0 border-b border-line bg-[var(--ui-warning-soft)] px-4 py-2 text-ui-label text-[var(--ui-warning)]"
           >
             {selectionNotice}
           </p>
@@ -148,17 +148,12 @@ export default function ArtifactExplorer({
         )}
         <div className={fileTab ? "hidden" : "flex min-h-0 flex-1 flex-col"}>
           {content && (content.kind === "image" || content.kind === "pdf") && (
-            <div
-              className="flex shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 py-2
-                          dark:border-gray-800 dark:bg-gray-950"
-            >
+            <div className="file-toolbar bg-surface">
               <button
                 type="button"
                 onClick={goBack}
                 disabled={selectionHistory.length === 0}
-                className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-gray-600
-                         hover:bg-gray-100 hover:text-gray-900 disabled:cursor-default disabled:opacity-40
-                         dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white"
+                className="inline-flex items-center gap-1.5 font-medium"
               >
                 <svg
                   aria-hidden="true"
@@ -176,7 +171,7 @@ export default function ArtifactExplorer({
                 </svg>
                 Back
               </button>
-              <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+              <span className="min-w-0 truncate text-ui-meta text-ink-muted">
                 {entry?.label ?? "Figure"}
               </span>
             </div>

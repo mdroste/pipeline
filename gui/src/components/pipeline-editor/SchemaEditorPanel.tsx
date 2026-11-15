@@ -1,7 +1,8 @@
 import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
 import type { ProviderSchemaPreview } from "../../lib/workflowSchemaClient";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AutoReviewCatalog, StepConfig } from "../../lib/types";
+import type { AutoReviewCatalog } from "../../lib/reviewCatalogTypes";
+import type { StepConfig } from "../../lib/workflowTypes";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { ISSUES_SCHEMA } from "./stepTemplates";
 import { exampleInstance, outputSchemaError } from "./utils";
@@ -277,7 +278,7 @@ export default function SchemaEditorPanel({
         target.kind === "step"
           ? "Paste a schema or choose Return to Markdown output."
           : target.autoReview
-            ? "This review requires its generated orientation schema."
+            ? "This review requires its generated document overview schema."
             : "Paste a schema or choose Use Pipeline default.",
       );
       onDraftValidityChange(false);
@@ -297,7 +298,7 @@ export default function SchemaEditorPanel({
           parsed["x-pipeline-adaptive-agent-count"] !== undefined)
       ) {
         setError(
-          "x-pipeline contract settings are reserved for the orientation schema.",
+          "x-pipeline contract settings are reserved for the document overview schema.",
         );
         onDraftValidityChange(false);
         return;
@@ -391,7 +392,7 @@ export default function SchemaEditorPanel({
 
   const title =
     target.kind === "orientation"
-      ? "Orientation map schema"
+      ? "Document overview schema"
       : `${target.step.label} output schema`;
   const isManagedText = target.kind === "step" && !configuredSchema;
   const isDefaultOrientation =
@@ -455,9 +456,9 @@ export default function SchemaEditorPanel({
           {isManagedText
             ? "Pipeline constrains the provider response with this envelope, then stores only its content field as the step’s Markdown report."
             : isDefaultOrientation
-              ? "Pipeline requires one JSON object. Add a custom schema when the review depends on particular orientation fields."
+              ? "Pipeline requires one JSON object. Add a custom schema when the review depends on particular document overview fields."
               : catalogBacked
-                ? "Pipeline stores this compact contract, resolves its live catalog references into strict enums for the provider call, and validates the result against the same catalog snapshot."
+                ? "Pipeline validates the saved document overview against this contract. Review planning uses a smaller response format containing only the reviewer candidates supplied for that document."
                 : "Pipeline asks the provider to return this JSON format and checks the response before saving it."}
         </p>
       </div>
@@ -477,7 +478,7 @@ export default function SchemaEditorPanel({
               <pre
                 aria-label={
                   target.kind === "orientation"
-                    ? "Effective orientation schema"
+                    ? "Effective document overview schema"
                     : `Effective schema for ${target.step.label}`
                 }
                 className="overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-4 font-mono text-xs leading-relaxed text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
@@ -605,12 +606,12 @@ export default function SchemaEditorPanel({
               </section>
             )}
             {liveReference && (
-              <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-gray-700 dark:bg-gray-800/40">
-                <h3 className="text-sm font-medium text-emerald-950 dark:text-gray-100">
+              <section className="rounded-xl border border-line bg-sunken p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                <h3 className="text-sm font-medium text-ink dark:text-gray-100">
                   Live contract reference:{" "}
                   <span className="font-mono">{liveReference}</span>
                 </h3>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-gray-300">
+                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted dark:text-gray-300">
                   This step uses Pipeline’s standard output format, updated for
                   each request. The current format appears below. Replace the
                   reference with a full schema to customize it.
@@ -680,7 +681,7 @@ export default function SchemaEditorPanel({
               id="artifact-schema-editor"
               aria-label={
                 target.kind === "orientation"
-                  ? "Orientation output JSON schema"
+                  ? "Document overview output JSON schema"
                   : `Output JSON schema for ${target.step.label}`
               }
               value={draft}
@@ -711,7 +712,7 @@ export default function SchemaEditorPanel({
                   </span>
                 </div>
                 <pre
-                  aria-label="Resolved orientation provider schema"
+                  aria-label="Resolved document overview schema"
                   className="max-h-[32rem] overflow-auto rounded-lg bg-white p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-950 dark:text-gray-200"
                 >
                   {schemaText(resolvedSchema)}

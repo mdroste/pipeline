@@ -8,16 +8,21 @@ export default function PageHeader({
   title,
   description,
   action,
+  variant = "standard",
+  level = 1,
 }: {
   title: string;
-  description: string;
+  description?: string;
   action?: ReactNode;
+  variant?: "standard" | "compact";
+  level?: 1 | 2;
 }) {
+  const Heading = level === 1 ? "h1" : "h2";
   return (
-    <header className="ui-page-header">
+    <header className={`ui-page-header ui-page-header--${variant}`}>
       <div>
-        <h1>{title}</h1>
-        <p className="ui-page-description">{description}</p>
+        <Heading>{title}</Heading>
+        {description && <p className="ui-page-description">{description}</p>}
       </div>
       {action}
     </header>

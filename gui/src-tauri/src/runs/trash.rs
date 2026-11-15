@@ -27,6 +27,10 @@ fn trash_runs_dir() -> Result<PathBuf, String> {
 /// Move a completed run into recoverable Trash. The move is atomic because
 /// Trash lives beside the run store on the same filesystem.
 pub fn delete_run(run_id: &str) -> Result<(), String> {
+    super::retention::with_unheld_run(run_id, || move_to_trash(run_id))
+}
+
+pub(super) fn move_to_trash(run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
     if runs_dir()?.join(run_id).join(".task-pin").exists() {
         return Err("This run is retained by a task that has not yet adopted its result".into());

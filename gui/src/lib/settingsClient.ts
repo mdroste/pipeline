@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Settings, ModelCatalog } from "./types";
+import type { Settings } from "./settingsTypes";
+import type { ModelCatalog } from "./reviewModelTypes";
 export interface SettingsResponse {
   settings: Settings;
   warnings: string[];

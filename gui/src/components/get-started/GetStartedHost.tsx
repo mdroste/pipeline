@@ -7,7 +7,7 @@ import {
   type GetStartedView,
 } from "../../lib/getStarted";
 import { router } from "../../lib/router";
-import type { DepsReport } from "../../lib/types";
+import type { DepsReport } from "../../lib/settingsTypes";
 
 // The guide and the sample Review load only when opened.
 const GetStartedSheet = lazy(() => import("./GetStartedSheet"));

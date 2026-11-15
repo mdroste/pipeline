@@ -65,7 +65,12 @@ describe("PaperSelector", () => {
 
     expect(openDialog).toHaveBeenCalledWith({
       multiple: true,
-      filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
+      filters: [
+        {
+          name: "Documents and slides",
+          extensions: ["pdf", "tex", "docx", "pptx"],
+        },
+      ],
     });
     expect(onPathChange).toHaveBeenCalledWith("/papers/example/draft.pdf");
     expect(onSelectionChange).toHaveBeenCalledWith({
@@ -246,18 +251,29 @@ describe("PaperSelector", () => {
     await dropFiles(["/papers/a.pdf"], screen.getByTestId("elsewhere"));
     expect(onSelectionChange).not.toHaveBeenCalled();
 
-    const inputs = screen.getByText("Inputs");
+    const inputs = screen.getByRole("button", { name: "Select files..." });
     await dropFiles(["/papers/notes.txt"], inputs);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Only PDF, LaTeX, and Word files can be dropped here.",
+      "Only PDF, LaTeX, Word, and PowerPoint files can be dropped here.",
     );
 
     await dropFiles(
-      ["/papers/a.PDF", "/papers/notes.txt", "/papers/b.docx"],
+      [
+        "/papers/a.PDF",
+        "/papers/notes.txt",
+        "/papers/b.docx",
+        "/papers/deck.PPTX",
+        "/papers/talk.tex",
+      ],
       inputs,
     );
     expect(onSelectionChange).toHaveBeenLastCalledWith({
-      paths: ["/papers/a.PDF", "/papers/b.docx"],
+      paths: [
+        "/papers/a.PDF",
+        "/papers/b.docx",
+        "/papers/deck.PPTX",
+        "/papers/talk.tex",
+      ],
       interpretation: "batch",
       selectionKind: "file",
     });
@@ -278,7 +294,7 @@ describe("PaperSelector", () => {
         disabled={false}
       />,
     );
-    const inputs = screen.getByText("Inputs");
+    const inputs = screen.getByRole("button", { name: "Select folder..." });
     await dropFiles(["/projects/readme.md"], inputs);
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Drop one folder, or use Select folder.",
@@ -294,7 +310,10 @@ describe("PaperSelector", () => {
   it("ignores drops while disabled", async () => {
     const onPathChange = vi.fn();
     render(<PaperSelector onPathChange={onPathChange} disabled={true} />);
-    await dropFiles(["/papers/a.pdf"], screen.getByText("Inputs"));
+    await dropFiles(
+      ["/papers/a.pdf"],
+      screen.getByRole("button", { name: "Select files..." }),
+    );
     expect(onPathChange).not.toHaveBeenCalled();
   });
 });

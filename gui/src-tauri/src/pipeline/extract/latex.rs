@@ -228,6 +228,24 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
         false,
         false,
     );
+    let themes =
+        Regex::new(r"\\use(?:(outer|inner|color|font))?theme(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}")
+            .unwrap();
+    for capture in themes.captures_iter(&visible) {
+        let kind = capture.get(1).map_or("", |value| value.as_str());
+        for name in capture[2]
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            references.push(LatexReference {
+                target: format!("beamer{kind}theme{name}"),
+                default_extensions: &["sty"],
+                recursive: true,
+                alias: None,
+            });
+        }
+    }
     references
 }
 
@@ -679,7 +697,8 @@ pub(super) fn extract_latex(
     warnings: &mut Vec<String>,
 ) -> Result<String, String> {
     let mut stack = Vec::new();
-    extract_latex_inner(path, root_dir, warnings, &mut stack)
+    let text = extract_latex_inner(path, root_dir, warnings, &mut stack)?;
+    Ok(crate::document_bundle::beamer::annotate(text, warnings))
 }
 
 fn extract_latex_inner(

@@ -1,9 +1,11 @@
 //! Workspace-owned services used by the mission coordinator. No coordinator DB access.
+mod claim_receipts;
 use super::{desk, research, store::*, tasks};
 use crate::orchestration::{
     missions::model::{Capability, Policy},
     store::Scope,
 };
+pub(crate) use claim_receipts::execution_evidence;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -605,6 +607,19 @@ mod tests {
             .record
             .id;
         (temp, s, ws, session)
+    }
+    #[test]
+    fn claim_inspection_can_only_read_a_terminal_check_in_its_own_project() {
+        let (_tmp, store, ws, _) = fixture();
+        let c = store.connection().unwrap();
+        c.execute("INSERT INTO research_executions(id,workspace_id,adapter,command_json,cwd,input_manifest_json,dependency_hash,outcome,output_manifest_json,validation_json,snapshot_consistency,created_at) VALUES('claim-check',?1,'python','[]','/tmp','{}','test','running','{}','{}','complete','2026-09-07')",[&ws]).unwrap();
+        let ids = || vec!["claim-check".to_string()];
+        assert!(execution_evidence(&store, &ws, ids()).is_err());
+        c.execute("UPDATE research_executions SET outcome='completed', stdout_text='slope=0' WHERE id='claim-check'",[]).unwrap();
+        assert!(execution_evidence(&store, "another-project", ids()).is_err());
+        let r = execution_evidence(&store, &ws, ids()).unwrap();
+        assert_eq!(r[0]["result"]["passed"], true);
+        assert_eq!(r[0]["result"]["receipt"]["stdout"], "slope=0");
     }
     #[test]
     fn role_preparation_is_idempotent_scoped_and_preserves_the_source_draft() {

@@ -482,7 +482,7 @@ fn tool_schemas_and_images_use_each_providers_wire_format() {
     let spec = json!({"name":"project_read","description":"Read","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}});
     let call = wire::Call {
         id: "call".into(),
-        name: "browser".into(),
+        name: "research_paper_page".into(),
         response_id: None,
         arguments: json!({}),
     };
@@ -707,6 +707,14 @@ fn recovery_interrupts_api_turn_without_replay_and_preserves_history() {
             },
         )
         .unwrap();
+    let lease = crate::workbench::submission::session_lease(&store, &session)
+        .unwrap()
+        .unwrap();
+    assert!(reconcile(store.clone(), session.clone()).unwrap());
+    assert!(store.conversation_snapshot(&session).unwrap().turns[0]
+        .terminal_at
+        .is_none());
+    drop(lease);
     assert!(reconcile(store.clone(), session.clone()).unwrap());
     let snapshot = store.conversation_snapshot(&session).unwrap();
     assert_eq!(snapshot.turns[0].state, "interrupted");

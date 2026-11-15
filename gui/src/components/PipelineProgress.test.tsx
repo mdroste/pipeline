@@ -9,7 +9,7 @@ import {
   completeRun,
   emptyRunView,
 } from "../lib/runViews";
-import type { PipelineReport, PipelineResult } from "../lib/types";
+import type { PipelineReport, PipelineResult } from "../lib/reviewTypes";
 
 const autoReviewPlan: ExecutionPlanStage[] = [
   {
@@ -21,7 +21,7 @@ const autoReviewPlan: ExecutionPlanStage[] = [
   {
     id: "orient",
     kind: "orienting",
-    label: "Creating orientation map & review plan",
+    label: "Choosing reviewers",
     stepIds: [],
   },
   {
@@ -73,9 +73,9 @@ const autoReviewRouting = {
 describe("PipelineProgress", () => {
   it("renders the base stages without the merge stage by default", () => {
     render(<PipelineProgress state={{ kind: "extracting" }} />);
-    expect(screen.getByText("Prepare document bundle")).toBeInTheDocument();
+    expect(screen.getByText("Document bundle preparation")).toBeInTheDocument();
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
-    expect(screen.getByText("Creating orientation map")).toBeInTheDocument();
+    expect(screen.getByText("Identifying content")).toBeInTheDocument();
     expect(screen.getByText("Reviewers working together")).toBeInTheDocument();
     expect(screen.getByText("Next step")).toBeInTheDocument();
     expect(
@@ -104,9 +104,7 @@ describe("PipelineProgress", () => {
     expect(
       screen.getByText("Creating source-tree inventory"),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Creating orientation map"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Identifying content")).not.toBeInTheDocument();
   });
 
   it("preserves the combined Auto Review orientation label", () => {
@@ -123,16 +121,14 @@ describe("PipelineProgress", () => {
           {
             id: "orienting",
             kind: "orienting",
-            label: "Creating orientation map & review plan",
+            label: "Choosing reviewers",
             stepIds: [],
           },
           { id: "done", kind: "done", label: "Complete", stepIds: [] },
         ]}
       />,
     );
-    expect(
-      screen.getByText("Creating orientation map & review plan"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Choosing reviewers")).toBeInTheDocument();
   });
 
   it("shows routed provider units and merge targets for adaptive specialists", () => {
@@ -290,7 +286,9 @@ describe("PipelineProgress", () => {
         />,
       );
       const status = screen.getByRole("status");
-      expect(status).toHaveTextContent("Prepare document bundle in progress.");
+      expect(status).toHaveTextContent(
+        "Document bundle preparation in progress.",
+      );
       expect(document.querySelector("[aria-live]")).toBeNull();
       expect(status).not.toContainElement(screen.getByText("0s elapsed"));
 
@@ -299,7 +297,7 @@ describe("PipelineProgress", () => {
       });
       expect(screen.getByText("3s elapsed")).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Prepare document bundle in progress.",
+        "Document bundle preparation in progress.",
       );
 
       view.rerender(
@@ -309,7 +307,7 @@ describe("PipelineProgress", () => {
         />,
       );
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Prepare document bundle failed.",
+        "Document bundle preparation failed.",
       );
     } finally {
       vi.useRealTimers();
@@ -350,7 +348,7 @@ describe("PipelineProgress", () => {
       />,
     );
     expect(screen.getAllByText("failed").length).toBeGreaterThan(0);
-    expect(screen.getByText("Prepare document bundle")).toBeInTheDocument();
+    expect(screen.getByText("Document bundle preparation")).toBeInTheDocument();
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
   });
 
@@ -601,8 +599,11 @@ describe("PipelineProgress", () => {
     );
     const stepOf = (text: string) =>
       screen.getByText(text).closest("[data-status]");
-    expect(stepOf("Prepare document bundle")).toHaveAttribute("data-step", "1");
-    expect(stepOf("Prepare document bundle")).toHaveAttribute(
+    expect(stepOf("Document bundle preparation")).toHaveAttribute(
+      "data-step",
+      "1",
+    );
+    expect(stepOf("Document bundle preparation")).toHaveAttribute(
       "data-status",
       "active",
     );

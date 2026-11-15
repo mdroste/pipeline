@@ -8,7 +8,8 @@ const SettingsPage = (props: ComponentProps<typeof SettingsPageComponent>) => (
   <SettingsPageComponent initialSection="workflow" {...props} />
 );
 import { makeSettings, catalog } from "../test/settingsFixtures";
-import type { EngineStatus, Settings } from "../lib/types";
+import type { EngineStatus } from "../lib/engineTypes";
+import type { Settings } from "../lib/settingsTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
@@ -334,7 +335,7 @@ describe("SettingsPage providers", () => {
 
     await screen.findByText("Model defaults");
     for (const label of [
-      "Input assessment",
+      "Document bundle preparation",
       "Parallel steps",
       "Combine results",
       "Sequential steps",

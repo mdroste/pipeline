@@ -9,7 +9,7 @@
 use super::catalog::{SubjectLevel, GENRES, METHODS, RESEARCH_ARTICLE_GENRE, SUBJECTS};
 use super::schema_contract::validate_auto_review_schema_contract;
 use super::{ADAPTIVE_AGENT_COUNT_KEY, AUTO_REVIEW_CONTRACT};
-use crate::pipeline_config::StepConfig;
+use crate::pipeline_config::{PipelineConfig, StepConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdaptiveAgentBounds {
@@ -95,6 +95,19 @@ pub fn configured_agent_count(schema: &serde_json::Value) -> Result<Option<usize
         ));
     }
     Ok(Some(count))
+}
+
+/// The number of specialists a valid adaptive review plans to select.
+pub(crate) fn adaptive_agent_count_range(config: &PipelineConfig) -> Option<(usize, usize)> {
+    if !super::uses_auto_review_contract(config) {
+        return None;
+    }
+    let schema = config.orientation_schema.as_ref()?;
+    if let Some(count) = configured_agent_count(schema).ok()? {
+        return Some((count, count));
+    }
+    let bounds = adaptive_agent_bounds(schema).ok()?;
+    Some((bounds.total_min(), bounds.total_max()))
 }
 
 pub fn validate_schema_settings(schema: &serde_json::Value) -> Result<(), String> {

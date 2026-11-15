@@ -17,7 +17,7 @@ export default function NavFlyout({
   label: string;
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
-  onOpenPage: () => void;
+  onOpenPage?: () => void;
   children: ReactNode;
 }) {
   const body = useRef<HTMLDivElement>(null);
@@ -62,9 +62,11 @@ export default function NavFlyout({
       <div ref={body}>
         <div className="nav-flyout-heading">
           <span>{label}</span>
-          <button type="button" onClick={onOpenPage}>
-            Open
-          </button>
+          {onOpenPage && (
+            <button type="button" onClick={onOpenPage}>
+              Open
+            </button>
+          )}
         </div>
         <div className="nav-flyout-body">{children}</div>
       </div>

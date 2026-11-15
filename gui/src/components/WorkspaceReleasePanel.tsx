@@ -6,12 +6,12 @@ import { confirmDialog, notify } from "./DialogService";
 import WorkspaceRestoreRootsDialog, {
   type RootMappings,
 } from "./WorkspaceRestoreRootsDialog";
+import type { ConversationSnapshot } from "../lib/workbench/sessionTypes";
+import type { PaperWithRevision } from "../lib/workbench/researchTypes";
 import type {
-  ConversationSnapshot,
-  PaperWithRevision,
   PerformanceBudget,
   ReviewHandoff,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/releaseTypes";
 
 const ExchangePanel = lazy(() => import("./WorkspaceExchangePanel"));
 

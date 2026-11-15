@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { releaseClient } from "../lib/workbench/releaseClient";
 import { confirmDialog } from "./DialogService";
-import type { StorageReport, PrunePlan } from "../lib/workbenchTypes";
+import type { StorageReport, PrunePlan } from "../lib/workbench/releaseTypes";
 const button =
   "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
 const mb = (bytes: number) =>

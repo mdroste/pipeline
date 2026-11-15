@@ -7,11 +7,13 @@ import { promptDialog } from "./DialogService";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
+} from "../lib/workbench/sessionTypes";
+import type {
   RecipeInputCheck,
   RecipeRun,
-  ResearchExecution,
   ResearchRecipe,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/releaseTypes";
+import type { ResearchExecution } from "../lib/workbench/executionTypes";
 
 function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;

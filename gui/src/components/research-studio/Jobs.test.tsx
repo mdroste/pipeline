@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Jobs from "./Jobs";
 import type { JobStatus } from "../../lib/studioClient";
-import type { ResearchExecution } from "../../lib/workbenchTypes";
+import type { ResearchExecution } from "../../lib/workbench/executionTypes";
 
 const mocks = vi.hoisted(() => ({ jobs: vi.fn(), log: vi.fn() }));
 vi.mock("../../lib/studioClient", async (original) => ({

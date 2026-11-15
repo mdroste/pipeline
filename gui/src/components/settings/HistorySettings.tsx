@@ -2,7 +2,7 @@ import { reviewHistoryClient } from "../../lib/reviewHistoryClient";
 import { useState, useEffect } from "react";
 import { confirmDialog } from "../DialogService";
 
-import type { Settings } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
 
 import ValidatedNumber from "./ValidatedNumber";
 import ReportIssueLink from "../ReportIssueLink";

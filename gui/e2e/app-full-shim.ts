@@ -167,13 +167,15 @@ const runs = [
 ];
 
 const workspace = {
-  id: "ws-minwage", name: "Minimum wage revision", root: "/Users/mike/Papers/minwage",
-  rootIdentity: null, revision: 4, settingsRevision: 2, archivedAt: null, missingRootAt: null,
+  id: "ws-minwage", name: params.get("missingFolder") === "1"
+    ? "Minimum wage revision with county-pair robustness checks and revised tables"
+    : "Minimum wage revision", root: "/Users/mike/Papers/minwage",
+  rootIdentity: null, revision: 4, settingsRevision: 2, archivedAt: null, missingRootAt: params.get("missingFolder") === "1" ? now : null,
   createdAt: "2026-08-30T12:00:00Z", updatedAt: now,
 };
 const session = {
   id: "sess-aggregation", title: "Interpreting the county-pair estimates",
-  workspaceId: workspace.id, paperId: null, presetId: "research_assistant", overrides: {},
+  workspaceId: params.get("unfiled") === "1" ? null : workspace.id, paperId: null, presetId: "research_assistant", overrides: {},
   draft: "", revision: 3, archivedAt: null, createdAt: "2026-09-27T12:00:00Z", updatedAt: now,
 };
 const snapshot = {
@@ -357,7 +359,7 @@ const executionPlan = {
   readiness: depsReport,
   stages: [
     { id: "extract", kind: "extraction", label: "Extract document", stepIds: [] },
-    { id: "orientation", kind: "orientation", label: "Orientation map", stepIds: [] },
+    { id: "orientation", kind: "orientation", label: "Document bundle preparation", stepIds: [] },
     { id: "wave-1", kind: "parallel", label: "Parallel review", stepIds: ["first_pass", "methods_pass"], stepLabels: ["First reading", "Methods deep dive"] },
     { id: "merge", kind: "merge", label: "Merge perspectives", stepIds: [] },
     { id: "wave-2", kind: "sequential", label: "Literature check", stepIds: ["lit_check"], stepLabels: ["Literature check"] },
@@ -383,6 +385,13 @@ const updateInfo = params.get("update") === "available" ? { current: appVersion,
 const installPhase = params.get("install") ?? "idle";
 const updateStatus = (automatic = true) => ({ automatic, automatic_available: true, last_checked_at: updateInfo?.checked_at ?? null, info: updateInfo, error: null });
 
+const finishedTask = {
+  id: "task-rr", revision: 2, name: "Re-review after Table 4 changes",
+  state: "finished", reason: null, createdAt: 1790000000,
+  updatedAt: Date.parse("2026-09-29T11:00:00Z") / 1000,
+  dueAt: null, sessionId: session.id, scheduleId: null,
+};
+
 const commandData: Record<string, unknown> = {
   mark_smoke_ready: true,
   set_sidebar_menu_collapsed: null,
@@ -406,6 +415,8 @@ const commandData: Record<string, unknown> = {
   list_profiles: profiles,
   get_active_profile: "auto_paper_review",
   get_model_catalog: modelCatalog,
+  get_model_roster: [],
+  review_pdf_options: { method: "pdftotext" },
   list_runs: runs,
   runs_disk_usage: { count: 38, bytes: 6_400_000_000 },
   list_trashed_runs: [],
@@ -416,6 +427,7 @@ const commandData: Record<string, unknown> = {
   list_input_files: [],
   workbench_list_workspaces: { workspaces: [workspace] },
   workbench_get_workspace: workspace,
+  workbench_conversation_index: {items:[{session, projectName:null}],nextCursor:null},
   workbench_list_sessions: { sessions: [session] },
   workbench_conversation_snapshot: snapshot,
   workbench_session_snapshot: snapshot,
@@ -425,15 +437,21 @@ const commandData: Record<string, unknown> = {
   workbench_codex_account_state: { status: "chatgpt", email: "mike@example.edu", planType: "plus", unsupportedAccountType: null, requiresOpenaiAuth: false },
   workbench_claude_rate_limits: { status: "allowed", resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600, rateLimitType: "five_hour", usedPercent: 41, isUsingOverage: false, observedAt: Date.now() },
   workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },
-  workbench_codex_pending_requests: [],
+  workbench_codex_pending_requests: params.get("approval") === "1" ? [{
+    epoch: 1, kind: "serverRequest", requestId: 1, sessionId: session.id,
+    method: "item/permissions/requestApproval", params: { threadId: "fixture-thread", turnId: "fixture-turn" },
+    details: { type: "permission", reason: "Write the revised table", cwd: "/fixtures/research",
+      permissions: { fileSystem: { write: ["/fixtures/research/tables"] }, network: { enabled: false } } },
+  }] : [],
   workbench_active_turn: null,
   workbench_codex_connect: {},
   workbench_codex_model_catalog: workspaceModelCatalog,
   workbench_claude_model_catalog: { models: [{ id: "sonnet", model: "sonnet", displayName: "Sonnet", description: "Balanced reasoning and writing", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: efforts("low", "medium", "high") }, { id: "haiku", model: "haiku", displayName: "Haiku", description: "Fastest for quick answers", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [] }] },
   workbench_project_home: projectHome,
+  workbench_project_review_links: [],
   workbench_project_index: [
     {
-      id: workspace.id, name: workspace.name, root: workspace.root, missingRootAt: null, updatedAt: now,
+      id: workspace.id, name: workspace.name, root: workspace.root, missingRootAt: workspace.missingRootAt, updatedAt: now,
       brief: { id: "q1", title: "Do county-pair minimum wage comparisons identify employment effects under spillovers?", kind: "question", updatedAt: now },
       conversation: { id: session.id, title: session.title, kind: "conversation", updatedAt: now },
       activity: { id: session.id, title: session.title, kind: "conversation", updatedAt: now },
@@ -446,7 +464,28 @@ const commandData: Record<string, unknown> = {
       conversation: null, activity: null, nextTask: null, proposedNotes: 0, interruptedEdits: 1,
     },
   ],
+  workbench_editor_file: ({ path, checkpointId }: { path: string; checkpointId: string | null }) => ({
+    path, checkpointId, hash: "fixture-tex",
+    content: "\\documentclass{article}\n\\begin{document}\nCounty-pair estimates.\n\\end{document}\n",
+  }),
+  workbench_file_open: ({ request }: { request: { path: string } }) => ({
+    path: request.path, hash: "fixture-text", bytes: 27, text: "# Replication notes\n\nTable 4",
+    base64: null, mime: "text/plain", editable: true, truncated: false,
+    externalPath: null, kind: "text",
+  }),
   workbench_project_tasks: [],
+  workbench_file_list: ({ request }: { request: { directory: string } }) => ({
+    directory: request.directory, truncated: false,
+    entries: request.directory ? [] : [
+      { name: "paper", path: "paper", kind: "folder", size: 0, modifiedMs: 0, ignored: false, executable: false },
+      { name: "README.md", path: "README.md", kind: "file", size: 128, modifiedMs: 0, ignored: false, executable: false },
+      { name: "replicate.py", path: "replicate.py", kind: "file", size: 27, modifiedMs: 0, ignored: false, executable: false },
+      ...(params.get("largeTree") === "1" ? Array.from({ length: 2000 }, (_, i) => ({
+        name: `replication-table-${i + 1}.txt`, path: `replication-table-${i + 1}.txt`,
+        kind: "file", size: 27, modifiedMs: 0, ignored: i % 3 === 0, executable: false,
+      })) : []),
+    ],
+  }),
   workbench_project_mutate: {},
   workbench_project_capabilities: { fileAcceptance: false, hostExecution: false },
   workbench_list_papers: projectKind === "rich" ? [
@@ -489,8 +528,9 @@ const commandData: Record<string, unknown> = {
       },
     ],
   },
-  workbench_update_session: (args: { request: { overrides?: Record<string, unknown> } }) => {
+  workbench_update_session: (args: { request: { overrides?: Record<string, unknown>; draft?: string } }) => {
     if (args.request.overrides) session.overrides = args.request.overrides;
+    if (args.request.draft !== undefined) session.draft = args.request.draft;
     session.revision += 1;
     return { record: session, sequence: ++snapshot.sequence };
   },
@@ -565,10 +605,23 @@ const commandData: Record<string, unknown> = {
             : null,
       }
     : {}),
-  task_list: projectKind === "rich"
-    ? [{ id: "task-rr", revision: 2, name: "Re-review after Table 4 changes", state: "finished", reason: null, createdAt: 1790000000, updatedAt: Date.parse("2026-09-29T11:00:00Z") / 1000, dueAt: null, sessionId: session.id, scheduleId: null }]
-    : [],
+  task_list: projectKind === "rich" ? [finishedTask] : [],
+  automation_list: ({ view }: { view: string }) =>
+    projectKind === "rich" && view === "history"
+      ? [{ kind: "task", ...finishedTask }]
+      : [],
+  task_get: {
+    ...finishedTask,
+    chain: { schemaVersion: 1, name: finishedTask.name, description: "Check the revised table against the saved review.", steps: [], limits: { maxActions: 8, deadlineHours: 24, actionTimeoutSecs: 900 } },
+    scope: { sessionId: session.id, workspaceId: workspace.id, runtimeRoot: null, profiles: {}, checks: {} },
+    inputs: {},
+    progress: { receipts: {}, outputs: {}, actions: 2, limitReached: false },
+    deadlineAt: finishedTask.updatedAt + 86400,
+  },
+  task_events: [],
   task_schedules: [],
+  task_storage_issues: [],
+  task_delivered_files: { files: [], warning: null },
   task_saved_chains: [],
   task_proposals: [],
   mission_list: [],
@@ -579,6 +632,10 @@ const commandData: Record<string, unknown> = {
 const misses = new Set<string>();
 let callbackId = 1;
 
+(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+  unregisterListener: () => {},
+};
+
 (window as any).__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
   transformCallback: () => callbackId++,
@@ -587,6 +644,10 @@ let callbackId = 1;
   invoke: async (command: string, _args?: unknown) => {
     if (command === "plugin:app|version") return appVersion;
     if (command.startsWith("plugin:event|")) return callbackId++;
+    // Exercise the selected-document layout without reading a real file.
+    if (command === "plugin:dialog|open" && params.get("reviewInput") === "pdf") {
+      return ["/fixtures/review-layout-paper.pdf"];
+    }
     if (command.startsWith("plugin:")) return null;
     if (command in commandData) {
       const value = commandData[command];

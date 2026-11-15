@@ -1,4 +1,4 @@
-import type { PipelineReport, ToolCallCounts } from "./types";
+import type { PipelineReport, ToolCallCounts } from "./reviewTypes";
 
 export type PassStatus = "pending" | "running" | "done" | "error" | "skipped";
 

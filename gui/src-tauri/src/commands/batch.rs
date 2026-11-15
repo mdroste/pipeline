@@ -56,7 +56,9 @@ pub(super) async fn prepare_batch_launch(
                 .extension()
                 .and_then(|extension| extension.to_str())
                 .is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case("tex") || extension.eq_ignore_ascii_case("docx")
+                    ["tex", "docx", "pptx"]
+                        .iter()
+                        .any(|kind| extension.eq_ignore_ascii_case(kind))
                 })
         })
         .or_else(|| paths.first());
@@ -263,7 +265,7 @@ pub async fn cancel_batch() -> Result<(), String> {
 
 const BATCH_SCOPE_KEY: &str = "batch";
 
-/// Input files (PDF/LaTeX/Word) directly under `dir`, non-recursive and sorted;
+/// Input files (PDF/LaTeX/Word/PowerPoint) directly under `dir`, non-recursive and sorted;
 /// hidden files skipped. Used by "queue this folder".
 pub fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("Cannot read folder: {e}"))?;
@@ -288,7 +290,7 @@ pub fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
             .unwrap_or_default();
-        if matches!(ext.as_str(), "pdf" | "tex" | "docx") {
+        if matches!(ext.as_str(), "pdf" | "tex" | "docx" | "pptx") {
             files.push(path.to_string_lossy().replace('\\', "/"));
         }
     }
@@ -296,7 +298,7 @@ pub fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-/// List input files (PDF/LaTeX/Word) directly under `dir`, for "queue this folder".
+/// List input files (PDF/LaTeX/Word/PowerPoint) directly under `dir`, for "queue this folder".
 #[tauri::command]
 pub async fn list_input_files(dir: String) -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(move || scan_input_files(&dir))

@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import schemaDialect from "../../../tests/fixtures/workflow/schema-dialect.json";
-import type { StepConfig } from "../../lib/types";
+import type { StepConfig } from "../../lib/workflowTypes";
 import SchemaEditorPanel from "./SchemaEditorPanel";
 import { outputSchemaError } from "./utils";
 

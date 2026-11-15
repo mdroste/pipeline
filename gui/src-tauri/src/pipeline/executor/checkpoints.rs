@@ -102,11 +102,13 @@ pub(super) async fn checkpoint_wave(
     let Some(root) = write_dir else {
         return Ok(());
     };
-    let directory = std::path::PathBuf::from(root).join("checkpoints");
+    let root = std::path::PathBuf::from(root);
+    let directory = root.join("checkpoints");
     let outputs = outputs.to_vec();
     crate::run_scope::spawn_blocking(move || {
         use std::io::Write as _;
         std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        crate::runs::receipts::record(&root, &steps, &outputs)?;
         let destination = directory.join(format!(
             "wave_{start:04}_{}.json",
             step_slug(&steps.join("_"))

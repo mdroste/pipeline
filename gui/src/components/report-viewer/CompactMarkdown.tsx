@@ -1,3 +1,7 @@
+import {
+  promoteLegacyMath,
+  prepareReportMarkdown,
+} from "../../lib/legacyMathMarkdown";
 import { memo, useMemo } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -6,10 +10,10 @@ import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import {
   mathOnlyMarkdown,
-  normalizeMathDelimiters,
   stripPresentationalHtml,
 } from "../../lib/mathMarkdown";
 import {
+  hasRepairableMath,
   rehypeValidateMath,
   remarkRepairMath,
   REPORT_KATEX_OPTIONS,
@@ -41,13 +45,7 @@ const CompactMarkdown = memo(function CompactMarkdown({
 }: {
   markdown: string;
 }) {
-  const cleaned = useMemo(
-    () =>
-      normalizeMathDelimiters(
-        stripPresentationalHtml(stripInternalReportMarkers(markdown)),
-      ),
-    [markdown],
-  );
+  const cleaned = useMemo(() => prepareReportMarkdown(markdown), [markdown]);
   return (
     <MathErrorBoundary resetKey={cleaned}>
       {(fallback) => (
@@ -90,7 +88,14 @@ export const InlineMathText = memo(function InlineMathText({
         .trim(),
     [text, verbatim],
   );
-  const markdown = useMemo(() => mathOnlyMarkdown(plain), [plain]);
+  const markdown = useMemo(
+    () =>
+      mathOnlyMarkdown(
+        verbatim ? plain : promoteLegacyMath(plain),
+        !verbatim && hasRepairableMath(plain),
+      ),
+    [plain, verbatim],
+  );
   if (markdown === null) return <>{plain}</>;
   return (
     <MathErrorBoundary resetKey={markdown}>

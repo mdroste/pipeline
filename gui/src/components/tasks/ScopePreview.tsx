@@ -1,3 +1,4 @@
+import { ChainPreview, ReviewEstimate } from "./Budget";
 import { Fragment, useEffect, useState } from "react";
 import { taskClient } from "../../lib/taskClient";
 import { connections } from "../../lib/connections";
@@ -137,6 +138,10 @@ export default function ScopePreview({
           {run.chain.limits.deadlineHours} hour deadline
         </dd>
       </dl>
+      <ChainPreview chain={run.chain} />
+      {Object.keys(run.scope.profiles).map((id) => (
+        <ReviewEstimate key={id} profile={id} taskId={run.id} />
+      ))}
       {Object.entries(run.scope.reviewModels ?? {}).map(([id, entries]) => (
         <div key={id}>
           <h4>

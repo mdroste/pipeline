@@ -5,6 +5,9 @@ use serde_json::Value;
 
 impl Coordinator {
     pub(crate) async fn save(&self, run: &mut TaskRun, kind: &str, detail: &str) -> Result<()> {
+        if matches!(run.state.as_str(), "running" | "waiting" | "queued") {
+            run.due_at = run.progress.next_wake(run.due_at);
+        }
         let mut copy = run.clone();
         let stored_kind = kind.to_string();
         let detail = detail.to_string();
@@ -38,6 +41,31 @@ impl Coordinator {
                     // neither.
                     s.write(&mut copy, &stored_kind, &detail)?;
                 }
+                if matches!(
+                    stored_kind.as_str(),
+                    "stepCompleted" | "reconciled" | "reconcile" | "missionReconcile"
+                ) {
+                    for receipt in copy.progress.receipts.values().filter(|r| {
+                        r.state == "completed"
+                            && r.output.as_ref().is_some_and(|v| v.get("runId").is_some())
+                    }) {
+                        if let Err(e) =
+                            adapters::journaled_review(&s, &receipt.operation).and_then(|id| {
+                                match id {
+                                    Some(id) => {
+                                        crate::commands::orchestration::release_abandoned_pin(
+                                            &id,
+                                            &receipt.operation,
+                                        )
+                                    }
+                                    None => Ok(()),
+                                }
+                            })
+                        {
+                            eprintln!("Completed Review pin needs reconciliation: {e}");
+                        }
+                    }
+                }
                 if copy.state == "cancelled" {
                     if let Err(error) = adapters::reconcile_abandoned_reviews(&s) {
                         eprintln!("Abandoned Review retention needs attention: {error}");
@@ -67,15 +95,101 @@ impl Coordinator {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(super) async fn complete(
         &self,
         task: &str,
         address: &str,
         result: Result<Value>,
     ) -> Result<()> {
+        self.complete_attempt(task, address, None, result).await
+    }
+
+    pub(super) async fn publish_completion(
+        &self,
+        task: &str,
+        address: &str,
+        operation: &str,
+        result: Result<Value>,
+    ) {
+        // Release the execution slot once the owner ends. The durable running
+        // receipt prevents repeat dispatch while publication is retried.
+        let mut delay = 1;
+        loop {
+            match self
+                .complete_attempt(task, address, Some(operation), result.clone())
+                .await
+            {
+                Ok(()) => break,
+                Err(error) => {
+                    if let Some(app) = &self.app {
+                        use tauri::Emitter;
+                        let _ = app.emit("tasks:error", error);
+                    }
+                    let (id, op) = (task.to_owned(), operation.to_owned());
+                    if matches!(
+                        self.db(move |s| s.completion_pending(&id, &op)).await,
+                        Ok(false)
+                    ) {
+                        break;
+                    }
+                    if self.stopping.load(std::sync::atomic::Ordering::Acquire) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    delay = (delay * 2).min(30);
+                }
+            }
+        }
+    }
+
+    async fn complete_attempt(
+        &self,
+        task: &str,
+        address: &str,
+        operation: Option<&str>,
+        mut result: Result<Value>,
+    ) -> Result<()> {
         let _gate = self.gate.lock().await;
         let task = task.to_string();
         let mut run = self.db(move |s| s.get(&task)).await?;
+        let Some(previous) = run.progress.receipts.get(address) else {
+            return Ok(());
+        };
+        if previous.state != "running" || operation.is_some_and(|op| op != previous.operation) {
+            return Ok(());
+        }
+        let mut not_submitted = false;
+        if result.as_ref().is_err_and(|e| {
+            !e.starts_with("task_busy:") && e != super::scheduler::TIME_LIMIT_REACHED
+        }) {
+            use adapters::contract::{lookup, Outcome};
+            let mut steps = Vec::new();
+            adapters::flatten(&run.chain.steps, &mut steps);
+            if let Some(step) = steps.iter().find(|s| s.id == previous.step_id) {
+                match lookup(&self.store, &run.scope, &step.action, previous).await {
+                    Ok(Outcome::Completed(v) | Outcome::Failed(v)) => {
+                        adapters::atomic_json(
+                            &self
+                                .store
+                                .root
+                                .join("actions")
+                                .join(&previous.operation)
+                                .join("result.json"),
+                            &v,
+                        )?;
+                        result = Ok(v);
+                    }
+                    Ok(Outcome::NotSubmitted) => not_submitted = true,
+                    Err(error) => {
+                        result = Err(format!(
+                            "Could not read the original action receipt: {error}"
+                        ))
+                    }
+                    _ => {}
+                }
+            }
+        }
         let receipt = run
             .progress
             .receipts
@@ -112,10 +226,6 @@ impl Coordinator {
                     run.scope.harness_fingerprint = Some(fingerprint.into());
                 }
                 run.progress.outputs[&receipt.step_id] = value.clone();
-                let run_id = value
-                    .get("runId")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
                 if !["paused", "cancelled", "cancelling", "attention"].contains(&run.state.as_str())
                 {
                     run.state = "queued".into();
@@ -124,10 +234,6 @@ impl Coordinator {
                 }
                 self.save(&mut run, "stepCompleted", "Action completed")
                     .await?;
-                if let Some(id) = run_id {
-                    self.db(move |_| crate::commands::orchestration::release_pin(&id))
-                        .await?;
-                }
             }
             Err(message) if message.starts_with("task_busy:") => {
                 run.progress.receipts.remove(address);
@@ -142,7 +248,7 @@ impl Coordinator {
                     .await?;
             }
             Err(message) => {
-                receipt.state = "unknown".into();
+                receipt.state = if not_submitted { "failed" } else { "unknown" }.into();
                 receipt.error = Some(message.clone());
                 if run.state != "cancelled" && run.state != "cancelling" {
                     run.state = "attention".into();

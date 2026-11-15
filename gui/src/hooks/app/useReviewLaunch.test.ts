@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { useReviewSetup } from "./useReviewSetup";
 import { useReviewLaunch } from "./useReviewLaunch";
-import type { PipelineConfig } from "../../lib/types";
+import type { PipelineConfig } from "../../lib/workflowTypes";
 
 const client = vi.hoisted(() => ({
   runSetup: vi.fn(),
@@ -11,6 +11,9 @@ const client = vi.hoisted(() => ({
   inputFiles: vi.fn(),
 }));
 vi.mock("../../lib/appClient", () => ({ appClient: client }));
+vi.mock("../../lib/workflowProfileClient", () => ({
+  workflowProfileClient: { config: client.pipelineConfig },
+}));
 vi.mock("../../lib/router", () => ({
   router: {
     route: { page: "main" },
@@ -172,4 +175,35 @@ it("retains a note after a queue failure, and blocks overlong drafts", async () 
     await result.current.launch.handleGenerate();
   });
   expect(client.executionPlan).not.toHaveBeenCalled();
+});
+
+it("keeps a Workspace handoff's identity through review preview and queuing", async () => {
+  const { result } = await setupReview();
+  await act(async () => {
+    await result.current.launch.handleWorkspaceReviewHandoff({
+      version: 1,
+      id: "review_handoff_a",
+      workspaceId: "project",
+      sessionId: null,
+      paperId: "paper",
+      revisionId: "revision",
+      contentHash: "hash",
+      mediaKind: "tex",
+      stagedPath: "/workspace/handoffs/review_handoff_a/hash.tex",
+      inputInterpretation: "document",
+      metadata: {},
+      externalReference: null,
+      createdAt: "now",
+      linkedAt: null,
+    });
+  });
+  await act(async () => {
+    await result.current.launch.startPreparedLaunch();
+  });
+  expect(queue.enqueue).toHaveBeenCalledWith(
+    expect.objectContaining({
+      paperPath: "/workspace/handoffs/review_handoff_a/hash.tex",
+      reviewHandoffId: "review_handoff_a",
+    }),
+  );
 });

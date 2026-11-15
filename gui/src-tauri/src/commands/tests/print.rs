@@ -3,6 +3,28 @@
 use super::*;
 
 #[test]
+fn printing_keeps_parenthesized_currency_in_report_prose() {
+    // A currency sign before the parenthesized amount used to close an
+    // equation starting at $90.3M, swallowing the intervening sentences.
+    let paragraph = "The $30.5M analyzed is about 34% of the $90.3M in FY2021–25 MRI/CC* computing dollars. The efficient benchmark can move money only among the 53 panel universities, which were selected for having archived cluster webpages. The introduction and §8.2 say the reallocated awards are those received by panel universities, but the size of what is excluded ($59.8M, about two-thirds of the dollars) appears only in a Table 9 note.";
+    assert_eq!(
+        render_print_markdown(paragraph),
+        format!("<p>{paragraph}</p>\n")
+    );
+}
+
+#[test]
+fn printing_keeps_currency_ranges_and_real_numeric_math_separate() {
+    let html = render_print_markdown(
+        r"Awards of $5–$8 (or $10-$12) imply $2x + 1$ and $5$; escaped \$20 stays money. Code: `$5-$8`.",
+    );
+    assert!(html.contains("Awards of $5–$8 (or $10-$12)"), "{html}");
+    assert!(html.contains(r"\(2x + 1\) and \(5\)"), "{html}");
+    assert!(html.contains("escaped $20 stays money"), "{html}");
+    assert!(html.contains("<code>$5-$8</code>"), "{html}");
+}
+
+#[test]
 fn print_html_is_self_contained_and_waits_for_fonts() {
     let html = build_print_report_html(
             "**#12. Identification needs work**\n\nAn equation: $y=x$.\n\n![Remote figure](https://example.invalid/pixel.png)",
@@ -11,6 +33,8 @@ fn print_html_is_self_contained_and_waits_for_fonts() {
         .unwrap();
     assert!(html.contains("data:font/woff2;base64,"));
     assert!(html.contains("document.fonts.ready"));
+    assert!(html.contains("window.addEventListener(\"beforeprint\", fitEquations)"));
+    assert!(html.contains(".pipeline-math { display: inline-block; max-width: 100%;"));
     assert!(html.contains("class=\"report-document\""));
     assert!(html.contains("class=\"report-masthead\""));
     assert!(html.contains("class=\"report-body\""));

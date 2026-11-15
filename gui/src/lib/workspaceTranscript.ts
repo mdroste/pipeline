@@ -1,5 +1,5 @@
 import { providerName } from "./workspaceProviders";
-import type { TranscriptItem } from "./workbenchTypes";
+import type { TranscriptItem } from "./workbench/sessionTypes";
 
 /**
  * Messages on screen at once. Opening a conversation costs time in proportion

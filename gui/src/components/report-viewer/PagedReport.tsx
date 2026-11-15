@@ -1,3 +1,4 @@
+import { prepareReportMarkdown } from "../../lib/legacyMathMarkdown";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { splitReport } from "../../lib/reportChunks";
 import type { ReportNavigationEntry } from "../../lib/reportNavigation";
@@ -58,7 +59,9 @@ export default function PagedReport({
       chunks.flatMap((chunk, page) =>
         chunk.plain
           ? []
-          : buildNavigationIndex(chunk.markdown).entries.map((entry) => ({
+          : buildNavigationIndex(
+              prepareReportMarkdown(chunk.markdown),
+            ).entries.map((entry) => ({
               entry,
               page,
             })),

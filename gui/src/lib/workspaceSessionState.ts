@@ -1,5 +1,8 @@
 import { conversationClient } from "./workbench/conversationClient";
-import type { ConversationSnapshot, SessionSnapshot } from "./workbenchTypes";
+import type {
+  ConversationSnapshot,
+  SessionSnapshot,
+} from "./workbench/sessionTypes";
 
 // Metadata saves must not replace transcript pages or active-turn state.
 export function mergeSessionSnapshot(
@@ -50,8 +53,14 @@ export function newOperation(prefix: string) {
 export async function saveWorkspaceDraft(
   selectedSession: string,
   text: string,
+  expectedSent?: string,
 ): Promise<SessionSnapshot> {
   const latest = await conversationClient.sessionSnapshot(selectedSession);
+  if (
+    expectedSent !== undefined &&
+    latest.session.draft.trim() !== expectedSent.trim()
+  )
+    return latest;
   let result = latest;
   if (latest.session.draft !== text) {
     const updated = await conversationClient.updateSession({

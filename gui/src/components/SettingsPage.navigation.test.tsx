@@ -12,7 +12,8 @@ const SettingsPage = (props: ComponentProps<typeof SettingsPageComponent>) => (
   <SettingsPageComponent initialSection="workflow" {...props} />
 );
 import { makeSettings, paddleEngine } from "../test/settingsFixtures";
-import type { EngineStatus, Settings } from "../lib/types";
+import type { EngineStatus } from "../lib/engineTypes";
+import type { Settings } from "../lib/settingsTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
@@ -54,7 +55,7 @@ describe("SettingsPage navigation", () => {
     // Stages with their own model sit under Stage exceptions, closed by default.
     await userEvent.click(screen.getByText("Stage exceptions"));
     for (const label of [
-      "Input assessment",
+      "Document bundle preparation",
       "Parallel steps",
       "Combine results",
       "Sequential steps",
@@ -90,7 +91,7 @@ describe("SettingsPage navigation", () => {
       ),
     ).toBeVisible();
     const orientationDefaults = screen.getByRole("group", {
-      name: "Input assessment providers",
+      name: "Document bundle preparation providers",
     });
     const parallelDefaults = screen.getByRole("group", {
       name: "Parallel steps providers",

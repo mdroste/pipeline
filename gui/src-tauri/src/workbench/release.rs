@@ -62,9 +62,10 @@ pub use recipes::{
     clone_recipe, list_recipes, update_recipe, CloneRecipeRequest, ResearchRecipe,
     UpdateRecipeRequest,
 };
+pub(crate) use review_handoff::validate_handoff_inputs;
 pub use review_handoff::{
-    link_review_handoff, prepare_review_handoff, LinkReviewHandoffRequest,
-    PrepareReviewHandoffRequest, ReviewHandoff,
+    link_review_handoff, prepare_review_handoff, project_review_links, LinkReviewHandoffRequest,
+    PrepareReviewHandoffRequest, ProjectReviewLink, ReviewHandoff,
 };
 
 mod archive;

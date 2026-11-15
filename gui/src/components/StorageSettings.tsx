@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { storageClient, type StorageLocation } from "../lib/storageClient";
 import { open } from "@tauri-apps/plugin-dialog";
 import ReportIssueLink from "./ReportIssueLink";
-
-interface StorageLocation {
-  activeDirectory: string | null;
-  configuredDirectory: string;
-  defaultDirectory: string;
-  restartRequired: boolean;
-  error: string | null;
-}
 
 const buttonClass =
   "rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-600 dark:hover:bg-neutral-800";
@@ -25,7 +17,8 @@ export default function StorageSettings({
 
   useEffect(() => {
     let mounted = true;
-    invoke<StorageLocation>("get_storage_settings")
+    storageClient
+      .location()
       .then((result) => {
         if (mounted) setLocation(result);
       })
@@ -52,9 +45,7 @@ export default function StorageSettings({
             defaultPath: location.configuredDirectory,
           });
       if (typeof directory === "string") {
-        setLocation(
-          await invoke<StorageLocation>("set_storage_directory", { directory }),
-        );
+        setLocation(await storageClient.setDirectory({ directory }));
       }
     } catch (reason) {
       setError(String(reason));
@@ -122,9 +113,9 @@ export default function StorageSettings({
               className={buttonClass}
               disabled={busy || !location.activeDirectory || !!location.error}
               onClick={() => {
-                void invoke("open_pipeline_dir").catch((reason) =>
-                  setError(String(reason)),
-                );
+                void storageClient
+                  .openDirectory()
+                  .catch((reason) => setError(String(reason)));
               }}
             >
               Open current folder

@@ -1,4 +1,5 @@
 import katex, { type KatexOptions } from "katex";
+import { bareMathRanges } from "./bareMath";
 
 interface MarkdownNode {
   type: string;
@@ -195,6 +196,14 @@ function containsProse(expression: string): boolean {
 
 function standaloneFormula(value: string): string | null {
   const candidate = value.trim();
+  const bare = bareMathRanges(candidate);
+  if (
+    bare.length === 1 &&
+    bare[0].start === 0 &&
+    bare[0].end === candidate.length
+  ) {
+    return canRenderLatex(bare[0].formula, true) ? bare[0].formula : null;
+  }
   if (
     !candidate ||
     candidate.length > 4_000 ||
@@ -230,6 +239,10 @@ function candidateRanges(value: string): Array<{
   const candidates: Array<{ start: number; end: number; formula: string }> = [];
   const grouped = /(\([^()\n]{1,500}\)|\[[^[\]\n]{1,500}\])/g;
   for (const match of value.matchAll(grouped)) {
+    // A group attached to a larger expression is not a standalone formula.
+    const before = value[(match.index ?? 0) - 1] ?? "";
+    const after = value[(match.index ?? 0) + match[0].length] ?? "";
+    if (/[\p{L}\p{N}_^/+=−-]/u.test(before + after)) continue;
     const formula = inlineFormula(match[0]);
     if (formula && match.index !== undefined) {
       candidates.push({
@@ -254,7 +267,21 @@ function candidateRanges(value: string): Array<{
     const formula = inlineFormula(match[0]);
     if (formula) candidates.push({ start, end, formula });
   }
+  for (const range of bareMathRanges(value)) {
+    if (
+      !candidates.some(
+        ({ start, end }) => range.start < end && range.end > start,
+      ) &&
+      canRenderLatex(range.formula)
+    ) {
+      candidates.push(range);
+    }
+  }
   return candidates.sort((left, right) => left.start - right.start);
+}
+
+export function hasRepairableMath(value: string): boolean {
+  return candidateRanges(value).length > 0;
 }
 
 function splitTextNode(value: string): MarkdownNode[] {
@@ -314,7 +341,16 @@ function updateMathNode(node: MarkdownNode, value: string): void {
   node.data?.hChildren?.some(updateText);
 }
 
+const LITERAL_NODES = new Set([
+  "code",
+  "inlineCode",
+  "link",
+  "linkReference",
+  "image",
+]);
+
 function repairMarkdownTree(node: MarkdownNode): void {
+  if (LITERAL_NODES.has(node.type)) return;
   if (node.type === "math" || node.type === "inlineMath") {
     if (node.value !== undefined) {
       updateMathNode(node, repairLatexExpression(node.value));
@@ -325,6 +361,7 @@ function repairMarkdownTree(node: MarkdownNode): void {
 
   for (let index = 0; index < node.children.length; index += 1) {
     const child = node.children[index];
+    if (LITERAL_NODES.has(child.type)) continue;
     if (
       child.type === "paragraph" &&
       child.children?.length === 1 &&
@@ -351,7 +388,7 @@ function repairMarkdownTree(node: MarkdownNode): void {
   }
 }
 
-/** remark plugin: repair parsed math and promote only high-confidence bare TeX. */
+/** remark plugin: repair parsed math and promote high-confidence bare notation. */
 export function remarkRepairMath() {
   return (tree: MarkdownNode) => {
     repairMarkdownTree(tree);

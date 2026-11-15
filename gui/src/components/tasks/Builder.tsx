@@ -1,5 +1,7 @@
+import { AllowanceField } from "./Budget";
+import { workflowProfileClient } from "../../lib/workflowProfileClient";
+/** Compact setup separates instructions and timing from the complete step editor. */
 import { useEffect, useRef, useState } from "react";
-import { appClient } from "../../lib/appClient";
 import { taskClient } from "../../lib/taskClient";
 import { template } from "../../lib/taskTemplates";
 import {
@@ -14,10 +16,12 @@ import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
 import ReportIssueLink from "../ReportIssueLink";
 import PaperInput from "./PaperInput";
+import useTabList from "../../hooks/useTabList";
+import "./Builder.css";
 
 const LIMITS = { maxActions: 64, deadlineHours: 168, actionTimeoutSecs: 7200 };
 
-type TemplateKind = "review" | "prompt" | "input" | "blank";
+export type TemplateKind = "review" | "prompt" | "input" | "blank";
 type Draft = {
   kind: TemplateKind;
   prompt: string;
@@ -33,12 +37,16 @@ type Draft = {
 
 export default function Builder({
   initialSessionId,
+  initialKind = "review",
+  onChooseType,
   initialPath,
   onPrepared,
   onDirtyChange,
   onClose,
 }: {
   initialSessionId?: string | null;
+  initialKind?: TemplateKind;
+  onChooseType?: () => void;
   /** Prefill the review-and-revise template with this input file. */
   initialPath?: string | null;
   onPrepared: (run: TaskRun) => void;
@@ -46,7 +54,7 @@ export default function Builder({
   onClose: () => void;
 }) {
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-  const [kind, setKind] = useState<TemplateKind>("review");
+  const [kind, setKind] = useState<TemplateKind>(initialKind);
   const [prompt, setPrompt] = useState("");
   const [profile, setProfile] = useState("");
   const [rounds, setRounds] = useState(3);
@@ -64,8 +72,21 @@ export default function Builder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [name, setName] = useState("Review and revise");
-  const [selectedTemplate, setSelectedTemplate] = useState("review");
+  const [name, setName] = useState(
+    initialKind === "blank"
+      ? "New automation"
+      : template(initialKind, "", "").name,
+  );
+  const [section, setSection] = useState(
+    initialKind === "blank" ? "steps" : "setup",
+  );
+  const tabs = useTabList(["setup", "steps", "advanced"], section, setSection);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+    heading.current?.scrollIntoView?.({ block: "nearest" });
+  }, []);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>(initialKind);
   const drafts = useRef(new Map<string, Draft>());
   const [pathValid, setPathValid] = useState(!initialPath);
   const operation = useRef(crypto.randomUUID());
@@ -131,6 +152,7 @@ export default function Builder({
     setInputs(draft.inputs);
     setTrigger(draft.trigger);
     setSelectedTemplate(key);
+    setSection(draft.kind === "blank" || !draft.pristine ? "steps" : "setup");
     setError("");
     setNotice("Your edits stay with each template while this builder is open.");
     onDirtyChange?.(true);
@@ -138,7 +160,7 @@ export default function Builder({
   useEffect(() => {
     let alive = true;
     void Promise.all([
-      appClient.profiles(),
+      workflowProfileClient.profiles(),
       taskClient.sessions(),
       taskClient.chains(),
     ])
@@ -206,38 +228,37 @@ export default function Builder({
       onChangeCapture={() => onDirtyChange?.(true)}
     >
       <div className="task-section-heading">
-        <div>
-          <h2>New automation</h2>
-          <p className="task-muted">
-            Combine assistant work, reviews, and pauses for input. Start with a
-            template or add your own steps.
-          </p>
+        <h2 ref={heading} tabIndex={-1}>
+          New automation
+        </h2>
+        <div className="automation-heading-actions">
+          {onChooseType && (
+            <button
+              type="button"
+              className="ui-button ui-button--sm"
+              onClick={onChooseType}
+            >
+              Change type
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close new automation"
+          >
+            ×
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close new automation"
-        >
-          ×
-        </button>
       </div>
       <div className="task-template-picker" aria-label="Automation template">
         {(
           [
-            [
-              "review",
-              "Review and revise",
-              "Draft, review, and revise up to a set limit.",
-            ],
-            ["prompt", "Follow up", "Continue a conversation now or later."],
-            [
-              "input",
-              "Wait for input",
-              "Pick up when the missing input arrives.",
-            ],
-            ["blank", "Start empty", "Compose the steps yourself."],
+            ["review", "Review and revise"],
+            ["prompt", "Follow up"],
+            ["input", "Wait for input"],
+            ["blank", "Start empty"],
           ] as const
-        ).map(([id, title, subtitle]) => (
+        ).map(([id, title]) => (
           <button
             key={id}
             type="button"
@@ -246,227 +267,307 @@ export default function Builder({
             onClick={() => selectTemplate(id)}
           >
             <strong>{title}</strong>
-            <span>{subtitle}</span>
           </button>
         ))}
       </div>
-      <div className="task-form-row">
-        <label>
-          Automation name
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          My templates
-          <select
-            value={
-              selectedTemplate.startsWith("saved:")
-                ? selectedTemplate.slice(6)
-                : ""
-            }
-            onChange={(e) => {
-              const item = saved.find((v) => v.id === e.target.value);
-              if (item) selectTemplate(`saved:${item.id}`, item.chain);
-            }}
-          >
-            <option value="">
-              {saved.length ? "Choose a template" : "No saved templates yet"}
-            </option>
-            {saved.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.chain.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          disabled={busy || !name.trim() || !chain.steps.length}
-          onClick={() => void saveAsTemplate()}
-        >
-          Save as template
-        </button>
-      </div>
-      <label>
-        Conversation
-        <select value={session} onChange={(e) => setSession(e.target.value)}>
-          <option value="">Select a conversation</option>
-          {sessions.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.title}
-              {s.workspaceName ? ` · ${s.workspaceName}` : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      {pristine && kind !== "blank" && (
-        <>
+      <fieldset disabled={busy} className="automation-builder-fields">
+        <div className="automation-builder-context">
           <label>
-            {kind === "review"
-              ? "Idea or instructions"
-              : "What should happen next?"}
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              rows={4}
-              placeholder={
-                kind === "review"
-                  ? "Develop a paper about…"
-                  : "Review the new results and explain what changed…"
-              }
-            />
+            Automation name
+            <input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
-          {kind === "review" && (
-            <>
+          <label>
+            Conversation
+            <select
+              value={session}
+              onChange={(e) => setSession(e.target.value)}
+            >
+              <option value="">Select a conversation</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}
+                  {s.workspaceName ? ` · ${s.workspaceName}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div
+          className="ui-page-tabs"
+          role="tablist"
+          aria-label="Automation settings"
+        >
+          {["setup", "steps", "advanced"].map((id) => (
+            <button key={id} {...tabs.tabProps(id)}>
+              {
+                {
+                  setup: "Setup & schedule",
+                  steps: "Steps & limits",
+                  advanced: "Definition (advanced)",
+                }[id]
+              }
+            </button>
+          ))}
+        </div>
+        <div {...tabs.panelProps("setup")} hidden={section !== "setup"}>
+          <div className="automation-builder-columns">
+            <section
+              className="automation-builder-card automation-builder-stack"
+              aria-label="Instructions"
+            >
+              {pristine && kind !== "blank" && (
+                <>
+                  <label>
+                    {kind === "review"
+                      ? "Idea or instructions"
+                      : "What should happen next?"}
+                    <textarea
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      rows={4}
+                      placeholder={
+                        kind === "review"
+                          ? "Develop a paper about…"
+                          : "Review the new results and explain what changed…"
+                      }
+                    />
+                  </label>
+                  {kind === "review" && (
+                    <>
+                      <div className="task-form-row">
+                        <label>
+                          Review workflow
+                          <select
+                            value={profile}
+                            onChange={(e) => setProfile(e.target.value)}
+                          >
+                            {profiles.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Maximum reviews
+                          <NumberField
+                            min={1}
+                            max={32}
+                            value={rounds}
+                            onChange={setRounds}
+                          />
+                        </label>
+                      </div>
+                      <details>
+                        <summary>Start from an existing paper</summary>
+                        <PaperInput
+                          sessionId={session}
+                          value={path}
+                          onChange={(next) => {
+                            onDirtyChange?.(true);
+                            setPath(next);
+                          }}
+                          onValidChange={setPathValid}
+                        />
+                        <p className="task-muted">
+                          Leave blank to draft from your idea. Revisions from
+                          this template are saved as Markdown.
+                        </p>
+                      </details>
+                    </>
+                  )}
+                </>
+              )}
+              {(!pristine || kind === "blank") && (
+                <div>
+                  <h3>Custom steps</h3>
+                  <p className="task-muted">
+                    Edit the steps and limits to define what this automation
+                    does.
+                  </p>
+                  <button type="button" onClick={() => setSection("steps")}>
+                    Edit steps and limits
+                  </button>
+                </div>
+              )}
+            </section>
+            <section className="automation-builder-card" aria-label="Schedule">
+              <Timing
+                value={trigger}
+                onChange={(next) => {
+                  onDirtyChange?.(true);
+                  setTrigger(next);
+                }}
+              />
+            </section>
+          </div>
+        </div>
+        <div {...tabs.panelProps("steps")} hidden={section !== "steps"}>
+          <div className="automation-builder-columns automation-builder-step-columns">
+            <section
+              className="automation-builder-card"
+              aria-label="Automation steps"
+            >
+              <h3>Steps</h3>
+              <OutlineEditor
+                chain={chain}
+                onChange={setChain}
+                profiles={profiles}
+              />
+            </section>
+            <section
+              className="automation-builder-card automation-builder-stack"
+              aria-label="Limits and templates"
+            >
+              <h3>Limits</h3>
+              {/* Same ranges as validate() in orchestration/definition.rs. */}
               <div className="task-form-row">
                 <label>
-                  Review workflow
-                  <select
-                    value={profile}
-                    onChange={(e) => setProfile(e.target.value)}
-                  >
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Maximum reviews
+                  Action limit
                   <NumberField
                     min={1}
-                    max={32}
-                    value={rounds}
-                    onChange={setRounds}
+                    max={1024}
+                    value={chain.limits.maxActions}
+                    onChange={(maxActions) =>
+                      setChain({
+                        ...chain,
+                        limits: { ...chain.limits, maxActions },
+                      })
+                    }
+                  />
+                </label>
+                <AllowanceField
+                  cents={chain.limits.maxApiCostCents}
+                  onChange={(maxApiCostCents) =>
+                    setChain({
+                      ...chain,
+                      limits: { ...chain.limits, maxApiCostCents },
+                    })
+                  }
+                />
+                <label>
+                  Deadline (hours)
+                  <NumberField
+                    min={1}
+                    max={8760}
+                    value={chain.limits.deadlineHours}
+                    onChange={(deadlineHours) =>
+                      setChain({
+                        ...chain,
+                        limits: { ...chain.limits, deadlineHours },
+                      })
+                    }
                   />
                 </label>
               </div>
-              <details>
-                <summary>Start from an existing paper</summary>
-                <PaperInput
-                  sessionId={session}
-                  value={path}
-                  onChange={(next) => {
-                    onDirtyChange?.(true);
-                    setPath(next);
+              <h3>Templates</h3>
+              <label>
+                My templates
+                <select
+                  value={
+                    selectedTemplate.startsWith("saved:")
+                      ? selectedTemplate.slice(6)
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const item = saved.find((v) => v.id === e.target.value);
+                    if (item) selectTemplate(`saved:${item.id}`, item.chain);
                   }}
-                  onValidChange={setPathValid}
-                />
-                <p className="task-muted">
-                  Leave blank to draft from your idea. Revisions from this
-                  template are saved as Markdown.
-                </p>
-              </details>
-            </>
-          )}
-        </>
-      )}
-      <OutlineEditor chain={chain} onChange={setChain} profiles={profiles} />
-      <details className="task-advanced">
-        <summary>Definition (advanced)</summary>
-        <pre className="task-code" aria-label="Automation definition">
-          {JSON.stringify(chain, null, 2)}
-        </pre>
-        <div className="task-actions">
-          <button
-            type="button"
-            onClick={() =>
-              void navigator.clipboard
-                ?.writeText(JSON.stringify(chain, null, 2))
-                .then(() => setNotice("Definition copied."))
-                .catch(() => setError("Could not copy the definition."))
-            }
-          >
-            Copy definition
-          </button>
-          <label className="task-import">
-            Import automation
-            <input
-              type="file"
-              accept=".json,application/json"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                if (file.size > 262144) {
-                  setError("Chain exceeds 256 KiB");
-                  return;
+                >
+                  <option value="">
+                    {saved.length
+                      ? "Choose a template"
+                      : "No saved templates yet"}
+                  </option>
+                  {saved.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.chain.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={busy || !name.trim() || !chain.steps.length}
+                onClick={() => void saveAsTemplate()}
+              >
+                Save as template
+              </button>
+            </section>
+          </div>
+        </div>
+        <div {...tabs.panelProps("advanced")} hidden={section !== "advanced"}>
+          <section className="automation-builder-card task-advanced">
+            <h3>Definition (advanced)</h3>
+            <pre className="task-code" aria-label="Automation definition">
+              {JSON.stringify(chain, null, 2)}
+            </pre>
+            <div className="task-actions">
+              <button
+                type="button"
+                onClick={() =>
+                  void navigator.clipboard
+                    ?.writeText(JSON.stringify(chain, null, 2))
+                    .then(() => setNotice("Definition copied."))
+                    .catch(() => setError("Could not copy the definition."))
                 }
-                void file
-                  .text()
-                  .then(taskClient.validate)
-                  .then((c) => setChain(c))
-                  .catch((err) => setError(String(err)));
-                e.target.value = "";
-              }}
-            />
-          </label>
+              >
+                Copy definition
+              </button>
+              <label className="task-import">
+                Import automation
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 262144) {
+                      setError("Chain exceeds 256 KiB");
+                      return;
+                    }
+                    void file
+                      .text()
+                      .then(taskClient.validate)
+                      .then((c) => setChain(c))
+                      .catch((err) => setError(String(err)));
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            <label>
+              Named inputs
+              <textarea
+                className="task-code"
+                spellCheck={false}
+                rows={3}
+                value={inputs}
+                onChange={(e) => setInputs(e.target.value)}
+              />
+            </label>
+          </section>
         </div>
-        <label>
-          Named inputs
-          <textarea
-            className="task-code"
-            spellCheck={false}
-            rows={3}
-            value={inputs}
-            onChange={(e) => setInputs(e.target.value)}
-          />
-        </label>
-        {/* Same ranges as validate() in orchestration/definition.rs. */}
-        <div className="task-form-row">
-          <label>
-            Action limit
-            <NumberField
-              min={1}
-              max={1024}
-              value={chain.limits.maxActions}
-              onChange={(maxActions) =>
-                setChain({
-                  ...chain,
-                  limits: { ...chain.limits, maxActions },
-                })
-              }
-            />
-          </label>
-          <label>
-            Deadline (hours)
-            <NumberField
-              min={1}
-              max={8760}
-              value={chain.limits.deadlineHours}
-              onChange={(deadlineHours) =>
-                setChain({
-                  ...chain,
-                  limits: { ...chain.limits, deadlineHours },
-                })
-              }
-            />
-          </label>
+      </fieldset>
+      <footer className="automation-builder-footer">
+        <div>
+          {error && (
+            <p className="task-error" role="alert">
+              {error}
+              <ReportIssueLink />
+            </p>
+          )}
+          {notice && (
+            <p className="task-muted" role="status">
+              {notice}
+            </p>
+          )}
+          <p className="task-muted">
+            You’ll review the exact scope before starting.
+          </p>
         </div>
-      </details>
-      <Timing
-        value={trigger}
-        onChange={(next) => {
-          onDirtyChange?.(true);
-          setTrigger(next);
-        }}
-      />
-      {error && (
-        <p className="task-error" role="alert">
-          {error}
-          <ReportIssueLink />
-        </p>
-      )}
-      {notice && (
-        <p className="task-muted" role="status">
-          {notice}
-        </p>
-      )}
-      <div className="task-footer">
-        <p className="task-muted">
-          You’ll review the exact scope before starting.
-        </p>
         <button
-          className="task-primary"
+          className="ui-button ui-button--primary"
           disabled={
             busy ||
             !name.trim() ||
@@ -482,7 +583,7 @@ export default function Builder({
         >
           {busy ? "Preparing…" : "Preview automation →"}
         </button>
-      </div>
+      </footer>
     </section>
   );
 }

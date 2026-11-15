@@ -121,6 +121,7 @@ fn rejects_unsafe_asset_paths() {
         .unwrap()
         .bundle;
     bundle.assets.push(DocumentAsset {
+        identity: None,
         id: "bad".to_string(),
         kind: "figure".to_string(),
         label: "Bad".to_string(),
@@ -831,6 +832,7 @@ fn asset_links_require_label_or_page_evidence() {
     let mut bundle = build(&extraction, temp.path()).unwrap().bundle;
     for number in 1..=4 {
         bundle.assets.push(DocumentAsset {
+            identity: None,
             id: format!("asset-{number}"),
             kind: "figure".into(),
             label: format!("Figure {number}"),

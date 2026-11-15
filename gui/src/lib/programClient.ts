@@ -1,12 +1,12 @@
+import type { WorkbenchEvent } from "./workbench/runtimeTypes";
 import { invoke } from "@tauri-apps/api/core";
 import type { ContextItem, DeskRecord, OpenResearchObject } from "./deskClient";
-import type { ExecutionProfile, ResearchExecution } from "./workbenchTypes";
+import type {
+  ExecutionProfile,
+  ResearchExecution,
+} from "./workbench/executionTypes";
 import type { ProjectRecord } from "./projectClient";
 import type { ResponseRecord, TheoryNote } from "./studioClient";
-export interface ProgramAction {
-  action: string;
-  [field: string]: unknown;
-}
 export interface Artifact {
   id: string;
   hash: string;
@@ -117,9 +117,97 @@ export interface Expected {
   absoluteTolerance: number;
   relativeTolerance: number;
 }
+export interface ResearchActivity {
+  turns: {
+    sessionId: string;
+    workspaceId: string | null;
+    title: string;
+    threadId: string;
+    turnId: string | null;
+    state: string;
+  }[];
+  jobs: {
+    id: string;
+    workspaceId: string;
+    title: string;
+    adapter: string;
+    state: string;
+    owner: string | null;
+  }[];
+  pendingRequests: WorkbenchEvent[];
+  researchAttention: number;
+}
+
+type ArtifactAction =
+  | { action: "artifact"; id: string }
+  | { action: "exportArtifact"; id: string; path: string }
+  | {
+      action: "stage";
+      recordId: string;
+      artifactId: string;
+      checkpointId: string;
+      path: string;
+      expectedHash: string | null;
+    };
+
+type FollowupAction =
+  | { action: "list"; historyOffset: number }
+  | {
+      action: "enqueue";
+      text: string;
+      model: string | null;
+      effort: string | null;
+      operationId: string;
+    }
+  | { action: "reviewContext"; id: string; revision: number }
+  | { action: "run"; id: string; fingerprint: string }
+  | {
+      action: "control";
+      id: string;
+      revision: number;
+      control: "up" | "down" | "cancel" | "dismiss";
+    }
+  | { action: "reconcile"; id: string }
+  | {
+      action: "refreshContext";
+      id: string;
+      revision: number;
+      fingerprint: string;
+    }
+  | {
+      action: "branch";
+      title: string;
+      items: ContextItem[];
+      operationId: string;
+    };
+
+interface ArtifactResults {
+  artifact: { base64: string };
+  exportArtifact: unknown;
+  stage: unknown;
+}
+
+interface FollowupResults {
+  list: Followup[];
+  enqueue: unknown;
+  reviewContext: FollowupContextReview;
+  run: unknown;
+  control: unknown;
+  reconcile: unknown;
+  refreshContext: unknown;
+  branch: { session: { id: string } };
+}
+
 export const programClient = {
-  call: <T = unknown>(workspaceId: string, action: ProgramAction) =>
-    invoke<T>("workbench_program", { workspaceId, action }),
-  queue: <T = Followup[]>(sessionId: string, action: ProgramAction) =>
-    invoke<T>("workbench_followups", { sessionId, action }),
+  activity: () => invoke<ResearchActivity>("workbench_research_activity"),
+  call: <T extends ArtifactAction>(workspaceId: string, action: T) =>
+    invoke<ArtifactResults[T["action"]]>("workbench_program", {
+      workspaceId,
+      action,
+    }),
+  queue: <T extends FollowupAction>(sessionId: string, action: T) =>
+    invoke<FollowupResults[T["action"]]>("workbench_followups", {
+      sessionId,
+      action,
+    }),
 };

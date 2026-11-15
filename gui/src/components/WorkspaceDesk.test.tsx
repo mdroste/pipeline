@@ -82,6 +82,39 @@ it("keeps attention and navigation actions reachable from the focused project", 
   expect(screen.getByText("Paper")).not.toBeVisible();
 });
 
+it("keeps the chat beside artifacts and restores the project split on collapse", () => {
+  const layout = (open: boolean) => (
+    <WorkspaceDesk
+      project={<textarea aria-label="Project notes" defaultValue="Notes" />}
+      artifacts={
+        open
+          ? { id: "artifacts", content: <p>Preview</p>, onCollapse: vi.fn() }
+          : undefined
+      }
+    >
+      <textarea aria-label="Message" defaultValue="Draft" />
+    </WorkspaceDesk>
+  );
+  const view = render(layout(false));
+  resize(1000);
+  const notes = screen.getByLabelText("Project notes");
+  const message = screen.getByLabelText("Message");
+  expect(notes).toBeVisible();
+  view.rerender(layout(true));
+  const pane = screen.getByRole("region", { name: "Artifacts" });
+  expect(pane.parentElement).toBe(message.closest(".workspace-desk-panes"));
+  expect(message).toBeVisible();
+  expect(notes).not.toBeVisible();
+  resize(690);
+  expect(pane).toBeVisible();
+  expect(message).toBeVisible();
+  resize(1000);
+  view.rerender(layout(false));
+  expect(screen.getByLabelText("Project notes")).toBe(notes);
+  expect(notes).toBeVisible();
+  expect(message).toBeVisible();
+});
+
 it("clamps the split to actual space and restores each project's saved width and view", () => {
   localStorage.setItem("pipeline.workspace.assistantWidth.alpha", "560");
   localStorage.setItem("pipeline.workspace.view.beta", "assistant");

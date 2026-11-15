@@ -1,5 +1,4 @@
-//! Exit statuses a script can rely on, as `docs/cli.md` lists them. Each command
-//! here stops before any provider, parser, or model call.
+//! Exit statuses a script can rely on, as `docs/cli.md` lists them.
 #![cfg(unix)]
 
 use std::process::{Command, Output};
@@ -70,4 +69,98 @@ fn a_workflow_that_validation_rejects_exits_1() {
         &["workflow", "validate", missing.to_str().unwrap()],
     );
     assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn paper_review_stops_after_orientation_for_a_restaurant_menu() {
+    use serde_json::{json, Value};
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    let reason = "It appears to be a restaurant menu listing dishes and prices.";
+    let home = tempfile::tempdir().unwrap();
+    let settings_dir = home.path().join(".pipeline");
+    std::fs::create_dir(&settings_dir).unwrap();
+    let menu = home.path().join("menu.txt");
+    std::fs::write(&menu, "Dinner menu\nTomato soup $8\nGrilled salmon $24\n").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::fs::write(
+        settings_dir.join("settings.json"),
+        json!({
+            "preferred_provider": "local",
+            "local_base_url": format!("http://{address}/v1"),
+            "local_model": "fixture"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::<Value>::new();
+        for stream in listener.incoming() {
+            let mut reader = BufReader::new(stream.unwrap());
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap() == 0 {
+                break; // The test closed a connection to stop the listener.
+            }
+            let mut length = 0;
+            for header in reader.by_ref().lines() {
+                let header = header.unwrap().to_ascii_lowercase();
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(value) = header.strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            let reply = if line.starts_with("GET ") {
+                json!({"data": [{"id": "fixture"}]})
+            } else {
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                requests.push(serde_json::from_slice(&body).unwrap());
+                let rejection = json!({"orientation": null, "rejection_reason": reason});
+                json!({
+                    "choices": [{
+                        "message": {"role": "assistant", "content": rejection.to_string()},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                })
+            }
+            .to_string();
+            write!(
+                reader.into_inner(),
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                reply.len()
+            )
+            .unwrap();
+        }
+        requests
+    });
+    let output = cli(
+        home.path(),
+        &[
+            "run",
+            "--profile",
+            "auto-paper-review",
+            "--input",
+            menu.to_str().unwrap(),
+        ],
+    );
+    drop(TcpStream::connect(address).unwrap());
+    let requests = server.join().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "Review stopped. The document couldn’t be identified as an academic paper. {reason}"
+        )),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
+    assert_eq!(requests.len(), 1, "{stderr}");
+    let messages = requests[0]["messages"].to_string();
+    assert!(messages.contains("Dinner menu"));
+    assert!(messages.contains("First decide whether"));
 }

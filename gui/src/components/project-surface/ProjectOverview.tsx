@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   TranscriptItem,
   WorkbenchSession,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/sessionTypes";
 import { researchClient } from "../../lib/workbench/researchClient";
 import { projectDate } from "../../lib/projectIndex";
 import { router } from "../../lib/router";
@@ -18,24 +18,29 @@ import type { ContextItem } from "../../lib/deskClient";
 import { kindLabel, projectStages } from "../../lib/workspaceNavigation";
 import {
   BRIEF_PROMPT,
-  arrangeOverview,
-  briefNotes,
-  currentManuscript,
   documentsBlock,
-  draftBlock,
-  isThinProject,
+} from "../../lib/project-overview/documents";
+import { arrangeOverview } from "../../lib/project-overview/arrange";
+import {
+  briefNotes,
   leftOff,
   projectSessions,
-  recordVisit,
-  repositoryBlock,
-  roundBlock,
-  sinceBlock,
-  syncBlock,
-  targetSummary,
-  type OverviewAction,
-  type OverviewBlock,
-  type Visit,
-} from "../../lib/projectOverview";
+} from "../../lib/project-overview/conversations";
+import {
+  currentManuscript,
+  draftBlock,
+  isThinProject,
+} from "../../lib/project-overview/manuscript";
+import { recordVisit } from "../../lib/project-overview/visits";
+import { repositoryBlock } from "../../lib/project-overview/repository";
+import { roundBlock, syncBlock } from "../../lib/project-overview/review";
+import { sinceBlock } from "../../lib/project-overview/since";
+import { targetSummary } from "../../lib/project-overview/target";
+import type {
+  OverviewAction,
+  OverviewBlock,
+} from "../../lib/project-overview/types";
+import type { Visit } from "../../lib/project-overview/visits";
 import useProjectSignals from "../../hooks/useProjectSignals";
 import { payloadText } from "../../lib/workspaceTranscript";
 import { isOpenTask, noteKindLabel, op, type SurfaceApi } from "./shared";

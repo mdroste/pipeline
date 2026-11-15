@@ -53,7 +53,8 @@ export interface PopoverProps {
 /**
  * The one floating layer. It escapes pane clipping through a portal, stays
  * inside the window, flips when there is no room, closes on Escape or an
- * outside press, and hands focus back to its anchor.
+ * outside press, and hands focus back to its anchor. A modal's layers stay
+ * inside that modal so native top-layer rendering and inert siblings agree.
  *
  * Nested layers count as inside: React events bubble through portals, so a
  * press in a child popover marks this one as pressed inside too.
@@ -222,6 +223,8 @@ export default function Popover({
     >
       {children}
     </div>,
-    document.body,
+    anchorRef.current?.closest<HTMLElement>(
+      'dialog[open], [role="dialog"][aria-modal="true"]',
+    ) ?? document.body,
   );
 }

@@ -1,5 +1,8 @@
 import { payloadText } from "./workspaceTranscript";
-import type { ConversationTurn, TranscriptItem } from "./workbenchTypes";
+import type {
+  ConversationTurn,
+  TranscriptItem,
+} from "./workbench/sessionTypes";
 
 /** Stored turn states are provider words; these are what a researcher reads. */
 const TURN_STATE_LABELS: Record<string, string> = {

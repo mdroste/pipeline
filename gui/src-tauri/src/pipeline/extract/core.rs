@@ -307,8 +307,8 @@ pub(super) fn run_bounded_output_observed(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
+    // On Windows own the Job Object before a converter can start children.
+    let mut child = crate::commands::lifecycle::spawn_independent(&mut command)
         .map_err(|e| format!("Failed to start {label}: {e}"))?;
     let pid = child.id();
     if pid > 0 {
@@ -369,6 +369,14 @@ pub(super) fn run_bounded_output_observed(
                 break Err(format!("{label} timed out after {}s", timeout.as_secs()));
             }
             Ok(None) => {
+                if let Err(error) = crate::pipeline::review_budget::check() {
+                    if pid > 0 {
+                        crate::commands::kill_process(pid);
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(error);
+                }
                 if let Some(dir) = watched_output_dir {
                     if last_output_scan.elapsed() >= std::time::Duration::from_millis(250) {
                         last_output_scan = std::time::Instant::now();

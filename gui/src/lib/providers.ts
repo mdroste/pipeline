@@ -1,4 +1,5 @@
-import type { ModelCatalog, ModelSelection, Settings } from "./types";
+import type { ModelCatalog, ModelSelection } from "./reviewModelTypes";
+import type { Settings } from "./settingsTypes";
 import { modelDisplayName, unsetModel, unsetModelOption } from "./modelChoice";
 
 import {

@@ -327,7 +327,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-transparent transition-colors group-hover:bg-blue-400 group-focus:bg-blue-400 group-active:bg-blue-500" />
         </div>
       )}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line bg-sunken px-3 py-1.5 text-ui-meta text-ink-muted">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <button
             onClick={() => setOpen(!open)}
@@ -397,7 +397,7 @@ export default function Console({ logs, usage, active = true }: Props) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search…"
-                className="w-24 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 transition-all placeholder:text-gray-400 focus:w-40 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:placeholder:text-gray-600 dark:focus:ring-gray-500"
+                className="ui-input w-28 max-w-full placeholder:text-ink-muted"
               />
               {/* Level filter chips */}
               <div className="flex shrink-0 items-center gap-0.5">

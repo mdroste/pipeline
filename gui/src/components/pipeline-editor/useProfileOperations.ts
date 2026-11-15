@@ -6,8 +6,8 @@ import type {
   StepConfig,
   ProfileSummary,
   ExportEnvelope,
-  Settings,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
+import type { Settings } from "../../lib/settingsTypes";
 import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
 import {
   forgetWorkflowDraft,

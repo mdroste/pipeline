@@ -160,13 +160,23 @@ fn folded(path: &Path) -> PathBuf {
     PathBuf::from(path.to_string_lossy().to_lowercase())
 }
 fn jobs_in(ws: &str) -> Vec<ActiveJob> {
-    active()
+    let mut jobs: Vec<_> = active()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .values()
         .filter(|job| job.workspace_id == ws)
         .cloned()
-        .collect()
+        .collect();
+    if let Some((folder, name)) = super::artifact_runs::active_in_project(ws) {
+        let cwd = folded(&folder);
+        jobs.push(ActiveJob {
+            workspace_id: ws.into(),
+            name,
+            declared: vec![cwd.clone()],
+            cwd,
+        });
+    }
+    jobs
 }
 fn in_use(job: &ActiveJob, what: &str) -> WorkbenchError {
     WorkbenchError::conflict(format!(
@@ -235,6 +245,29 @@ pub(crate) fn append_log(id: &str, stream: &str, bytes: &[u8]) {
     target.extend_from_slice(&bytes[..take]);
     log.truncated |= take < bytes.len();
 }
+pub(crate) fn artifact_log(id: &str) -> (String, String, bool) {
+    let logs = LOGS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let Some(log) = logs.get(id) else {
+        return Default::default();
+    };
+    let (stdout, a) = super::artifact_runs::output_tail(&log.stdout);
+    let (stderr, b) = super::artifact_runs::output_tail(&log.stderr);
+    (stdout, stderr, log.truncated || a || b)
+}
+pub(crate) fn forget_artifact_log(id: &str) {
+    LOGS.get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(id);
+}
+pub(crate) fn reserve_artifact_slot() -> WorkbenchResult<SemaphorePermit<'static>> {
+    LIMIT.try_acquire().map_err(|_| {
+        WorkbenchError::conflict("Two local jobs are running. Stop one or wait for it to finish.")
+    })
+}
 pub(crate) fn execution_active(id: &str) -> bool {
     active()
         .lock()
@@ -242,17 +275,14 @@ pub(crate) fn execution_active(id: &str) -> bool {
         .contains_key(id)
 }
 pub(crate) fn workspace_active(ws: &str) -> bool {
-    active()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .any(|job| job.workspace_id == ws)
+    !jobs_in(ws).is_empty()
 }
 pub(crate) fn has_active() -> bool {
-    !active()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_empty()
+    super::artifact_runs::has_active()
+        || !active()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
 }
 
 // Lets a test look at the project in the moment before the queue lets go of it.
@@ -410,6 +440,7 @@ pub(crate) fn launch_pending() {
                 .await
             }
             .await;
+            crate::workbench::programs::commands::wake_scheduler();
             if let Err(error) = result {
                 let failed_id = id.clone();
                 let _=super::super::commands::run_store_owned(job_store,move |store| {
@@ -678,6 +709,7 @@ pub fn reconcile_job(store: &Store, ws: &str, id: &str) -> WorkbenchResult<Resea
 }
 pub async fn shutdown() {
     STOPPING.store(true, Ordering::Release);
+    super::artifact_runs::cancel_all();
     let ids = active().lock().unwrap_or_else(|e| e.into_inner()).clone();
     cancelled_executions()
         .lock()

@@ -1,0 +1,191 @@
+/* All automation types start in one full-width surface. The step builder keeps
+   instructions and timing together, with detailed editing in separate tabs. */
+.ui-page.tasks-page:has(.automation-setup) {
+  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-6);
+}
+.tasks-page:has(.automation-setup) > .ui-page-toolbar {
+  margin-bottom: 0.875rem;
+  padding-bottom: 0.75rem;
+}
+.automation-setup,
+.task-builder,
+.discovery-builder {
+  min-width: 0;
+  container-type: inline-size;
+}
+.tasks-page .task-builder {
+  padding: 0;
+  border: 0;
+}
+.automation-heading-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tasks-page .task-builder > .task-section-heading h2,
+.tasks-page .automation-chooser h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+.task-builder h2:focus,
+.automation-chooser h2:focus {
+  outline: none;
+}
+.automation-type-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.875rem;
+  margin: 1rem 0;
+}
+.automation-type-card {
+  border: 1px solid var(--ui-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 1.125rem;
+  text-align: left;
+  background: var(--ui-surface);
+  border-radius: var(--ui-radius-md);
+}
+.automation-type-card:hover {
+  background: var(--ui-page-soft);
+  border-color: var(--ui-border-strong);
+}
+.automation-type-grid strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.automation-type-grid button > span {
+  color: var(--ui-muted);
+  line-height: 1.6;
+}
+.tasks-page .task-builder .task-template-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.875rem 0;
+}
+.tasks-page .task-builder .task-template-picker button {
+  padding: 0.5rem 0.75rem;
+}
+.task-builder .task-template-picker strong {
+  font-weight: 500;
+}
+.automation-builder-fields {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+.automation-builder-context,
+.automation-builder-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.875rem;
+  align-items: start;
+}
+.automation-builder-card {
+  min-width: 0;
+  padding: 0.875rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+}
+.automation-builder-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.tasks-page .task-builder label {
+  margin: 0;
+}
+.tasks-page .task-builder input:not([type="checkbox"]):not([type="file"]),
+.tasks-page .task-builder select,
+.tasks-page .task-builder textarea {
+  padding: 0.5rem 0.625rem;
+  line-height: 1.55;
+}
+.tasks-page .task-builder select {
+  text-overflow: ellipsis;
+}
+.tasks-page .task-builder .task-timing {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.task-builder .task-timing legend {
+  font-weight: 600;
+}
+.tasks-page .task-builder .task-form-row > label:last-child {
+  max-width: none;
+  flex: 1;
+}
+.tasks-page .task-builder details {
+  margin: 0;
+}
+.tasks-page .task-builder .task-advanced > pre {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  background: var(--ui-sunken);
+  border-radius: var(--ui-radius-sm);
+}
+.automation-builder-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--ui-space-4);
+  margin-top: var(--ui-space-3);
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow-1);
+}
+.automation-builder-footer > div {
+  min-width: 0;
+}
+.tasks-page .automation-builder-footer p {
+  margin: 0;
+}
+.tasks-page .automation-builder-footer > button {
+  flex-shrink: 0;
+  min-height: 2.75rem;
+  font-weight: 600;
+}
+.automation-setup .discovery-builder {
+  border: 0;
+  padding: 0;
+}
+@container (max-width: 50rem) {
+  .automation-type-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 34rem) {
+  .automation-type-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container (max-width: 42rem) {
+  .automation-builder-columns,
+  .automation-builder-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .automation-builder-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}

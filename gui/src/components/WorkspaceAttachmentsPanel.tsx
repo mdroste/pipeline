@@ -19,9 +19,9 @@ import Skeleton from "../ui/Skeleton";
 import type {
   ConversationSnapshot,
   SessionSnapshot,
-  EffectiveHarness,
-  PaperWithRevision,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/sessionTypes";
+import type { EffectiveHarness } from "../lib/workbench/harnessTypes";
+import type { PaperWithRevision } from "../lib/workbench/researchTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
 /**

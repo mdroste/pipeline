@@ -1,7 +1,9 @@
 use crate::document_bundle::DocumentBundle;
 use crate::models::{ExtractionResult, ReportQuality, RunProducts, StepFailure, StepOutput};
 use crate::pipeline::extract::is_informational_extraction_note;
-use crate::pipeline::orient::OrientationSample;
+use crate::pipeline::orient::{
+    OrientationSample, INDEXED_ORIENTATION_NOTICE, ORIENTATION_EXCERPTS_NOTICE,
+};
 use crate::pipeline_config::PipelineConfig;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -197,12 +199,7 @@ pub fn build_report_quality(
     );
     let mut limitations = Vec::new();
     if orientation_sample.omitted_bytes > 0 {
-        limitations.push(format!(
-            "Orientation used {} of {} extracted bytes; {} bytes were outside the deterministic routing sample.",
-            orientation_sample.included_bytes,
-            orientation_sample.included_bytes + orientation_sample.omitted_bytes,
-            orientation_sample.omitted_bytes
-        ));
+        limitations.push(ORIENTATION_EXCERPTS_NOTICE.to_string());
     }
     for note in &extraction_notes {
         limitations.push(format!("Extraction: {note}"));
@@ -231,9 +228,11 @@ pub fn build_report_quality(
         ));
     }
     if not_checkable_evidence > 0 {
-        limitations.push(format!(
-            "{not_checkable_evidence} evidence item(s) could not be checked automatically."
-        ));
+        limitations.push(if not_checkable_evidence == 1 {
+            "Pipeline could not automatically check 1 citation.".to_string()
+        } else {
+            format!("Pipeline could not automatically check {not_checkable_evidence} citations.")
+        });
     }
     if manual_review_items > 0 {
         limitations.push(format!(
@@ -295,6 +294,21 @@ pub fn build_report_quality(
         manual_review_items,
         limitations,
         reproducibility_hash,
+    }
+}
+
+pub(crate) fn describe_orientation(quality: &mut ReportQuality, orientation: &serde_json::Value) {
+    if orientation["orientation_indexed"].as_bool() == Some(true) {
+        if let Some(notice) = quality
+            .limitations
+            .iter_mut()
+            .find(|notice| notice.as_str() == ORIENTATION_EXCERPTS_NOTICE)
+        {
+            *notice = INDEXED_ORIENTATION_NOTICE.to_string();
+        }
+    }
+    if orientation["orientation_follow_up_incomplete"].as_bool() == Some(true) {
+        quality.limitations.push("Document preparation could not complete its follow-up reading and kept its initial review plan.".into());
     }
 }
 
@@ -406,7 +420,7 @@ mod tests {
         assert_eq!(checked.unverified_evidence, 0);
         assert!(checked
             .limitations
-            .contains(&"2 evidence item(s) could not be checked automatically.".to_string()));
+            .contains(&"Pipeline could not automatically check 2 citations.".to_string()));
 
         // A missing quote and a wrong page are still real evidence problems.
         for status in ["not_found", "partially_verified"] {

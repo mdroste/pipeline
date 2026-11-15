@@ -5,13 +5,15 @@ import type {
 } from "./appRunPreparation";
 import type {
   BatchJob,
-  PipelineConfig,
   PipelineResult,
-  ProfileSummary,
   QueuedRun,
-  RunParallelOverrides,
   RunQueueSnapshot,
-} from "./types";
+} from "./reviewTypes";
+import type {
+  RosterEntry,
+  RunModelOverrides,
+  RunParallelOverrides,
+} from "./reviewModelTypes";
 
 export interface RerunSecret {
   key: string;
@@ -19,6 +21,7 @@ export interface RerunSecret {
 }
 
 export interface RerunRequirements {
+  fingerprint: string;
   secrets: RerunSecret[];
   notice: string | null;
   agent_notice?: string | null;
@@ -31,11 +34,12 @@ export interface ExecutionPlanRequest {
   expectedProfileConfigSnapshotId: string | null;
   diff: boolean;
   paperPath: string | null;
-  inputInterpretation: string | null;
+  inputInterpretation?: string | null;
   runParallelOverrides?: RunParallelOverrides;
 }
 
 export interface StartBatchRequest {
+  reviewHandoffId?: string;
   expectedProfileSnapshotId?: string;
   authorNote?: string | null;
   paths: string[];
@@ -46,6 +50,7 @@ export interface StartBatchRequest {
 }
 
 export interface EnqueueRunRequest {
+  reviewHandoffId?: string;
   authorNote?: string | null;
   paperPath: string;
   inputInterpretation: string | null;
@@ -61,12 +66,23 @@ export const appClient = {
   markSmokeReady: () => invoke<boolean>("mark_smoke_ready"),
   setSidebarMenuCollapsed: (collapsed: boolean) =>
     invoke<void>("set_sidebar_menu_collapsed", { collapsed }),
+  closeHides: () => invoke<boolean>("app_close_hides"),
+  completeClose: (args: { action: "hide" | "quit" }) =>
+    invoke<void>("complete_app_close", args),
+  setCloseGuard: (args: { id: string; active: boolean }) =>
+    invoke<void>("set_app_close_guard", args),
+  modelRoster: (args: { runParallelOverrides: RunModelOverrides | null }) =>
+    invoke<RosterEntry[]>("get_model_roster", args),
+  reviewPdfOptions: (args: {
+    runParallelOverrides: RunModelOverrides | null;
+  }) => invoke<{ method: string }>("review_pdf_options", args),
+  cancelPass: (args: { passKey: string | undefined; runKey: string | null }) =>
+    invoke<void>("cancel_pass", args),
+  cancelBatch: () => invoke<void>("cancel_batch"),
   batchStatus: () => invoke<BatchJob[]>("get_batch_status"),
   runSetup: () => invoke<RunProfileSnapshot>("get_run_setup"),
   executionPlan: (request: ExecutionPlanRequest) =>
     invoke<ExecutionPlanEnvelope>("get_execution_plan", { ...request }),
-  pipelineConfig: () => invoke<PipelineConfig>("get_pipeline_config"),
-  profiles: () => invoke<ProfileSummary[]>("list_profiles"),
   inputFiles: (dir: string) => invoke<string[]>("list_input_files", { dir }),
   startBatch: (request: StartBatchRequest) =>
     invoke<void>("start_batch", { ...request }),
@@ -80,12 +96,14 @@ export const appClient = {
     onlyFailed: boolean,
     fromStep?: string,
     variables?: Record<string, string>,
+    expectedFingerprint?: string,
   ) =>
     invoke<QueuedRun>("enqueue_rerun", {
       runId,
       fromStep: fromStep ?? null,
       onlyFailed,
       variables: variables ?? null,
+      expectedFingerprint: expectedFingerprint ?? null,
     }),
   rerunRequirements: (runId: string, onlyFailed: boolean) =>
     invoke<RerunRequirements>("rerun_requirements", { runId, onlyFailed }),

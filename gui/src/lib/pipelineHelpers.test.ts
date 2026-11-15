@@ -7,7 +7,7 @@ import {
   placeholdersFor,
   type PromptContext,
 } from "./pipelineHelpers";
-import type { StepConfig } from "./types";
+import type { StepConfig } from "./workflowTypes";
 
 function step(overrides: Partial<StepConfig> & { id: string }): StepConfig {
   return {
@@ -183,6 +183,7 @@ describe("inputSlotExtensions", () => {
       "pdf",
       "tex",
       "docx",
+      "pptx",
       "md",
       "markdown",
       "txt",
@@ -290,7 +291,7 @@ describe("lintCrossStepReferences", () => {
     ).toBe(true);
   });
 
-  it("checks survey pointers against the orientation schema", () => {
+  it("checks survey pointers against the document overview schema", () => {
     const config = baseConfig([
       {
         id: "a",

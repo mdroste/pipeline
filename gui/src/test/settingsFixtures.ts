@@ -1,4 +1,6 @@
-import type { Settings, EngineStatus, ModelCatalog } from "../lib/types";
+import type { Settings } from "../lib/settingsTypes";
+import type { EngineStatus } from "../lib/engineTypes";
+import type { ModelCatalog } from "../lib/reviewModelTypes";
 export function makeSettings(): Settings {
   return {
     preferred_provider: "claude",

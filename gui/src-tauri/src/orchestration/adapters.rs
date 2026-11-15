@@ -3,7 +3,10 @@ use crate::orchestration::store::{err, Result};
 use serde_json::Value;
 use std::path::Path;
 
+pub(crate) mod contract;
+pub(crate) mod delivery;
 mod execute;
+pub(crate) mod idea_team;
 mod prepare;
 mod preview;
 mod review;
@@ -13,6 +16,7 @@ mod snapshots;
 pub(super) use execute::await_turn;
 pub use execute::execute;
 pub(super) use execute::settle_turn;
+pub(super) use prepare::flatten;
 pub use prepare::{available, prepare, repin_checks, task_binding};
 pub use preview::output_preview;
 pub(super) use preview::{failure_message, oversized_reply, terminal_failure};
@@ -20,6 +24,7 @@ pub(super) use preview::{failure_message, oversized_reply, terminal_failure};
 pub(crate) use review::release_adopted;
 pub(crate) use review::{journaled_review, normalize_review};
 pub use review::{reconcile_abandoned_reviews, reconcile_adopted_reviews, recover_review};
+pub(super) use snapshots::export_file;
 pub use snapshots::{artifact_path, capture, snapshot, SnapshotFailure};
 
 pub fn atomic_json(path: &Path, value: &Value) -> Result<()> {

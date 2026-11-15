@@ -10,7 +10,7 @@ import Manuscript from "./Manuscript";
 import Responses from "./Responses";
 import { JobLauncher } from "./Jobs";
 import type { ProjectHome } from "../../lib/projectClient";
-import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 const mocks = vi.hoisted(() => ({
   records: vi.fn(),
   editor: vi.fn(),

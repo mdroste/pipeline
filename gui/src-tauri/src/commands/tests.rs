@@ -29,7 +29,7 @@ fn export_test_manifest() -> crate::runs::RunManifest {
         "artifacts": [
             { "rel_path": "report.md", "label": "Report", "kind": "markdown", "bytes": 1, "sha256": "a", "group": "report" },
             { "rel_path": "report.json", "label": "Report data", "kind": "json", "bytes": 1, "sha256": "b", "group": "context" },
-            { "rel_path": "context/document.md", "label": "Document", "kind": "markdown", "bytes": 1, "sha256": "c", "group": "document" },
+            { "rel_path": "context/document.md", "label": "Document", "kind": "markdown", "bytes": 22, "sha256": "79386d71a4095aa6", "group": "document" },
             { "rel_path": "artifacts/01_review.md", "label": "Review", "kind": "markdown", "bytes": 1, "sha256": "d", "group": "step" },
             { "rel_path": "logs/run.log", "label": "Log", "kind": "text", "bytes": 1, "sha256": "e", "group": "context" }
         ]
@@ -105,9 +105,8 @@ fn write_export_test_run(source: &std::path::Path) {
 // Exercises the batch job-status helpers over the global BATCH state. This
 // is the only test that touches BATCH, so parallel test runs can't race it.
 
+mod export_boundaries;
 mod exports;
-
-mod imports;
 
 mod launch;
 

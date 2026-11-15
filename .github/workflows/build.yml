@@ -51,7 +51,7 @@ jobs:
       - name: Install Linux libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev ripgrep
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev ripgrep poppler-utils xvfb bubblewrap slirp4netns iproute2 iptables util-linux
 
       - name: Install frontend dependencies
         working-directory: gui
@@ -68,6 +68,9 @@ jobs:
       - name: Enforce source size budget
         working-directory: gui
         run: npm run check:source-size
+
+      - name: Check source ownership
+        run: node --test gui/frontend-ownership.test.mjs scripts/command-surface.test.mjs scripts/runtime-ownership.test.mjs
 
       - name: Check documentation links
         working-directory: gui
@@ -109,6 +112,17 @@ jobs:
         working-directory: gui/src-tauri
         run: cargo test --locked --all-targets
 
+      - name: Native PDF export
+        working-directory: gui/src-tauri
+        run: |
+          cargo build --locked --bin pipeline-gui
+          export PIPELINE_TEST_PDF_EXECUTABLE="$PWD/target/debug/pipeline-gui"
+          xvfb-run -a dbus-run-session -- cargo test --locked --lib native_renderer_exports_a_readable_multipage_pdf -- --ignored --nocapture
+
+      - name: Native command isolation and proxy
+        working-directory: gui/src-tauri
+        run: cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+
       - name: Pinned engine downloads
         working-directory: gui/src-tauri
         run: cargo test --locked --lib engines::download -- --ignored
@@ -145,6 +159,9 @@ jobs:
         run: |
           bash scripts/release/bundle-poppler.sh windows
           cygpath -w "$PWD/gui/src-tauri/resources/poppler" >> "$GITHUB_PATH"
+      - name: Install Poppler for macOS PDF tests
+        if: runner.os == 'macOS'
+        run: brew install poppler
       - name: Prepare package notices
         working-directory: gui
         run: npm run prepare:release-resources
@@ -157,3 +174,21 @@ jobs:
         env:
           PIPELINE_LINK_TEST_MANIFEST: "1"
         run: cargo test --locked --all-targets
+      - name: Native macOS command isolation and proxy
+        if: runner.os == 'macOS'
+        working-directory: gui/src-tauri
+        run: cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+
+      - name: Native PDF export
+        working-directory: gui/src-tauri
+        shell: bash
+        env:
+          PIPELINE_LINK_TEST_MANIFEST: "1"
+        run: |
+          cargo build --locked --bin pipeline-gui
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            export PIPELINE_TEST_PDF_EXECUTABLE="$(cygpath -w "$PWD/target/debug/pipeline-gui.exe")"
+          else
+            export PIPELINE_TEST_PDF_EXECUTABLE="$PWD/target/debug/pipeline-gui"
+          fi
+          cargo test --locked --lib native_renderer_exports_a_readable_multipage_pdf -- --ignored --nocapture

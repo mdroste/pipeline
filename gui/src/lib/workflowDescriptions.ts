@@ -1,5 +1,5 @@
 import { WORKFLOW_GALLERY } from "./workflowGallery";
-import type { ProfileSummary } from "./types";
+import type { ProfileSummary } from "./workflowTypes";
 const BUILTINS: Record<
   string,
   { category: string; outcome: string; inputs: string }
@@ -19,7 +19,7 @@ const BUILTINS: Record<
   "slide-review": {
     category: "Presentations",
     outcome: "Feedback on the argument, evidence, and clarity of a slide deck.",
-    inputs: "Slides exported as PDF",
+    inputs: "PDF, PowerPoint (.pptx), or Beamer (.tex) slides",
   },
   "grant-review": {
     category: "Proposals",

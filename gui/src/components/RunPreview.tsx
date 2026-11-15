@@ -1,7 +1,8 @@
 import PreparedModelTable from "./PreparedModelTable";
 import AuthorNoteSummary from "./AuthorNoteSummary";
 import { useMemo } from "react";
-import type { PipelineConfig, StepConfig, RosterEntry } from "../lib/types";
+import type { PipelineConfig, StepConfig } from "../lib/workflowTypes";
+import type { RosterEntry } from "../lib/reviewModelTypes";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import useModalDialog from "../hooks/useModalDialog";
 import {
@@ -65,7 +66,7 @@ function selectorLabel(
     case "primary":
       return `Document ${selector.parts.join(", ")}`;
     case "survey":
-      return "Orientation map";
+      return "Document overview";
     case "named_input":
       return `Input: ${selector.key}`;
     case "step":
@@ -80,6 +81,10 @@ function declaredUnits(step: StepConfig): { minimum: number; maximum: number } {
     minimum: step.for_each || step.run_if ? 0 : providers,
     maximum: providers * maximumItems,
   };
+}
+
+function countRange(low: number, high: number): string {
+  return low === high ? String(low) : `${low}–${high}`;
 }
 
 interface AccessRow {
@@ -146,6 +151,16 @@ export default function RunPreview({
     adaptiveCount,
     adaptiveRange,
   );
+  const specialistDonor = steps.find(
+    (step) => step.phase === "parallel" && step.kind !== "analyzer",
+  );
+  const specialistProviders = Math.max(1, specialistDonor?.agents.length ?? 0);
+  const adaptiveMinimum = adaptiveCount ?? adaptiveRange.totalMin;
+  const adaptiveMaximum = adaptiveCount ?? adaptiveRange.totalMax;
+  const adaptiveCallLabel = countRange(
+    adaptiveMinimum * specialistProviders,
+    adaptiveMaximum * specialistProviders,
+  );
   const accessRows = useMemo(() => {
     const stepLabels = new Map(
       config.steps.map((step) => [step.id, step.label]),
@@ -154,30 +169,34 @@ export default function RunPreview({
     if (config.use_orientation) {
       rows.push({
         id: "orientation",
-        label: "Orientation",
+        label: "Document bundle preparation",
         providers: plan.orientationAgent ? [plan.orientationAgent] : [],
-        unitLabel: "1 call",
-        reads: ["The document"],
+        unitLabel: autoAssembled ? "1–3 calls" : "1 call",
+        reads: [
+          "The document",
+          ...(autoAssembled
+            ? (config.extraction.extra_inputs ?? []).map(
+                (slot) => `Input: ${slot.key}`,
+              )
+            : []),
+        ],
         tools: [],
       });
     }
-    // Specialists copy the first review step's providers and access.
-    const specialistDonor = steps.find(
-      (step) => step.phase === "parallel" && step.kind !== "analyzer",
-    );
     let inserted = false;
     const insertAdaptiveRows = () => {
       if (!autoAssembled || inserted) return;
       inserted = true;
       rows.push({
         id: "auto_adaptive_agents",
-        label: "Specialists",
+        label: "Adaptive agents",
         providers: specialistDonor?.agents ?? [],
-        unitLabel: `${adaptiveCountLabel} calls`,
+        unitLabel: `${adaptiveCallLabel} calls`,
         reads: (specialistDonor?.context.include ?? []).map((selector) =>
           selectorLabel(selector, stepLabels),
         ),
-        tools: [],
+        tools:
+          specialistDonor?.tools.filter((tool) => tool === "WebSearch") ?? [],
       });
     };
     for (const step of steps) {
@@ -202,12 +221,15 @@ export default function RunPreview({
     }
     return rows;
   }, [
+    adaptiveCallLabel,
     adaptiveCountLabel,
     authorNote,
     autoAssembled,
     config.steps,
     config.use_orientation,
+    config.extraction.extra_inputs,
     plan.orientationAgent,
+    specialistDonor,
     steps,
   ]);
   const summary = useMemo(() => {
@@ -221,8 +243,11 @@ export default function RunPreview({
       maximumUnits += units.maximum;
     }
     if (autoAssembled) {
-      minimumUnits += adaptiveCount ?? adaptiveRange.totalMin;
-      maximumUnits += adaptiveCount ?? adaptiveRange.totalMax;
+      const callsPerSpecialist =
+        specialistProviders +
+        Number(config.merge.enabled && specialistProviders > 1);
+      minimumUnits += adaptiveMinimum * callsPerSpecialist;
+      maximumUnits += adaptiveMaximum * callsPerSpecialist;
     }
     if (config.merge.enabled) {
       for (const step of steps.filter(
@@ -233,24 +258,21 @@ export default function RunPreview({
       }
     }
     const perDocumentMinimum = minimumUnits + 1;
-    const perDocumentMaximum = maximumUnits + 1;
+    const perDocumentMaximum = maximumUnits + (autoAssembled ? 3 : 1);
     return {
       minimumUnits: perDocumentMinimum * batchCount,
       maximumUnits: perDocumentMaximum * batchCount,
     };
   }, [
-    adaptiveCount,
-    adaptiveRange.totalMax,
-    adaptiveRange.totalMin,
+    adaptiveMaximum,
+    adaptiveMinimum,
     autoAssembled,
     batchCount,
     config.merge.enabled,
+    specialistProviders,
     steps,
   ]);
-  const workLabel =
-    summary.minimumUnits === summary.maximumUnits
-      ? `${summary.minimumUnits}`
-      : `${summary.minimumUnits}–${summary.maximumUnits}`;
+  const workLabel = countRange(summary.minimumUnits, summary.maximumUnits);
   const inputInterpretation =
     plan.inputInterpretation?.trim() || plan.inputMode || "input";
   const networkChecks = (plan.hostChecks ?? []).filter(
@@ -261,7 +283,7 @@ export default function RunPreview({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--ui-scrim)] p-4 sm:p-6"
       role="presentation"
     >
       <div
@@ -270,16 +292,13 @@ export default function RunPreview({
         aria-modal="true"
         aria-labelledby="run-preview-title"
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+        className="ui-overlay-frame flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden"
       >
-        <div className="min-h-0 flex-1 overflow-auto px-6 pb-2 pt-6">
-          <h1
-            id="run-preview-title"
-            className="text-xl font-semibold text-gray-950 dark:text-gray-50"
-          >
+        <div className="ui-overlay-body min-h-0 flex-1 overflow-auto">
+          <h1 id="run-preview-title" className="text-xl font-semibold text-ink">
             Ready to start
           </h1>
-          <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 break-words text-ui-label text-ink-muted">
             {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)} ·{" "}
             {inputInterpretation.replaceAll("_", " ")}
           </p>
@@ -349,7 +368,7 @@ export default function RunPreview({
           {networkChecks.length > 0 && (
             <section
               aria-label="Pipeline checks that use the network"
-              className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/25"
+              className="ui-notice ui-notice--warning mt-5"
             >
               <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
                 Lookups outside your AI provider
@@ -409,19 +428,15 @@ export default function RunPreview({
           </details>
         </div>
 
-        <footer className="flex justify-end gap-2 px-6 py-4">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300"
-          >
+        <footer className="ui-overlay-footer !mt-0 shrink-0 border-t border-line px-4 py-3">
+          <button type="button" onClick={onCancel} className="ui-button">
             Back
           </button>
           <button
             data-autofocus
             type="button"
             onClick={onRun}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+            className="ui-button ui-button--primary"
           >
             {batchCount > 1
               ? `Queue ${batchCount} reviews`

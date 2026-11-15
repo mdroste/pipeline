@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import ReportViewer from "../ReportViewer";
-import type { PipelineReport } from "../../lib/types";
+import type { PipelineReport } from "../../lib/reviewTypes";
 import LocalSources from "./LocalSources";
 
 const report = {

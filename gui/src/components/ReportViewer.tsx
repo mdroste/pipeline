@@ -1,3 +1,4 @@
+import { prepareReportMarkdown } from "../lib/legacyMathMarkdown";
 import PagedReport from "./report-viewer/PagedReport";
 import { REPORT_CHUNK_CHARS } from "../lib/reportChunks";
 import {
@@ -5,7 +6,6 @@ import {
   navigationIdPlugin,
   type ReportNavigationEntry,
 } from "../lib/reportNavigation";
-import { stripInternalReportMarkers } from "../lib/reportPresentation";
 import {
   ReportRenderErrorBoundary,
   MathErrorBoundary,
@@ -32,10 +32,6 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { useFindBar } from "../hooks/useFindBar";
-import {
-  normalizeMathDelimiters,
-  stripPresentationalHtml,
-} from "../lib/mathMarkdown";
 import {
   rehypeValidateMath,
   remarkRepairMath,
@@ -194,10 +190,7 @@ function ReportViewerContent({
     360,
   );
   const normalizedMarkdown = useMemo(
-    () =>
-      normalizeMathDelimiters(
-        stripPresentationalHtml(stripInternalReportMarkers(markdown)),
-      ),
+    () => prepareReportMarkdown(markdown),
     [markdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
@@ -208,22 +201,30 @@ function ReportViewerContent({
     }
   }, [findRequest, find.setOpen, find.setQuery]);
 
-  const requestedHeading = scrollRequest?.heading;
-  const requestKey = scrollRequest?.key;
-  useEffect(() => {
-    if (!requestedHeading) return;
-    const target = Array.from(
-      contentRef.current?.querySelectorAll<HTMLElement>("h1, h2, h3") ?? [],
-    ).find((heading) => heading.textContent?.trim() === requestedHeading);
-    if (!target) return;
-    setActiveAnchor(target.id || null);
-    target.scrollIntoView({ block: "start" });
-  }, [requestKey, requestedHeading]);
-
   const navigationIndex = useMemo(
     () => buildNavigationIndex(normalizedMarkdown),
     [normalizedMarkdown],
   );
+
+  const requestedHeading = scrollRequest?.heading;
+  const requestKey = scrollRequest?.key;
+  useEffect(() => {
+    if (!requestedHeading) return;
+    const entry = navigationIndex.entries.find(
+      (item) => item.text === requestedHeading,
+    );
+    const target = Array.from(
+      contentRef.current?.querySelectorAll<HTMLElement>("[id]") ?? [],
+    ).find((element) =>
+      entry
+        ? element.id === `${anchorPrefix}${entry.id}`
+        : element.textContent?.trim() === requestedHeading,
+    );
+    if (!target) return;
+    setActiveAnchor(target.id || null);
+    target.scrollIntoView({ block: "start" });
+  }, [requestKey, requestedHeading, navigationIndex, anchorPrefix]);
+
   const headings = useMemo(() => {
     return navigationIndex.headings.filter(
       (heading) => heading.level <= 3 && heading.hasProse,
@@ -275,7 +276,7 @@ function ReportViewerContent({
       }}
     >
       {find.open && (
-        <div className="absolute top-2 right-3 z-20 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg px-2 py-1">
+        <div className="ui-overlay-frame absolute right-3 top-2 z-20 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1 p-2">
           <input
             autoFocus
             aria-label="Find in report"

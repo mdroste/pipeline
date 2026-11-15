@@ -4,13 +4,13 @@ import {
   recordedEffortLabel,
   recordedModelLabel,
 } from "./modelChoice";
-import {
-  isPaperOrientation,
-  type PipelineReport,
-  type RunSummary,
-  type StepCallRecord,
-  type StepOutput,
-} from "./types";
+import { isPaperOrientation } from "./reviewOrientation";
+import type {
+  PipelineReport,
+  RunSummary,
+  StepCallRecord,
+  StepOutput,
+} from "./reviewTypes";
 
 export interface UsageTotals {
   input_tokens: number;

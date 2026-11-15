@@ -1,10 +1,10 @@
-//! Page render and full-parser figure collection for a fresh run.
+//! Generated slide PDFs, page images, and full-parser figures for a fresh run.
 
 pub(super) async fn collect_visual_artifacts(
     app: &crate::emit::EventBus,
     input_mode: &str,
     captured_visual_pdf: Option<std::path::PathBuf>,
-    extraction: &crate::models::ExtractionResult,
+    extraction: &mut crate::models::ExtractionResult,
     run_writer: &mut Option<crate::runs::RunWriter>,
 ) {
     // Render page images for PDF inputs, and for LaTeX projects that have a
@@ -57,6 +57,7 @@ pub(super) async fn collect_visual_artifacts(
                         }),
                     );
                     if rendered.truncated {
+                        extraction.quality_notes.push(format!("Visual page images stop at page {}; inspect the retained PDF for later pages.", crate::pipeline::extract::MAX_RENDERED_PDF_PAGES));
                         let _ = app.emit_event(
                             "pipeline:log",
                             serde_json::json!({
@@ -69,6 +70,7 @@ pub(super) async fn collect_visual_artifacts(
                     }
                 }
                 Ok(Err(e)) => {
+                    extraction.quality_notes.push(format!("Page images could not be rendered: {e}. Use the retained PDF for visual evidence."));
                     let _ = app.emit_event(
                         "pipeline:log",
                         serde_json::json!({
@@ -77,6 +79,7 @@ pub(super) async fn collect_visual_artifacts(
                     );
                 }
                 Err(e) => {
+                    extraction.quality_notes.push(format!("Page image rendering task failed: {e}. Use the retained PDF for visual evidence."));
                     let _ = app.emit_event(
                         "pipeline:log",
                         serde_json::json!({
@@ -157,5 +160,110 @@ pub(super) async fn collect_visual_artifacts(
                 }
             }
         }
+    }
+}
+
+/// Only a successfully produced PDF supersedes the native extraction's visual
+/// limitation. A failed attempt must not imply that a stale companion was used.
+pub(super) fn apply_slide_render_note(
+    extraction: &mut crate::models::ExtractionResult,
+    rendered: &crate::pipeline::extract::slides::SlideRender,
+) {
+    if rendered.pdf.is_some() {
+        extraction.quality_notes.retain(|note| {
+            !note.starts_with("PowerPoint text and speaker notes extracted")
+                && !note.starts_with("Beamer source review:")
+        });
+    }
+    extraction.quality_notes.push(rendered.note.clone());
+}
+
+pub(super) fn retain_slide_render(
+    writer: &mut crate::runs::RunWriter,
+    rendered: &crate::pipeline::extract::slides::SlideRender,
+) -> Result<(), String> {
+    use crate::pipeline::extract::slides::{SLIDE_LOG_PATH, SLIDE_PDF_PATH};
+    for (source, relative, label, group) in [
+        (
+            Some(&rendered.log),
+            SLIDE_LOG_PATH,
+            "Slide rendering log",
+            "context",
+        ),
+        (
+            rendered.pdf.as_ref(),
+            SLIDE_PDF_PATH,
+            "Rendered slide deck",
+            "document",
+        ),
+    ] {
+        if let Some(source) = source {
+            super::super::reuse_artifacts::copy_tree(source, &writer.dir().join(relative))?;
+            writer.register_existing(relative, label, group)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::extract::slides::{SlideRender, SLIDE_LOG_PATH, SLIDE_PDF_PATH};
+
+    #[test]
+    fn rendered_pdf_and_log_are_retained_and_linked_in_the_bundle() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("talk.tex");
+        std::fs::write(&source, "\\documentclass{beamer}").unwrap();
+        let pdf = temp.path().join("generated.pdf");
+        let log = temp.path().join("render.log");
+        std::fs::write(&pdf, b"%PDF-1.7\nretention fixture").unwrap();
+        std::fs::write(&log, "compiled").unwrap();
+        let rendered = SlideRender {
+            pdf: Some(pdf),
+            log,
+            note: "Rendered visual evidence is available".into(),
+        };
+        let mut extraction = crate::models::ExtractionResult {
+            text: "\\documentclass{beamer}".into(),
+            method: "latex".into(),
+            source_path: source.to_string_lossy().into_owned(),
+            paper_hash: "test".into(),
+            quality_notes: vec![
+                "Beamer source review: TeX is not compiled".into(),
+                "A figure was omitted".into(),
+            ],
+        };
+        apply_slide_render_note(&mut extraction, &rendered);
+        assert_eq!(
+            extraction.quality_notes,
+            vec![
+                "A figure was omitted",
+                "Rendered visual evidence is available"
+            ]
+        );
+        let mut writer = crate::runs::RunWriter::create_in(temp.path(), "slides").unwrap();
+        retain_slide_render(&mut writer, &rendered).unwrap();
+        assert!(writer.dir().join(SLIDE_PDF_PATH).is_file());
+        assert!(writer.dir().join(SLIDE_LOG_PATH).is_file());
+        let build = crate::document_bundle::build(&extraction, writer.dir()).unwrap();
+        assert!(build
+            .bundle
+            .assets
+            .iter()
+            .any(|asset| asset.rel_path == SLIDE_PDF_PATH && asset.kind == "document"));
+        assert!(build
+            .bundle
+            .origins
+            .iter()
+            .any(|origin| origin.id == "origin-rendered-slides" && origin.sha256.is_some()));
+        let failed = SlideRender {
+            pdf: None,
+            log: rendered.log,
+            note: "Rendering failed; source only".into(),
+        };
+        extraction.quality_notes = vec!["Beamer source review: TeX is not compiled".into()];
+        apply_slide_render_note(&mut extraction, &failed);
+        assert_eq!(extraction.quality_notes.len(), 2);
     }
 }

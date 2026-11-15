@@ -1,7 +1,7 @@
 // Content and pure status derivation for the Get started sheet.
 
 import type { AccountStatus } from "../../lib/chatgptAccountClient";
-import type { DepsReport, DepStatus, Settings } from "../../lib/types";
+import type { DepsReport, DepStatus, Settings } from "../../lib/settingsTypes";
 import type { ToolchainKind } from "../../lib/workbench/toolchains";
 
 export const STARTER_TEMPLATES = [

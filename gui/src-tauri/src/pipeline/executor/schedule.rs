@@ -20,7 +20,7 @@ pub fn input_processing_label(input_interpretation: &str) -> &'static str {
     match input_interpretation.trim() {
         "folder" | "source_tree" => "Creating source-tree inventory",
         "none" => "Preparing workflow context",
-        _ => "Creating document bundle",
+        _ => "Preparing document bundle",
     }
 }
 
@@ -39,9 +39,9 @@ pub fn execution_plan(config: &PipelineConfig) -> Result<Vec<ExecutionPlanStage>
         id: "orienting".to_string(),
         kind: "orienting".to_string(),
         label: if crate::auto_review::uses_auto_review_contract(config) {
-            "Creating orientation map & review plan"
+            "Choosing reviewers"
         } else {
-            "Creating orientation map"
+            "Identifying content"
         }
         .to_string(),
         step_ids: Vec::new(),

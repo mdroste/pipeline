@@ -1,3 +1,5 @@
+import { flushDrafts } from "../../lib/flushDrafts";
+import { notify } from "../../components/DialogService";
 import {
   useCallback,
   useEffect,
@@ -58,6 +60,13 @@ export function useWorkspaceChrome(
     [workspaceId],
   );
   const navigateProject = (tab: WorkspaceDestination) => {
+    if (contextBusyRef.current || harnessEditor) return;
+    try {
+      flushDrafts();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+      return;
+    }
     recordDestination(tab);
     setSurface("project");
     // Re-selecting the current destination also leaves an opened object view.

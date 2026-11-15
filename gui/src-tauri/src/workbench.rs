@@ -5,8 +5,8 @@
 //! service owns its identities, conversations, store, runtime, and cancellation.
 
 pub(crate) mod api;
-pub(crate) mod browser;
 pub(crate) mod capabilities;
+pub(crate) mod chat_approval;
 pub(crate) mod claude;
 pub mod codex;
 pub mod commands;
@@ -23,7 +23,7 @@ pub mod store;
 pub(crate) mod submission;
 pub(crate) mod tasks;
 pub mod titles;
-pub(crate) mod tool_setup;
+mod transcript_text;
 mod turn_loop;
 pub(crate) mod web;
 

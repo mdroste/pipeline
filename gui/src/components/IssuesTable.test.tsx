@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import IssuesTable from "./IssuesTable";
 import { detectReportIssues } from "../lib/issues";
-import type { PipelineReport } from "../lib/types";
+import type { PipelineReport } from "../lib/reviewTypes";
 import findingsV2 from "../../tests/fixtures/workflow/findings-v2.json";
 
 const invoke = vi.hoisted(() => vi.fn());

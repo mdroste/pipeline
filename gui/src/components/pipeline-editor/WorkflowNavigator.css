@@ -1,0 +1,135 @@
+/* The designer outline uses whitespace for phases, a hairline for the current
+   tab, and an inset mark for the selected row. Color is reserved for feedback. */
+.designer-nav {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+}
+.designer-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 16px 16px 12px;
+}
+.designer-mode {
+  display: inline-flex;
+  padding: 2px;
+  margin-left: auto;
+  background: var(--ui-sunken);
+  border-radius: var(--ui-radius-sm);
+}
+.designer-tabs {
+  display: flex;
+  gap: 18px;
+}
+.designer-tabs button {
+  padding: 5px 0 8px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+  color: var(--ui-muted);
+}
+.designer-tabs button:hover,
+.designer-tabs button[aria-selected="true"] {
+  color: var(--ui-text);
+}
+.designer-tabs button[aria-selected="true"] {
+  border-color: currentColor;
+}
+.designer-add {
+  margin-left: auto;
+  padding: 4px 6px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+  color: var(--ui-text);
+}
+.designer-add:hover {
+  background: var(--ui-sunken);
+}
+.designer-phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 16px 5px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 600;
+}
+.designer-phase::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ui-border);
+}
+.designer-row {
+  margin: 1px 8px;
+  padding-inline: 10px;
+  border-radius: var(--ui-radius-sm);
+  text-align: left;
+}
+.designer-row:hover,
+.designer-row[data-selected] {
+  background: var(--ui-sunken);
+}
+.designer-row[data-selected] {
+  box-shadow: inset 2px 0 var(--ui-page-accent);
+}
+.designer-step,
+.designer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.designer-step > button:first-child {
+  border-radius: var(--ui-radius-sm);
+  overflow-wrap: anywhere;
+}
+.designer-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 400;
+  line-height: 1.4;
+}
+.designer-setup,
+.designer-item {
+  width: calc(100% - 16px);
+  padding-block: 8px;
+}
+.designer-item {
+  justify-content: space-between;
+}
+.designer-switch {
+  flex: none;
+  display: inline-grid;
+  align-items: center;
+  width: 26px;
+  height: 28px;
+}
+.designer-switch span {
+  display: flex;
+  align-items: center;
+  height: 15px;
+  padding: 2px;
+  border-radius: 99px;
+  background: var(--ui-border-strong);
+}
+.designer-switch span::after {
+  content: "";
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-1);
+}
+.designer-switch[aria-checked="true"] span {
+  justify-content: flex-end;
+  background: var(--ui-inverse);
+}
+.designer-nav :is(button, select):focus-visible {
+  outline: 2px solid var(--ui-page-accent);
+  outline-offset: 1px;
+}

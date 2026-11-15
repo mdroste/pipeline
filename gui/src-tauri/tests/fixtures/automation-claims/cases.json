@@ -1,0 +1,20 @@
+{
+  "missingAssumption": {
+    "packetId": "R14",
+    "grade": "unresolved",
+    "issue": "The proof inverts X'X without assuming full column rank. With a zero column, that coefficient is unrestricted."
+  },
+  "tableMismatch": {
+    "packetId": "R32",
+    "grade": "unresolved"
+  },
+  "supportedNull": {
+    "packetId": "R08",
+    "grade": "supported"
+  },
+  "infeasible": {
+    "packetId": "R27",
+    "grade": "infeasible",
+    "issue": "Neither treatment assignment nor outcomes are observed. No authorized test can identify the effect."
+  }
+}

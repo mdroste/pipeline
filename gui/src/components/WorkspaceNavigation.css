@@ -36,32 +36,17 @@
   max-width: 100%;
   max-height: min(35rem, 80vh);
   overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-raised);
-  box-shadow: var(--ui-shadow-3);
-  color: var(--ui-text);
 }
 .workspace-picker-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1rem 0.5rem;
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-}
-.workspace-picker-heading button {
-  padding: 0.125rem 0.5rem;
-  font-size: 1.125rem;
+  padding: var(--ui-space-2) var(--ui-space-4);
+  font-size: var(--ui-text-title);
+  font-weight: 600;
 }
 .workspace-tool-picker > input {
-  margin: 0 0.75rem 0.625rem;
-  padding: 0.625rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: transparent;
-  font-size: 0.9375rem;
-  outline-offset: 2px;
+  margin: var(--ui-space-3) var(--ui-space-4);
 }
 .workspace-picker-results {
   min-height: 0;
@@ -72,21 +57,28 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: var(--ui-space-3);
   width: 100%;
-  padding: 0.625rem 0.75rem;
+  min-height: var(--ui-control-height);
+  padding: var(--ui-space-2) var(--ui-space-3);
+  overflow-wrap: anywhere;
   border-radius: var(--ui-radius-sm);
   font-size: var(--ui-text-label);
   text-align: left;
 }
 .workspace-picker-results small {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  max-width: 40%;
+  text-align: right;
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
 }
-.workspace-picker-results button[data-highlighted="true"],
 .workspace-picker-results button:hover {
   background: var(--ui-sunken);
+}
+.workspace-picker-results button[data-highlighted="true"] {
+  background: var(--ui-sunken);
+  box-shadow: inset 2px 0 var(--ui-inverse);
 }
 .workspace-picker-results p {
   padding: 1.25rem 0.75rem;

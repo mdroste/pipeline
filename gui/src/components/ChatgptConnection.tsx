@@ -5,7 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   WorkspaceModelCatalog,
   WorkspaceRateLimits,
-} from "../lib/workbenchTypes";
+} from "../lib/workbench/runtimeTypes";
 import ReportIssueLink from "./ReportIssueLink";
 
 /** Names a rate-limit window by its length, such as "7-day limit". */

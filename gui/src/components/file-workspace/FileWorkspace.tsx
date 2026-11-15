@@ -46,9 +46,14 @@ export interface FilePassage {
 interface Props {
   adapter: FileAdapter;
   paths: string[];
+  fileListLabel?: string;
+  initialFileListOpen?: boolean;
+  allowSplit?: boolean;
+  editOnDemand?: boolean;
   initial?: FileLocation | null;
   onAsk?: (passage: FilePassage) => void;
   onAskFile?: (path: string) => void;
+  onOpenInFiles?: (location: FileLocation) => void;
   onSaved?: () => void;
   onAddToDocuments?: (path: string) => Promise<void>;
 }
@@ -82,9 +87,14 @@ function restoredLayout(id: string): {
 export default function FileWorkspace({
   adapter,
   paths,
+  fileListLabel,
+  initialFileListOpen,
+  allowSplit = true,
+  editOnDemand,
   initial,
   onAsk,
   onAskFile,
+  onOpenInFiles,
   onSaved,
   onAddToDocuments,
 }: Props) {
@@ -94,10 +104,14 @@ export default function FileWorkspace({
   const [active, setActive] = useState<FileLocation | null>(
     initial ?? layout.active,
   );
-  const [split, setSplit] = useState<string | null>(layout.split);
+  const [split, setSplit] = useState<string | null>(
+    allowSplit ? layout.split : null,
+  );
   const [history, setHistory] = useState<FileLocation[]>([]);
   const [forward, setForward] = useState<FileLocation[]>([]);
-  const [browserOpen, setBrowserOpen] = useState(layout.browser);
+  const [browserOpen, setBrowserOpen] = useState(
+    initialFileListOpen ?? layout.browser,
+  );
   const search = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
   const [passage, setPassage] = useState<FilePassage | null>(null);
@@ -376,25 +390,26 @@ export default function FileWorkspace({
             adapter={adapter}
             location={location}
             buffer={buffer}
-            mode={modes[file.path]}
-            setMode={(mode) => setMode(file.path, mode)}
+            mode={modes[location.path]}
+            setMode={(mode) => setMode(location.path, mode)}
             saving={saving}
+            editOnDemand={editOnDemand}
             completionTexts={completionTexts}
             onDraft={(draft) =>
-              update(file.path, (old) =>
+              update(location.path, (old) =>
                 old.draft === draft ? old : { ...old, draft },
               )
             }
             onDiscard={() =>
-              update(file.path, (old) => ({
+              update(location.path, (old) => ({
                 ...old,
                 draft: old.file.text ?? "",
               }))
             }
-            onSave={() => void save(file.path)}
-            onCompare={() => void compareWithCurrent(file.path)}
+            onSave={() => void save(location.path)}
+            onCompare={() => void compareWithCurrent(location.path)}
             onReload={() =>
-              void load(file.path, "discard").catch((e) =>
+              void load(location.path, "discard").catch((e) =>
                 setError(workbenchErrorMessage(e)),
               )
             }
@@ -402,6 +417,11 @@ export default function FileWorkspace({
               void adapter
                 .external?.(file.path)
                 .catch((e) => setError(workbenchErrorMessage(e)))
+            }
+            onOpenInFiles={
+              onOpenInFiles
+                ? () => onOpenInFiles({ ...location, path: file.path })
+                : undefined
             }
             onReveal={() =>
               void adapter
@@ -414,7 +434,7 @@ export default function FileWorkspace({
       </FileNavigationScope>
     );
   };
-  const hasBrowser = Boolean(adapter.list) || paths.length > 1;
+  const hasBrowser = Boolean(fileListLabel || adapter.list) || paths.length > 1;
   const files = (
     <div className="file-workspace-main">
       <div className="file-tabbar">
@@ -511,16 +531,18 @@ export default function FileWorkspace({
               ))}
             </select>
           )}
-          <IconButton
-            size="sm"
-            label={split ? "Close split" : "Split pane"}
-            tooltipSide="bottom"
-            aria-pressed={Boolean(split)}
-            disabled={!active}
-            onClick={() => setSplit(split ? null : (active?.path ?? null))}
-          >
-            <Icon name="columns" className="h-4 w-4" />
-          </IconButton>
+          {allowSplit && (
+            <IconButton
+              size="sm"
+              label={split ? "Close split" : "Split pane"}
+              tooltipSide="bottom"
+              aria-pressed={Boolean(split)}
+              disabled={!active}
+              onClick={() => setSplit(split ? null : (active?.path ?? null))}
+            >
+              <Icon name="columns" className="h-4 w-4" />
+            </IconButton>
+          )}
         </div>
       </div>
       {error && (
@@ -558,11 +580,12 @@ export default function FileWorkspace({
           <EmptyState
             icon={<Icon name="file" className="h-8 w-8" />}
             title="No file open"
-            description={
-              hasBrowser
-                ? "Choose a file from the list. Unsaved drafts stay when you switch files."
-                : "Unsaved drafts stay when you switch files."
-            }
+            description={[
+              hasBrowser && "Choose a file from the list.",
+              adapter.save && "Unsaved drafts stay when you switch files.",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           />
         </div>
       )}
@@ -582,6 +605,7 @@ export default function FileWorkspace({
           <div className="file-browser-slot" hidden={!browserOpen}>
             <FileBrowser
               adapter={adapter}
+              label={fileListLabel}
               paths={paths}
               activePath={active?.path}
               onOpen={openReporting}

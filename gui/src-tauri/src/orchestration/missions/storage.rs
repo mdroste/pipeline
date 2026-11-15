@@ -87,22 +87,30 @@ pub fn touch_due(s: &Store, id: &str, due: Option<i64>) -> Result<()> {
         .map_err(err)?;
     Ok(())
 }
-pub fn list(s: &Store, workspace: Option<&str>, offset: u32) -> Result<Vec<Summary>> {
+pub fn list(
+    s: &Store,
+    workspace: Option<&str>,
+    offset: u32,
+    lookahead: bool,
+) -> Result<Vec<Summary>> {
     let c = s.connection()?;
-    let mut q=c.prepare("SELECT id,json_extract(body,'$.definition.name'),state,json_extract(body,'$.reason'),workspace_id,updated_at,json_array_length(body,'$.rounds'),(SELECT COUNT(*) FROM json_each(body,'$.questions') WHERE json_extract(value,'$.answer') IS NULL) FROM missions WHERE (?1 IS NULL OR workspace_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2").map_err(err)?;
+    let mut q=c.prepare("SELECT id,json_extract(body,'$.definition.name'),state,json_extract(body,'$.reason'),workspace_id,updated_at,json_array_length(body,'$.rounds'),(SELECT COUNT(*) FROM json_each(body,'$.questions') WHERE json_extract(value,'$.answer') IS NULL) FROM missions WHERE (?1 IS NULL OR workspace_id=?1) ORDER BY updated_at DESC,id LIMIT ?3 OFFSET ?2").map_err(err)?;
     let rows = q
-        .query_map(params![workspace, offset], |r| {
-            Ok(Summary {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                state: r.get(2)?,
-                reason: r.get(3)?,
-                workspace_id: r.get(4)?,
-                updated_at: r.get(5)?,
-                rounds: r.get::<_, u32>(6)? as usize,
-                open_questions: r.get::<_, u32>(7)? as usize,
-            })
-        })
+        .query_map(
+            params![workspace, offset, if lookahead { 51 } else { 50 }],
+            |r| {
+                Ok(Summary {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    state: r.get(2)?,
+                    reason: r.get(3)?,
+                    workspace_id: r.get(4)?,
+                    updated_at: r.get(5)?,
+                    rounds: r.get::<_, u32>(6)? as usize,
+                    open_questions: r.get::<_, u32>(7)? as usize,
+                })
+            },
+        )
         .map_err(err)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(err)?;

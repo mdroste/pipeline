@@ -256,12 +256,21 @@ pub fn set_active_profile(active_profile: &str) -> Result<(), String> {
 /// Replace an active profile only if it still matches `expected`. Used by
 /// profile deletion so a concurrent switch to another valid profile wins.
 pub fn replace_active_profile_if(expected: &str, replacement: &str) -> Result<bool, String> {
+    heal_active_profile(&[(expected, replacement)])
+}
+
+pub fn heal_active_profile(aliases: &[(&str, &str)]) -> Result<bool, String> {
     let path = settings_path()?;
     let (_process_guard, lock_file) = acquire_settings_write_lock(&path)?;
     let result = load_raw_settings_required(&path).and_then(|mut current| {
-        let changed = current.active_profile == expected;
+        let original = current.active_profile.clone();
+        for &(expected, replacement) in aliases {
+            if current.active_profile == expected {
+                current.active_profile = replacement.to_string();
+            }
+        }
+        let changed = original != current.active_profile;
         if changed {
-            current.active_profile = replacement.to_string();
             save_raw_unlocked(&path, &current)?;
         }
         Ok(changed)

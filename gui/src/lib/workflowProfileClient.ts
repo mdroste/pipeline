@@ -1,7 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PipelineConfig, ProfileSummary, ExportEnvelope } from "./types";
+import type {
+  PipelineConfig,
+  ProfileSummary,
+  ExportEnvelope,
+} from "./workflowTypes";
+
+export interface CalibrationDraft {
+  addendum: string;
+  target_step_id: string;
+  target_label: string;
+  rejected_count: number;
+}
 
 export const workflowProfileClient = {
+  calibration: () => invoke<CalibrationDraft>("draft_calibration"),
   config: () => invoke<PipelineConfig>("get_pipeline_config"),
   profiles: () => invoke<ProfileSummary[]>("list_profiles"),
   active: () => invoke<string>("get_active_profile"),

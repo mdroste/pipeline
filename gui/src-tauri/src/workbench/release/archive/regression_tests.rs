@@ -529,28 +529,29 @@ fn an_older_archive_is_compared_at_its_own_schema_version() {
     let (_root, source, session) = fixture();
     let output = tempfile::tempdir().unwrap();
     let archive = export(&source, output.path());
-    // A plausible rollback to the schema before `store_location` that keeps that
-    // table, so it matches no version's reference.
-    const BEFORE_STORE_LOCATION: u32 = 18;
+    // Declare the schema from before the conversation index was added.
+    const BEFORE_CONVERSATION_INDEX: u32 = 22;
     let crafted = tampered(
         &archive,
         output.path(),
         "older",
-        &format!("PRAGMA user_version={BEFORE_STORE_LOCATION};"),
+        &format!("PRAGMA user_version={BEFORE_CONVERSATION_INDEX};"),
     );
     rewrite_entries(&crafted, |entry, bytes| {
         if entry != "manifest.json" {
             return bytes;
         }
         let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
-        manifest["storeSchemaVersion"] = Value::from(BEFORE_STORE_LOCATION);
+        manifest["storeSchemaVersion"] = Value::from(BEFORE_CONVERSATION_INDEX);
         serde_json::to_vec(&manifest).unwrap()
     });
     let target = tempfile::tempdir().unwrap();
     let store = Store::open_at(target.path()).unwrap();
     let error = import(&store, &crafted).unwrap_err();
     assert!(
-        error.message.contains("store_location"),
+        error
+            .message
+            .contains("database doesn't match what Pipeline creates"),
         "{}",
         error.message
     );

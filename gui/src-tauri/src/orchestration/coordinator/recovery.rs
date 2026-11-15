@@ -1,6 +1,6 @@
 //! Existing durable-result search and reconciliation order.
 use super::adapters::atomic_json;
-use super::store::{err, now, Result, TaskRun};
+use super::store::{now, Result, TaskRun};
 use super::{adapters, Coordinator};
 use serde_json::Value;
 
@@ -10,10 +10,33 @@ impl Coordinator {
     /// receipt. An unreachable runtime leaves the turn open, and the action takes
     /// the same path as any turn with no live owner.
     pub(crate) async fn settle_turns(&self, run: &TaskRun) {
-        if !run.progress.receipts.values().any(|r| r.state == "unknown") {
+        let Some(session) = run.scope.session_id.clone() else {
+            return;
+        };
+        let mut steps = Vec::new();
+        adapters::flatten(&run.chain.steps, &mut steps);
+        let operations = run
+            .progress
+            .receipts
+            .values()
+            .filter(|r| {
+                r.state == "unknown"
+                    && steps.iter().any(|s| {
+                        s.id == r.step_id
+                            && matches!(s.action, super::definition::Action::Workspace { .. })
+                    })
+            })
+            .map(|r| r.operation.clone())
+            .collect::<Vec<_>>();
+        if operations.is_empty() {
             return;
         }
-        if let Some(session) = run.scope.session_id.clone() {
+        let key = session.clone();
+        let own = crate::workbench::commands::run_store(move |s| {
+            crate::workbench::tasks::own_newest_turn(&s, &key, &operations)
+        })
+        .await;
+        if matches!(own, Ok(Some((_, false)))) {
             adapters::settle_turn(self.app.clone(), session).await;
         }
     }
@@ -75,7 +98,10 @@ impl Coordinator {
         Ok(recovered)
     }
 
-    pub(crate) async fn recover_results(&self, run: &mut TaskRun) -> Result<()> {
+    pub(crate) async fn recover_results(&self, run: &mut TaskRun) -> Result<bool> {
+        let mut running = false;
+        let mut steps = Vec::new();
+        adapters::flatten(&run.chain.steps, &mut steps);
         for receipt in run
             .progress
             .receipts
@@ -88,93 +114,51 @@ impl Coordinator {
                 .join("actions")
                 .join(&receipt.operation)
                 .join("result.json");
-            let mut result = None;
-            if path.is_file() {
-                let local = path.clone();
-                result = self
-                    .db(move |_| {
-                        let bytes = std::fs::read(local).map_err(err)?;
-                        serde_json::from_slice(&bytes).map(Some).map_err(err)
-                    })
-                    .await?;
-            }
-            if result.is_none() {
-                let operation = receipt.operation.clone();
-                let root = self.store.clone();
-                result = self
-                    .db(move |_| adapters::recover_review(&root, &operation))
-                    .await?;
-            }
-            if result.is_none() {
-                if let Some(session) = run.scope.session_id.clone() {
-                    let operation = receipt.operation.clone();
-                    let expected = adapters::task_binding(&run.scope).ok();
-                    result = crate::workbench::commands::run_store(move |s| {
-                        use crate::workbench::tasks;
-                        match (tasks::delivery_outcome(&s, &session, &operation)?, expected) {
-                            (Some(value), Some(expected)) => {
-                                tasks::with_delivery_context(&s, value, &expected, &operation)
-                                    .map(Some)
-                            }
-                            (value, _) => Ok(value),
-                        }
-                    })
-                    .await
-                    .map_err(|e| e.message)?;
-                }
-            }
-            if result.is_none() {
-                if let Some(session) = run.scope.session_id.clone() {
-                    let operation = format!("task-{}", receipt.operation);
-                    if let Some(value) = crate::workbench::commands::run_store(move |s| {
-                        crate::workbench::tasks::outcome(&s, &session, &operation)
-                    })
-                    .await
-                    .map_err(|e| e.message)?
-                    {
-                        if value["state"] == "completed" || adapters::terminal_failure(&value) {
-                            result = Some(value);
-                        }
-                    }
-                }
-            }
-            if result.is_none() {
-                if let Some(workspace) = run.scope.workspace_id.clone() {
-                    let operation = receipt.operation.clone();
-                    result = crate::workbench::commands::run_store(move |s| {
-                        crate::workbench::tasks::check_outcome(&s, &workspace, &operation)
-                    })
-                    .await
-                    .map_err(|e| e.message)?;
-                }
-            }
-            if let Some(value) = result {
-                atomic_json(&path, &value)?;
-                if let Some(id) = value["runId"].as_str() {
-                    let id = id.to_string();
-                    self.db(move |_| crate::commands::orchestration::release_pin(&id))
-                        .await?;
-                }
-                if let Some(cursor) = value["cursor"].as_str() {
-                    run.scope.session_cursor = Some(cursor.into());
-                }
-                if let Some(fingerprint) = value.get("harnessFingerprint").and_then(Value::as_str) {
-                    run.scope.harness_fingerprint = Some(fingerprint.into());
-                }
-                // Keep the time recorded when the app stopped: the hours until
-                // this check are not action time.
-                receipt.finished_at = receipt.finished_at.or(Some(now()));
-                receipt.output = Some(adapters::output_preview(&value));
-                if adapters::terminal_failure(&value) {
-                    receipt.state = "failed".into();
-                    receipt.error = Some(adapters::failure_message(&value));
+            use adapters::contract::{lookup, Outcome};
+            let action = &steps
+                .iter()
+                .find(|step| step.id == receipt.step_id)
+                .ok_or("Recovery receipt has no matching step")?
+                .action;
+            let result = lookup(&self.store, &run.scope, action, receipt).await?;
+            match result {
+                Outcome::Running => {
+                    running = true;
+                    receipt.error = Some("The original action is still running. Check saved results when it finishes.".into());
                     continue;
                 }
-                receipt.state = "completed".into();
-                receipt.error = None;
-                run.progress.outputs[&receipt.step_id] = value;
+                Outcome::NotSubmitted => {
+                    receipt.state = "failed".into();
+                    receipt.error =
+                        Some("This attempt stopped before dispatch; no work was submitted.".into());
+                    continue;
+                }
+                Outcome::Unknown => continue,
+                Outcome::Completed(value) | Outcome::Failed(value) => {
+                    atomic_json(&path, &value)?;
+                    if let Some(cursor) = value["cursor"].as_str() {
+                        run.scope.session_cursor = Some(cursor.into());
+                    }
+                    if let Some(fingerprint) =
+                        value.get("harnessFingerprint").and_then(Value::as_str)
+                    {
+                        run.scope.harness_fingerprint = Some(fingerprint.into());
+                    }
+                    // Keep the time recorded when the app stopped: the hours until
+                    // this check are not action time.
+                    receipt.finished_at = receipt.finished_at.or(Some(now()));
+                    receipt.output = Some(adapters::output_preview(&value));
+                    if adapters::terminal_failure(&value) {
+                        receipt.state = "failed".into();
+                        receipt.error = Some(adapters::failure_message(&value));
+                        continue;
+                    }
+                    receipt.state = "completed".into();
+                    receipt.error = None;
+                    run.progress.outputs[&receipt.step_id] = value;
+                }
             }
         }
-        Ok(())
+        Ok(running)
     }
 }

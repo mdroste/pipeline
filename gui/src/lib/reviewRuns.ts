@@ -2,7 +2,7 @@
 // queued-review panel, and the Home "continue" card all describe runs the
 // same way.
 
-import type { QueuedRun } from "./types";
+import type { QueuedRun } from "./reviewTypes";
 
 export function isActiveRun(run: QueuedRun): boolean {
   return run.status === "queued" || run.status === "running";
@@ -31,7 +31,7 @@ export function queuePosition(runs: QueuedRun[], key: string): number | null {
 
 const STAGE_WORDS: Record<string, string> = {
   extracting: "Reading input",
-  orienting: "Orienting",
+  orienting: "Document bundle preparation",
   dispatching: "Reviewing",
   merging: "Merging",
   synthesizing: "Writing report",

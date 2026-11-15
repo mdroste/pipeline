@@ -54,6 +54,7 @@ pub fn input_identity(
         }
     });
     InputIdentity {
+        review_handoff_id: inherited.and_then(|identity| identity.review_handoff_id.clone()),
         selection_key,
         content_hash: content_hash.trim().to_string(),
         lineage_id,

@@ -7,7 +7,7 @@ import {
   isLegacyReport,
   splitUnexpectedPreamble,
 } from "../lib/reportPresentation";
-import type { PipelineReport } from "../lib/types";
+import type { PipelineReport } from "../lib/reviewTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -904,9 +904,7 @@ describe("a report too long to read in one piece", () => {
 
   it("prints the whole report", async () => {
     const user = await openExports();
-    await user.click(
-      screen.getByRole("button", { name: "Print / save as PDF…" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Print…" }));
 
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(

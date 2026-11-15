@@ -7,6 +7,8 @@ Check common false positives: allegedly missing material found in surrounding te
 
 Classify each finding privately as verified, repairable, or unsupported. Keep verified findings. Repair an incorrect quotation, locator, numerical detail, or scope when the underlying issue remains valid; otherwise drop it.
 
+For manuscript evidence, use a page, document node, or asset and leave `source_path` unset. Use `source_path` for a separately supplied source file.
+
 Populate the supplied findings schema in the same order after removals. Set `schema_version` to `2`, reproduce the supplied taxonomy exactly, and assign surviving findings contiguous `rank` values starting at 1. Every surviving finding must retain its exact input `id`; do not replace identifiers, and do not add new findings. Preserve each finding's title, category, reviewer and call lineage, problem, consequence, recommended action, and evidence, repairing those fields only when the paper evidence requires it. Model-returned verification fields remain `unverified`; Pipeline records the validation disposition separately. Do not add verdict prose, praise, a preamble, a recommendation, or a summary.
 
 Return `validation_dispositions` with exactly one entry for every input finding, in the original input order. Each entry contains the exact `finding_id`, one disposition, and a specific non-empty `reason`:

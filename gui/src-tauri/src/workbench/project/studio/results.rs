@@ -183,11 +183,12 @@ pub(super) fn import_results(
     let mut prepared = Vec::new();
     let mut ids = BTreeSet::new();
     for (index, mut v) in raw.into_iter().enumerate() {
-        v["sourceExecutionId"] = json!(execution_id);
-        v["artifactLocator"] = json!(format!(
-            "{}#results/{index}",
-            a["path"].as_str().unwrap_or(artifact_id)
-        ));
+        bind_result_provenance(
+            &mut v,
+            index,
+            execution_id,
+            a["path"].as_str().unwrap_or(artifact_id),
+        )?;
         let r: research::ResearchResultV1 = serde_json::from_value(v).map_err(err)?;
         research::validate_result(&r)?;
         if !r.estimate.is_finite()
@@ -715,4 +716,36 @@ fn generated_macros(path: &str, bytes: &[u8]) -> WorkbenchResult<Vec<(String, St
         blocks.push((name, format!("{provenance}\n{line}\n")));
     }
     Ok(blocks)
+}
+
+fn bind_result_provenance(
+    value: &mut Value,
+    index: usize,
+    execution: &str,
+    path: &str,
+) -> WorkbenchResult<()> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| WorkbenchError::invalid(format!("results[{index}] must be an object")))?;
+    object.insert("sourceExecutionId".into(), json!(execution));
+    object.insert(
+        "artifactLocator".into(),
+        json!(format!("{path}#results/{index}")),
+    );
+    Ok(())
+}
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    #[test]
+    fn non_object_results_return_an_indexed_validation_error() {
+        for mut invalid in [json!(null), json!(42), json!([])] {
+            assert_eq!(
+                bind_result_provenance(&mut invalid, 1, "run", "results.json")
+                    .unwrap_err()
+                    .message,
+                "results[1] must be an object"
+            );
+        }
+    }
 }

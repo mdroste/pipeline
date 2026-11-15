@@ -1,5 +1,5 @@
 import { readAppPreferences, type AppPreferences } from "./appPreferences";
-import type { WorkbenchEvent } from "./workbenchTypes";
+import type { WorkbenchEvent } from "./workbench/runtimeTypes";
 import { router } from "./router";
 import { notify } from "../components/DialogService";
 

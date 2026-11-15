@@ -32,16 +32,53 @@ pub(in crate::commands) fn read_run_file_in(
     let file = crate::safety::open_regular_file(&path)
         .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
     let mut bytes = Vec::with_capacity(64 * 1024);
-    file.take(MAX_RUN_CONTEXT_SIZE + 1)
+    let limit = if rel == "report.json" {
+        crate::runs::MAX_REPORT_BYTES as u64
+    } else {
+        MAX_RUN_CONTEXT_SIZE
+    };
+    let oversized = || {
+        format!(
+            "{rel} exceeds the {} MB run-context safety limit",
+            limit >> 20
+        )
+    };
+    if file
+        .metadata()
+        .map_err(|error| format!("Cannot inspect {rel}: {error}"))?
+        .len()
+        > limit
+    {
+        return Err(oversized());
+    }
+    file.take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
-    if bytes.len() as u64 > MAX_RUN_CONTEXT_SIZE {
-        return Err(format!(
-            "{rel} exceeds the {} MB run-context safety limit",
-            MAX_RUN_CONTEXT_SIZE / 1024 / 1024
-        ));
+    if bytes.len() as u64 > limit {
+        return Err(oversized());
     }
     String::from_utf8(bytes).map_err(|e| format!("{rel} is not valid UTF-8: {e}"))
+}
+
+/// Check a recorded text artifact when the parent manifest supplies its
+/// identity. Early and recovered runs may have only the bounded file itself.
+pub(super) fn read_captured_text(
+    parent: &crate::runs::RunManifest,
+    rel: &str,
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let text = read_run_file(&parent.run_id, rel)?;
+    if let Some(entry) = parent.artifacts.iter().find(|e| e.rel_path == rel) {
+        let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+        if entry.bytes != text.len() as u64
+            || (!entry.sha256.is_empty() && entry.sha256 != digest[..16])
+        {
+            return Err(format!(
+                "Captured artifact '{rel}' differs from its saved size or checksum."
+            ));
+        }
+    }
+    Ok(text)
 }
 
 /// The report a re-run starts from. Only a run with no report predates re-run
@@ -86,7 +123,7 @@ mod tests {
         let report = run.path().join("report.json");
         std::fs::File::create(&report)
             .unwrap()
-            .set_len(MAX_RUN_CONTEXT_SIZE + 1)
+            .set_len(crate::runs::MAX_REPORT_BYTES as u64 + 1)
             .unwrap();
         let error = read_parent_report(run.path(), None).unwrap_err();
         assert!(error.contains("safety limit"), "{error}");

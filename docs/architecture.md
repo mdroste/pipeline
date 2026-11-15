@@ -100,7 +100,9 @@ Each module's header comment has the details.
 
 | Path | Owns |
 | --- | --- |
-| `commands/` | Review commands: launch, rerun, queue, export, settings |
+| `commands/` | Review commands for launch, rerun, queue, and export |
+| `commands/run_context/`, `commands/review_setup.rs` | Immutable launch snapshots, input checks, and execution previews |
+| `commands/settings.rs`, `commands/profiles.rs`, `commands/maintenance.rs` | Renderer settings, workflow profiles, and app maintenance |
 | `pipeline/executor/` | Workflow scheduling, step calls, fan-out, checkpoints |
 | `pipeline/call.rs` | The supervised model-call boundary |
 | `pipeline/providers.rs` | Review provider dispatch |
@@ -114,23 +116,24 @@ Each module's header comment has the details.
 | `public_web.rs`, `public_web/` | Stateless public HTTP retrieval and search parsing shared by both runtimes |
 | `pipeline/codex_server/` | Review connection to the Codex app server |
 | `pipeline/extract/`, `document_bundle.rs` | Extraction and the `DocumentBundle` format |
-| `auto_review/` | Specialist catalog and role selection |
+| `auto_review/`, `auto_review/registry/` | Reviewer modules, local candidate retrieval, and role selection |
+| `pipeline/orient/` | Document inventory, review planning, and batched discovery |
 | `pipeline_config/` | Built-in workflows, validation, migrations |
-| `runs/`, `output/` | Review run store, recovery, retention, report formats |
+| `runs/`, `models/` | Review run storage, recovery, retention, and saved records |
+| `findings/`, `output/` | Published findings, report artifact contracts, and rendering |
 | `app_menu.rs` | The macOS menu bar and its sidebar item |
 | `settings/`, `storage.rs` | Device settings and research folder choice |
 | `updates.rs`, `updates/` | Update checks, their preference, and in-app install |
 | `agent_runtime/codex/` | Shared Codex transport, launch, and version checks |
 | `agent_runtime/codex/chatgpt/` | The shared ChatGPT account |
 | `agent_runtime/claude.rs` | Claude subscription check |
-| `workbench/commands.rs` | Conversation commands, database gate, turn permit |
+| `workbench/commands/` | Workspace handlers, the shared store worker gate, and the active turn permit |
 | `workbench/store/`, `workbench/migrations/` | Private SQLite store and migrations |
 | `workbench/codex/` | Conversation app server supervisor and probe |
 | `workbench/api/` | Conversation API turns, tool execution, history, and recovery |
 | `workbench/claude/` | Claude Code conversations, WSL2 transport, and the MCP bridge |
-| `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs`, `browser.rs`, `browser/` | Conversation access, receipts, web transport error mapping, and the optional browser |
-| `workbench/shell.rs`, `shell_policy.rs` | Optional API command engine and stateless sandbox policy shared with Claude Code |
-| `workbench/tool_setup.rs`, `tool_setup/` | Managed Node, locked conversation packages, cancellable staging and publication |
+| `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs` | Conversation access, receipts, and web transport error mapping |
+| `workbench/shell.rs`, `shell/`, `shell_policy.rs` | Native API commands and proxy; separate stateless sandbox policy for Claude Code |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
 | `workbench/project/` | Project files, working copies, edit acceptance, file browsing and viewer formats |
 | `workbench/project/version_control/` | Researcher-directed Git: changes, commits, branches, sync, and conflicts. Reads and writes stay here; no assistant or automation reaches it |
@@ -139,28 +142,46 @@ Each module's header comment has the details.
 | `workbench/desk/`, `workbench/data/`, `workbench/programs/` | Research desk, datasets, research programs |
 | `orchestration/` | Automations coordinator, missions, discovery |
 | `engines/`, `deps/` | Managed local engines and dependency checks |
-| `gui/src/lib/` | Typed IPC clients and pure helpers |
+| `gui/src/lib/` | Feature clients, transport records, and pure helpers |
+| `gui/src/lib/project-overview/` | Project source selection, changes since the last visit, and related work |
 | `gui/src/hooks/workspace/` | Conversation runtime in the UI |
-| `gui/src/components/NavRail.tsx`, `nav-rail/` | Primary sidebar. The open Workspace page portals its project navigation into a slot here, so that page keeps its own gates |
+| `gui/src/components/NavRail.tsx`, `nav-rail/` | Primary sidebar. Global destinations and the current project have separate sections. WorkspacePage supplies project navigation through a slot and owns the save and busy checks |
 | `gui/src/components/pipeline-editor/` | **Review designer** |
 | `gui/src/ui/` | Shared controls; design tokens are in `App.css` |
 
 Keep modules between about 300 and 800 lines.
 `node scripts/source-size-report.mjs --check` fails when a file grows past
-the budget.
+the budget. The Paddle parser sidecar has a size exception because the managed
+engine embeds, verifies, and refreshes it as a single executable script.
 
 ## How a review runs
 
 1. **Ingest.** The launch reads the input as `document`, `latex_project`,
    `source_tree`, `batch`, or `none`. Extraction uses the configured method
    and never switches to another.
-2. **Normalize.** The input becomes a `DocumentBundle`.
-3. **Orient.** One required model call returns schema-checked orientation.
-   Automatic paper review also picks specialists here.
+2. **Prepare.** Capture the document and declared supporting inputs. Persist
+   the `DocumentBundle` before review planning.
+3. **Plan.** Automatic reviews prefetch routing cards from the local reviewer
+   registry. A provider-neutral structured tool loop can batch catalog and
+   evidence requests before returning a validated plan. Custom reviews retain
+   their configured document-overview prompt and schema.
 4. **Execute.** Ready parallel steps run up to `max_workers` at a time.
    Sequential steps run alone. Every finished step is checkpointed.
 5. **Persist.** The report, manifest, responses, and artifacts go to the run's
    folder under `runs/`.
+
+A new review records its expanded step instructions and selected input
+identities under `context/execution-contract.json`. Step checkpoints also
+record digests of the accepted output and producer files. Resume checks these
+records before reusing a step. Changed instructions, inputs, or products
+invalidate the step and its graph dependents. Runs that predate the records
+can resume from their captured document. The run store verifies the images
+it restores and records missing visual evidence in the child bundle.
+
+Every provider submission checks the review's call and elapsed-time limits.
+Direct API submissions reserve estimated list-price spend and settle it when
+the provider reports usage. Report publication checks explicitly declared
+products and attributes a missing result to its producer.
 
 PDF extraction methods are `llm`, `paddleocr-vl-full` (the managed PaddleOCR-VL
 Full Parser), and `pdftotext`. The `auto` setting picks the Full Parser when it
@@ -177,12 +198,34 @@ Add optional fields with Serde defaults and keep the version. A breaking change
 needs a new major version and a migrator. New extractors produce the same
 bundle, so later steps never branch on the engine.
 
-**Specialist catalog.** Automatic paper review picks roles from
-`gui/src-tauri/prompts/auto_review/catalog/`. `build.rs` checks each manifest
-against `specialist.schema.json` and generates the Rust catalog, so a malformed
-role fails the build. The model returns only IDs. Pipeline supplies each role's
-prompt, tools, and file access. See the
+**Reviewer registry.** Automatic reviews discover roles from
+`gui/src-tauri/prompts/auto_review/catalog/`. `build.rs` validates each manifest
+and generates the bundled modules. `auto_review/registry/` returns routing
+cards through local prefetching and batched `SearchReviewers` and
+`GetReviewers` operations. Full reviewer prompts are loaded only after
+selection. The model chooses among supplied IDs; the host supplies executable
+steps, tools, and file access. See the
 [catalog README](../gui/src-tauri/prompts/auto_review/catalog/README.md).
+
+**Preparation and planning.** `pipeline/orient/preparation.rs` projects
+observed structure into the compatibility overview. Stock inventories stay
+out of the planning response; edited inventory schemas remain model-owned.
+`pipeline/orient/planning.rs` admits at most two catalog/evidence batches and
+two repair attempts through the normal supervised call boundary. This
+structured protocol works across providers without changing their native
+tool surfaces. A final plan must satisfy the saved contract, reference known
+document locations, and select only supplied routing cards. An invalid final
+response cannot start reviewers.
+
+The run saves `document_preparation.json`, `review_plan.json`, and
+`reviewer_registry.json` under `context/`, alongside the compatibility
+`orientation.json`. The registry snapshot records its revision, supplied
+cards, expansion results, and selected module definitions. Reruns copy these
+artifacts when reusing a plan. A changed catalog revision rebuilds the plan
+before materializing current modules. New document bundles contain captured structure;
+model-authored annotations stay in the overview. Legacy enriched bundles remain
+readable. Review preparation and registries do not share mutable state with
+Conversations.
 
 **Model calls.** Every provider call goes through
 [`pipeline/call.rs`](../gui/src-tauri/src/pipeline/call.rs). Provider modules
@@ -202,8 +245,8 @@ its own folder.
 - Treat the checksum-pinned schemas in `gui/src-tauri/codex-protocol/0.147.0/` as
   the field reference. Never edit them.
 - After every thread start or resume, check the returned provider, working
-  folder, roots, permission profile, and approval policy. Reject a substituted
-  model when a specific one was requested.
+  folder, roots, permission profile, approval policy, and reviewer. Reject a
+  substituted model when a specific one was requested.
 - On a failed check, stop with an error. Never weaken permissions or fall back
   to `codex exec`.
 
@@ -213,9 +256,10 @@ first-party subscription sign-in. It strips inherited `ANTHROPIC_*` and
 `CLAUDE_*` variables and never falls back to an API key. Pipeline supplies up
 to 128 KiB of recent history from its own transcript store.
 
-When ChatGPT needs a new native thread after changed settings, a project move,
-recovery, or a connection switch, it receives the same bounded app-owned
-history. A normal native resume uses the provider's existing history.
+When ChatGPT needs a new native thread after changed settings, including the
+approval mode, a project move, recovery, or a connection switch, it receives
+the same bounded app-owned history. A normal native resume uses the provider's
+existing history.
 
 **Direct APIs.** `workbench/api/` owns OpenAI, Anthropic, Gemini, and
 OpenAI-compatible conversations. It reads device credentials independently of
@@ -231,7 +275,7 @@ API replies with tool calls are commentary; a terminal reply without calls is
 the final answer. Claude's successful result completes its last assistant item
 as the final answer. Automations read that answer separately from tool updates.
 
-**Conversation tools.** All providers resolve the same file, web, and browser
+**Conversation tools.** All providers resolve the same file, web, and command
 capabilities. Interactive Edit turns use `project/conversation_copy.rs` to
 prepare or reuse a task copy in the existing conversation. Direct edits retain
 the project acceptance journal. Automation scopes and manually prepared copies
@@ -240,13 +284,35 @@ the harness fingerprint so a replacement copy gets a successor native thread
 with app-owned history. Codex thread-local configuration travels on
 start and resume. Claude receives sandbox settings and an allowlisted native
 tool catalog. Windows Claude uses a separately authenticated WSL2 environment
-when qualified dependencies are present. Workspace owns its browser processes
-and per-conversation profiles independently of Review runtimes. API commands
-use the pinned sandbox engine in `workbench/shell.rs`. `tool_setup/` provisions
-a checksum-pinned Node runtime and integrity-locked npm packages in private,
-versioned directories. Setup publishes only completed staging directories;
-failed or cancelled downloads leave installed versions intact. Browser setup
-uses the same managed runtime and retains conversation profiles across updates.
+when qualified dependencies are present. API commands use the native Rust runner
+in `workbench/shell.rs` and `shell/`. The pinned MXC Rust library applies
+Seatbelt on macOS, Bubblewrap on Linux, and native ProcessContainer on Windows.
+Compatibility tiers that change host ACLs are refused. Each command receives
+its authorized root, system tools, and a private temporary folder. Rust owns
+bounded output and cancellation independently of Review processes.
+
+The per-command Rust proxy admits domain names before DNS resolution, rejects
+nonpublic addresses, and connects to the checked addresses. HTTP requests are
+checked independently; CONNECT and SOCKS5 carry admitted destinations only.
+OS restrictions prevent direct outbound connections around the proxy. Dropping
+a command closes its proxy and stops its owned processes. macOS also identifies
+descendants by their inherited sandbox policy, so detached children remain
+subject to cleanup. Ownership is verified before the command starts. Normal
+Python, subprocess, and session creation remain available. Output readers have
+a separate shutdown deadline. Windows proxy mode
+uses an outbound TCP endpoint allowlist for the proxy, with private-network
+ingress denied. Localhost access is enabled for that endpoint; the OS filter
+blocks connections to other local services. Unix socket access is denied by
+the macOS profile and a Linux seccomp guard entered inside Bubblewrap. The
+Linux guard runs before desktop initialization in the same executable.
+Unsupported policies fail before the workload starts.
+
+Review PDF export in `commands/export/pdf.rs` uses a short-lived mode of the
+Pipeline executable with an isolated native webview. WKWebView on macOS,
+WebView2 on Windows, and WebKitGTK on Linux print the self-contained report to
+private staging. A shared PDF pass adds page counters before the atomic save.
+The helper starts before ordinary app setup and exposes no app commands. Its
+parent owns the deadline and process cleanup independently of conversation tools.
 The stateless
 policy in `workbench/shell_policy.rs` is shared with Claude Code. Public web
 search uses the same bounded retrieval policy as page reads. Discovery writer
@@ -256,7 +322,7 @@ They do not redirect writes into the main project.
 File and web tools journal admission before acting, compare the captured
 configuration with current access, and never repeat an ambiguous call. Network
 waits release database workers. Public retrieval validates and pins DNS at each
-redirect. Browser page requests use the same public-address policy. Account
+redirect. Account
 services retain identity-scoped quota observations with individual reset times;
 observations are not fresh account balances.
 
@@ -327,13 +393,34 @@ a SQLite store in the research folder. `owner.lock` lets one process own it.
 The store uses WAL, optimistic revisions, unique schedule occurrences, and
 append-only events.
 
+The Automations page combines regular runs, investigations, and discovery in
+one read-only index. Detail reads and controls continue through each kind's
+own commands.
+
 - At most four leaf actions run at once, with one conversation turn and one
   review action at a time. A review action takes the run lock exclusively, so
   it waits until no other review is running. **Reviews at once** governs the
   review queue, not these actions.
 - `orchestration/adapters/execute.rs` is the one cancellation and publication
   envelope.
-- A response is written to its action journal before the coordinator advances.
+- A receipt identifies one action kind and operation. A durable dispatch marker
+  precedes the owner call; a new receipt without that marker proves no submission.
+  Recovery asks only the action’s owner or reads its result journal. A failed
+  coordinator write retries publication of the same attempt without repeating
+  the action. Earlier receipts use their saved definition to find the owner.
+- Group clocks are absolute deadlines keyed by iteration and branch. Admission
+  applies all enclosing action limits and the shortest remaining timeout.
+- Each runtime admits its own model requests through a narrow caller-supplied
+  meter. The Automations store reserves estimated API spend transactionally
+  across sibling Reviews and retries; missing usage keeps its reservation.
+  Subscription and local work have separate counters.
+- Delivered files are copied by verified digest into Workspace. Each file
+  belongs to its conversation exchange, with the bytes and receipt references
+  covered by Workspace retention, relocation, and research backups.
+- Automation file and folder snapshots resolve against the selected library.
+  A committed literature lookup can be recovered by its project and operation
+  without issuing another network request. An unreadable active record is
+  isolated from dispatch and keeps its original body for repair.
 - Settings are pinned at preparation. Review credentials are resolved only
   inside the review adapter.
 - A task keeps its review pinned until it adopts the result
@@ -354,9 +441,17 @@ append-only events.
 
 Research automations (`orchestration/missions/`) add planning and assessment
 on the same coordinator. Their completion is an assessment that never accepts
-edits or widens permissions. Research discovery (`orchestration/discovery/`)
+edits or widens permissions. `orchestration/claims.rs` grades inspections against
+host-retained evidence for an exact round or manuscript version. A model reply
+cannot grant researcher acceptance. The explicit researcher command checks the
+run revision and subject version before saving that decision. Older assessments
+without a claim record retain their original status. Research discovery (`orchestration/discovery/`)
 uses the same adapters. Its conversation roles in `workbench/discovery.rs` run
-without network access and never ask for approval.
+without network access and never ask for approval. Optional idea teams run
+inside a single discovery step and hold the Workspace turn permit. Workspace
+starts an isolated Codex app server or Claude Code process, verifies the
+native child events, and returns the lead's sketches through the task adapter.
+The coordinator journals that result before developing the proposals.
 
 ## Data on disk
 
@@ -456,8 +551,8 @@ lifecycle, sandbox rules, and process cleanup without a model turn. The
 `workflow_codex_probe` example checks the review connection. Run both after
 changing Codex transport, sandbox, or process code. Set
 `PIPELINE_PROBE_NETWORK=1` for the optional public-domain, denial, and proxy-bypass
-checks. Browser transport tests run with
-`node --test gui/src-tauri/src/workbench/browser/public-request.test.mjs gui/src-tauri/src/workbench/browser/request-limits.test.mjs`.
+checks. Shared web transport tests run with
+`cargo test --locked --lib public_web` from `gui/src-tauri/`.
 
 **Opt-in tests** are marked `#[ignore]`. Run one with
 `cargo test --locked --lib <name> -- --ignored`.

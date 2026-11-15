@@ -1,38 +1,35 @@
-import { render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { beforeEach, expect, it, vi } from "vitest";
 import ShellSetup from "./ShellSetup";
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-it("prepares commands with a managed runtime", async () => {
-  vi.mocked(invoke).mockImplementation(async (command) =>
-    command === "workbench_shell_status"
-      ? { installed: false, nodeAvailable: false, platformAvailable: true }
-      : { installed: true, platformAvailable: true },
-  );
+beforeEach(() => vi.mocked(invoke).mockReset());
+
+it("checks native commands without installing a runtime", async () => {
+  vi.mocked(invoke).mockResolvedValue({ available: true, reason: null });
   render(<ShellSetup disabled={false} />);
-  await screen.findByText(/Commands ready/);
-  expect(invoke).toHaveBeenCalledWith("workbench_shell_install");
+  await screen.findByText("Commands ready. Included with Pipeline.");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenCalledWith("workbench_shell_status");
 });
-it("does not attempt unsupported installation", async () => {
-  vi.mocked(invoke).mockClear();
-  vi.mocked(invoke).mockResolvedValue({
-    installed: false,
-    platformAvailable: false,
-  });
+
+it("shows the platform's explanation and allows another check", async () => {
+  vi.mocked(invoke)
+    .mockResolvedValueOnce({ available: false, reason: "Update Windows." })
+    .mockResolvedValueOnce({ available: true, reason: null });
   render(<ShellSetup disabled={false} />);
-  await screen.findByText(/General commands require/);
-  expect(invoke).not.toHaveBeenCalledWith("workbench_shell_install");
+  await screen.findByText("Update Windows.");
+  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await screen.findByText("Commands ready. Included with Pipeline.");
 });
-it("waits until settings are saved before starting setup", async () => {
-  vi.mocked(invoke).mockClear();
-  vi.mocked(invoke).mockImplementation(async (command) =>
-    command === "workbench_shell_status"
-      ? { installed: false, platformAvailable: true }
-      : { installed: true, platformAvailable: true },
-  );
-  const view = render(<ShellSetup disabled={true} />);
-  await screen.findByText(/downloads and prepares/);
-  expect(invoke).not.toHaveBeenCalledWith("workbench_shell_install");
-  view.rerender(<ShellSetup disabled={false} />);
-  await screen.findByText(/Commands ready/);
+
+it("allows retrying a failed availability check", async () => {
+  vi.mocked(invoke)
+    .mockRejectedValueOnce(new Error("Unavailable"))
+    .mockResolvedValueOnce({ available: true, reason: null });
+  render(<ShellSetup disabled={false} />);
+  await screen.findByRole("alert");
+  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+  await screen.findByText("Commands ready. Included with Pipeline.");
 });

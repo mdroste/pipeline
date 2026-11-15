@@ -15,7 +15,7 @@ use crate::models::{ExtractionResult, OrientationMap};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -110,8 +110,17 @@ pub struct DocumentProvenance {
     pub confidence: Option<f32>,
 }
 
+/// Length and SHA-256 prefix of a retained visual. Older bundles omit this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualIdentity {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentAsset {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<VisualIdentity>,
     pub id: String,
     pub kind: String,
     pub label: String,
@@ -196,6 +205,8 @@ fn source_kind(extraction: &ExtractionResult) -> String {
         "folder"
     } else if extraction.method == "none" {
         "none"
+    } else if lower.ends_with(".pptx") {
+        "pptx"
     } else if lower.ends_with(".docx") {
         "docx"
     } else if lower.ends_with(".tex") || extraction.method == "latex" {
@@ -340,6 +351,7 @@ fn asset_from_file(
     }
     let (width, height) = image_dimensions(&path);
     Some(DocumentAsset {
+        identity: None,
         id: format!("asset-{}", stable_suffix(rel_path)),
         kind: kind.to_string(),
         label,
@@ -386,7 +398,7 @@ fn scan_asset_dir(run_dir: &Path, rel_dir: &str, kind: &str, method: &str) -> Ve
         .collect()
 }
 
-fn split_pages(text: &str) -> Vec<(Option<u32>, String)> {
+pub(crate) fn split_pages(text: &str) -> Vec<(Option<u32>, &str)> {
     let marker = Regex::new(r"(?im)^\s*<!--\s*PAGE\s+(\d+)\s*-->\s*$").unwrap();
     let mut output = Vec::new();
     let mut last = 0;
@@ -395,17 +407,17 @@ fn split_pages(text: &str) -> Vec<(Option<u32>, String)> {
         let full = capture.get(0).unwrap();
         let content = text[last..full.start()].trim();
         if !content.is_empty() {
-            output.push((current_page, content.to_string()));
+            output.push((current_page, content));
         }
         current_page = capture.get(1).and_then(|value| value.as_str().parse().ok());
         last = full.end();
     }
     let content = text[last..].trim();
     if !content.is_empty() {
-        output.push((current_page, content.to_string()));
+        output.push((current_page, content));
     }
     if output.is_empty() && !text.trim().is_empty() {
-        output.push((None, text.trim().to_string()));
+        output.push((None, text.trim()));
     }
     output
 }
@@ -468,7 +480,7 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
             page,
             page.map(|number| format!("Page {number}")),
             page.map(|number| number.to_string()),
-            page_text.clone(),
+            page_text.to_string(),
             page_assets,
             Vec::new(),
             method,
@@ -606,10 +618,12 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
 }
 
 mod adapters;
+pub(crate) mod beamer;
 mod bundle;
 mod docx_symbols;
 mod docx_xml;
 mod paddle;
+mod pptx;
 
 use adapters::{
     add_tex_nodes, capitalize, closest_assets, copy_docx_media, copy_tex_assets,
@@ -620,6 +634,7 @@ use paddle::add_paddle_structured_nodes;
 pub use adapters::{companion_pdf, extract_docx_text};
 pub use bundle::build;
 pub(crate) use docx_xml::inline_character;
+pub use pptx::extract_pptx_text;
 
 #[cfg(test)]
 use adapters::{copy_docx_media_with_limits, read_docx_entry_limited};

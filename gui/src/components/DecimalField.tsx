@@ -15,12 +15,26 @@ type Props = Omit<
  * storing that as 0 makes React rewrite the field, which loses the sign. Text
  * the browser cannot read as a number is never saved, and the field reverts.
  */
-export default function DecimalField({ value, onChange, ...rest }: Props) {
+export default function DecimalField({
+  value,
+  onChange,
+  className = "",
+  ...rest
+}: Props) {
   const element = useRef<HTMLInputElement>(null);
   const draft = useDraftText(String(value), (text) => {
     if (element.current?.validity.badInput || !text.trim()) return;
     const parsed = Number(text);
     if (Number.isFinite(parsed) && parsed !== value) onChange(parsed);
   });
-  return <input {...rest} ref={element} type="number" step="any" {...draft} />;
+  return (
+    <input
+      {...rest}
+      className={`ui-input ${className}`}
+      ref={element}
+      type="number"
+      step="any"
+      {...draft}
+    />
+  );
 }

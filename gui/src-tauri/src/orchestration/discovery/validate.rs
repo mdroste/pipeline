@@ -37,6 +37,9 @@ pub fn definition(d: &Definition) -> Result<()> {
             "Explore 50–100 candidates, shortlist 1–25, and select 1–9 papers with K <= N".into(),
         );
     }
+    if d.idea_agents > MAX_IDEA_AGENTS {
+        return Err(format!("Choose 0–{MAX_IDEA_AGENTS} idea subagents."));
+    }
     if d.proposal_reviewers > 4
         || d.proposal_revision_passes > 2
         || d.paper_reviewers > 4
@@ -182,6 +185,7 @@ pub fn selection(s: &Selection, p: &Portfolio) -> Result<()> {
     text(&s.rationale, 8000)
 }
 pub fn investigation(v: &Investigation) -> Result<()> {
+    strings(&v.execution_ids, 0, 4, 200)?;
     text(&v.contract, 12000)?;
     text(&v.summary, 16000)?;
     text(&v.reason, 4000)?;
@@ -210,7 +214,39 @@ pub fn paths(v: &[String]) -> Result<()> {
     }
     Ok(())
 }
+/// Source-relative names must form an unambiguous, portable ZIP tree.
+pub(super) fn attachment_paths(files: &[String]) -> Result<()> {
+    paths(files)?;
+    let mut used = BTreeSet::new();
+    let reserved = [
+        "paper.tex",
+        "paper.md",
+        "references.bib",
+        "research.json",
+        "evidence",
+    ];
+    for path in files {
+        if path
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == ".." || p.contains(':'))
+            || matches!(path.as_str(), "research.json" | "evidence")
+            || !used.insert(path.as_str())
+        {
+            return Err("Manuscript attachments need unique, confined file paths".into());
+        }
+    }
+    for path in files {
+        for (slash, _) in path.match_indices('/') {
+            let ancestor = &path[..slash];
+            if reserved.contains(&ancestor) || used.contains(ancestor) {
+                return Err("A manuscript file also names an attachment folder".into());
+            }
+        }
+    }
+    Ok(())
+}
 pub fn manuscript(v: &Manuscript, p: &Paper) -> Result<()> {
+    strings(&v.central_claims, 0, 24, 2000)?;
     text(&v.title, 300)?;
     text(&v.abstract_text, 6000)?;
     text(&v.markdown, 100 * 1024)?;
@@ -221,7 +257,7 @@ pub fn manuscript(v: &Manuscript, p: &Paper) -> Result<()> {
     strings(&v.evidence_ids, 0, 100, 160)?;
     strings(&v.limitations, 0, 24, 2000)?;
     strings(&v.response_to_review, 0, 80, 2000)?;
-    paths(&v.files)?;
+    attachment_paths(&v.files)?;
     if v.evidence_ids.iter().any(|id| !p.evidence.contains_key(id)) {
         return Err("Manuscript cites evidence outside its research record".into());
     }
@@ -233,7 +269,17 @@ pub fn manuscript(v: &Manuscript, p: &Paper) -> Result<()> {
     Ok(())
 }
 pub fn version_hash(v: &Manuscript) -> Result<String> {
-    hash(&(&v.markdown, &v.latex, &v.bibliography, &v.evidence_ids))
+    if v.central_claims.is_empty() {
+        hash(&(&v.markdown, &v.latex, &v.bibliography, &v.evidence_ids))
+    } else {
+        hash(&(
+            &v.markdown,
+            &v.latex,
+            &v.bibliography,
+            &v.evidence_ids,
+            &v.central_claims,
+        ))
+    }
 }
 pub fn review(v: &Review) -> Result<()> {
     text(&v.summary, 12000)?;
@@ -280,24 +326,21 @@ pub fn ranking(v: &[RankedPaper], p: &Portfolio) -> Result<()> {
         text(&r.reason, 6000)?;
         text(&r.uncertainty, 3000)?;
     }
+    let supported: BTreeSet<_> = p
+        .papers
+        .iter()
+        .filter(|p| p.supported())
+        .map(|p| p.candidate_id)
+        .collect();
     for a in v {
-        let sound = p
-            .papers
-            .iter()
-            .find(|p| p.candidate_id == a.candidate_id)
-            .and_then(|p| p.assessment.as_ref())
-            .is_some_and(|a| a.sound);
-        if sound
-            && v.iter().any(|b| {
-                b.rank <= a.rank
-                    && p.papers
-                        .iter()
-                        .find(|p| p.candidate_id == b.candidate_id)
-                        .and_then(|p| p.assessment.as_ref())
-                        .is_some_and(|a| !a.sound)
-            })
+        if supported.contains(&a.candidate_id)
+            && v.iter()
+                .any(|b| b.rank <= a.rank && !supported.contains(&b.candidate_id))
         {
-            return Err("A paper with unresolved material defects cannot rank above or tie an eligible paper".into());
+            return Err(
+                "Papers meeting evidence requirements must precede papers without assessed support"
+                    .into(),
+            );
         }
     }
     Ok(())

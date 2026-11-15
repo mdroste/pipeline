@@ -6,7 +6,7 @@ import type {
   DependencyPolicy,
   ExtractionConfig,
   OutputConfig,
-} from "../../lib/types";
+} from "../../lib/workflowTypes";
 export const DEFAULT_EXTRACTION: ExtractionConfig = { method: "" };
 const PRESERVE_FINDINGS_KEY = "x-pipeline-preserve-findings-from";
 /** The save validator's limit. Labels may be longer, so ids are cut to fit. */

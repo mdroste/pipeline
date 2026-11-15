@@ -2,9 +2,11 @@ use super::*;
 use crate::orchestration::{definition::*, state::Progress};
 use std::io::Read as _;
 
+mod claim_benchmarks;
+mod manuscript_assessments;
 mod repair;
 
-fn fixture(mode: Mode, count: usize) -> Portfolio {
+pub(super) fn fixture(mode: Mode, count: usize) -> Portfolio {
     let mut d = Definition {
         mode,
         candidate_count: count,
@@ -37,6 +39,7 @@ fn fixture(mode: Mode, count: usize) -> Portfolio {
             phase: Phase::Orient,
             orientation: None,
             literature: Vec::new(),
+            idea_seeds: Vec::new(),
             deep_candidates: Vec::new(),
             selection: None,
             selection_hash: None,
@@ -61,8 +64,12 @@ fn fixture(mode: Mode, count: usize) -> Portfolio {
 }
 use super::qualification::response;
 fn adopt(p: &mut Portfolio) -> Result<()> {
+    let saved = p.run.active_child.clone();
+    p.run.active_child = Some("fixture-action".into());
     let output = json!({"finalText":response(p).to_string()});
-    engine::consume(p, &output, BTreeMap::new(), BTreeMap::new())
+    let result = engine::consume(p, &output, BTreeMap::new(), BTreeMap::new());
+    p.run.active_child = saved;
+    result
 }
 fn until_selection(p: &mut Portfolio) {
     for _ in 0..150 {
@@ -167,79 +174,19 @@ fn boundaries_duplicate_links_and_full_batch_coverage_are_enforced() {
     assert!(validate::assessments(&[duplicate], &[1], &p.candidates).is_err());
 }
 #[test]
-fn revisions_are_re_reviewed_and_final_version_identity_is_preserved() {
-    let mut p = fixture(Mode::Unsupervised, 50);
-    until_selection(&mut p);
-    while !matches!(p.run.phase, Phase::Review { .. }) {
-        adopt(&mut p).unwrap();
-    }
-    let first = p.papers[0].versions[0].hash.clone();
-    let v = json!({"summary":"Revise the unsupported interpretation","findings":[{"claim":"Central argument","severity":"major","evidence":"Missing textual distinction","resolution":"Narrow the claim"}],"strengths":[],"limitations":[]});
-    engine::consume(
-        &mut p,
-        &json!({"text":v.to_string()}),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
-    .unwrap();
-    assert_eq!(p.run.phase, Phase::Draft { paper: 0 });
-    adopt(&mut p).unwrap();
-    assert_eq!(p.run.phase, Phase::Review { paper: 0 });
-    assert_ne!(p.papers[0].versions[1].hash, first);
-    assert!(p.papers[0].versions[1].reviews.is_empty());
-    adopt(&mut p).unwrap();
-    assert_eq!(p.run.phase, Phase::AssessPaper { paper: 0 });
-    assert_eq!(p.papers[0].versions[0].reviews[0].findings.len(), 1);
-}
-#[test]
-fn unresolved_fatal_findings_cannot_be_overridden_by_final_assessor() {
-    let mut p = fixture(Mode::Unsupervised, 50);
-    p.run.definition.revision_passes = 0;
-    until_selection(&mut p);
-    while !matches!(p.run.phase, Phase::Review { .. }) {
-        adopt(&mut p).unwrap();
-    }
-    let v = json!({"summary":"Unsupported central claim","findings":[{"claim":"Conclusion","severity":"fatal","evidence":"No support","resolution":"New evidence required"}],"strengths":[],"limitations":[]});
-    engine::consume(
-        &mut p,
-        &json!({"text":v.to_string()}),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    )
-    .unwrap();
-    adopt(&mut p).unwrap();
-    assert_eq!(p.papers[0].state, "incomplete");
-    assert!(!p.papers[0].assessment.as_ref().unwrap().sound);
-}
-#[test]
-fn reviews_can_be_disabled_without_claiming_they_ran() {
-    let mut p = fixture(Mode::Unsupervised, 50);
-    p.run.definition.paper_reviewers = 0;
-    p.run.definition.proposal_reviewers = 0;
-    p.run.definition.challenge_research = false;
-    for _ in 0..200 {
-        if p.run.terminal() {
-            break;
-        }
-        adopt(&mut p).unwrap();
-    }
-    assert_eq!(p.run.state, "completed");
-    assert!(p
-        .papers
-        .iter()
-        .all(|p| p.versions[0].reviews.is_empty() && p.challenges.is_empty()));
-}
-#[test]
 fn aggregate_admission_is_atomic_and_long_prompts_use_bounded_bindings() {
     let temp = tempfile::tempdir().unwrap();
     let s = store::Store::open(temp.path()).unwrap();
     let mut p = fixture(Mode::Unsupervised, 50);
+    p.run.definition.idea_agents = 4;
+    p.run.phase = Phase::Brainstorm;
     storage::create(&s, &p.run, "create", "f").unwrap();
     let chain = Chain {
         schema_version: 1,
         name: "Managed test".into(),
         description: String::new(),
         limits: Limits {
+            max_api_cost_cents: None,
             max_actions: 1,
             deadline_hours: 1,
             action_timeout_secs: 30,
@@ -255,7 +202,11 @@ fn aggregate_admission_is_atomic_and_long_prompts_use_bounded_bindings() {
         }],
     };
     storage::admit(&s, &mut p, chain.clone(), store::Scope::default()).unwrap();
-    assert_eq!(p.run.actions_reserved, 1);
+    assert_eq!(p.run.actions_reserved, 5);
+    assert_eq!(
+        storage::idea_team(&s, p.run.active_child.as_ref().unwrap()).unwrap(),
+        Some(4)
+    );
     let child = s.get(p.run.active_child.as_ref().unwrap()).unwrap();
     assert_eq!(
         child.inputs["discoveryPrompt"].as_str().unwrap().len(),
@@ -269,6 +220,7 @@ fn aggregate_admission_is_atomic_and_long_prompts_use_bounded_bindings() {
     assert!(storage::admit(&s, &mut p, chain, store::Scope::default()).is_err());
     p.run.active_child = None;
     storage::save(&s, &mut p, "adopt", Some(&child.id)).unwrap();
+    assert!(storage::idea_team(&s, &child.id).is_err());
     assert!(storage::save(&s, &mut p, "adopt", Some(&child.id)).is_err());
 }
 #[test]
@@ -282,6 +234,7 @@ fn interrupted_child_is_retained_without_replay() {
         name: "Managed test".into(),
         description: String::new(),
         limits: Limits {
+            max_api_cost_cents: None,
             max_actions: 1,
             deadline_hours: 1,
             action_timeout_secs: 30,
@@ -354,6 +307,13 @@ fn exports_verify_exact_bytes_and_keep_credentials_out_of_the_bundle() {
     )
     .unwrap();
     v.artifacts.insert("paper.md".into(), artifact.clone());
+    v.manuscript.files = vec!["figures/plot.png".into(), "appendix/plot.png".into()];
+    for (i, content) in ["first graphic", "second graphic"].into_iter().enumerate() {
+        v.artifacts.insert(
+            format!("attachment-{i}-plot.png"),
+            adapters::snapshot(&s, &store::Scope::default(), json!(content), "plot.png").unwrap(),
+        );
+    }
     p.run.input_artifacts.insert(
         "input-1-source.txt".into(),
         adapters::snapshot(
@@ -376,6 +336,17 @@ fn exports_verify_exact_bytes_and_keep_credentials_out_of_the_bundle() {
         p.papers[0].versions.last().unwrap().manuscript.markdown
     );
     assert!(zip.by_name("inputs/input-1-source.txt").is_ok());
+    for (name, want) in [
+        ("project-1/figures/plot.png", "first graphic"),
+        ("project-1/appendix/plot.png", "second graphic"),
+    ] {
+        let mut content = String::new();
+        zip.by_name(name)
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+        assert_eq!(content, want);
+    }
     let mut meta = String::new();
     zip.by_name("portfolio.json")
         .unwrap()
@@ -407,6 +378,7 @@ fn proposal_versions_and_budget_reservations_remain_bounded() {
         name: "Budget test".into(),
         description: String::new(),
         limits: Limits {
+            max_api_cost_cents: None,
             max_actions: 1,
             deadline_hours: 1,
             action_timeout_secs: 30,
@@ -452,6 +424,7 @@ fn only_a_running_action_blocks_a_run_terminally() {
         name: "Managed test".into(),
         description: String::new(),
         limits: Limits {
+            max_api_cost_cents: None,
             max_actions: 1,
             deadline_hours: 1,
             action_timeout_secs: 30,
@@ -471,6 +444,7 @@ fn only_a_running_action_blocks_a_run_terminally() {
     assert_eq!(failure_state(None, false), "attention");
     assert_eq!(failure_state(Some(&child), false), "attention");
     let receipt = |state: &str| crate::orchestration::state::Receipt {
+        action_kind: None,
         sequence: 1,
         address: "action".into(),
         step_id: "action".into(),
@@ -549,6 +523,7 @@ async fn recovered_failure_is_durable_before_discovery_classifies_it() {
     child.progress.receipts.insert(
         "action".into(),
         crate::orchestration::state::Receipt {
+            action_kind: None,
             sequence: 1,
             address: "action".into(),
             step_id: "action".into(),
@@ -642,6 +617,7 @@ fn author_turn(
         name: "Investigate".into(),
         description: String::new(),
         limits: Limits {
+            max_api_cost_cents: None,
             max_actions: 1,
             deadline_hours: 1,
             action_timeout_secs: 1800,
@@ -670,6 +646,7 @@ fn author_turn(
     child.progress.receipts.insert(
         "action".into(),
         crate::orchestration::state::Receipt {
+            action_kind: None,
             sequence: 1,
             address: "action".into(),
             step_id: "action".into(),
@@ -1147,4 +1124,72 @@ fn the_exported_report_uses_the_name_on_screen() {
     assert!(export::report(&p).starts_with("# Research discovery — choose projects yourself\n"));
     let p = fixture(Mode::Unsupervised, 50);
     assert!(export::report(&p).starts_with("# Research discovery — let Pipeline choose projects\n"));
+}
+
+#[test]
+fn native_idea_team_confirms_once_then_feeds_distinct_batches() {
+    let mut p = fixture(Mode::Supervised, 100);
+    p.run.definition.idea_agents = 4;
+    p.run.definition.acquire_literature = false;
+    let response = |v: Value| json!({"finalText":v.to_string()});
+    let orient = response(qualification::response(&p));
+    engine::consume(&mut p, &orient, Default::default(), Default::default()).unwrap();
+    assert_eq!(p.run.phase, Phase::Brainstorm);
+    assert_eq!(p.run.action_cost(), 5);
+    let mut output = response(qualification::response(&p));
+    assert!(engine::consume(&mut p, &output, Default::default(), Default::default()).is_err());
+    output["completedIdeaAgents"] = json!(4);
+    engine::consume(&mut p, &output, Default::default(), Default::default()).unwrap();
+    assert_eq!(p.run.phase, Phase::Generate);
+    assert_eq!(p.run.action_cost(), 1);
+    assert_eq!(p.run.idea_seeds.len(), 100);
+    let first = prompts::prompt(&p).unwrap();
+    assert!(first.contains(&p.run.idea_seeds[0]));
+    assert!(!first.contains(&p.run.idea_seeds[BATCH]));
+    let batch = response(qualification::response(&p));
+    engine::consume(&mut p, &batch, Default::default(), Default::default()).unwrap();
+    let second = prompts::prompt(&p).unwrap();
+    assert!(second.contains(&p.run.idea_seeds[BATCH]));
+    assert!(!second.contains(&p.run.idea_seeds[0]));
+}
+
+mod idea_budget;
+
+#[test]
+fn reviewers_receive_one_copy_of_the_original_inputs() {
+    let inputs = (0..4)
+        .map(|n| {
+            (
+                format!("input-{n}"),
+                json!({"kind":"artifact","filename":format!("{n}.txt"),"bytes":9*1024*1024}),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut evidence = inputs.clone();
+    evidence.insert(
+        "new".into(),
+        json!({"kind":"artifact","filename":"extra","bytes":1024}),
+    );
+    let files = reviewer_evidence(&inputs, &evidence);
+    assert_eq!(files.len(), 5);
+    check_artifacts(&files).unwrap();
+    let mut large = files;
+    large.insert(
+        "tooBig".into(),
+        json!({"kind":"artifact","bytes":64*1024*1024}),
+    );
+    assert!(check_artifacts(&large).is_err());
+}
+
+#[test]
+fn exported_attachment_tree_rejects_traversal_and_collisions() {
+    for pair in [
+        ["../outside.png", "normal.png"],
+        ["a.png", "a.png"],
+        ["a", "a/b"],
+        ["paper.tex/foo", "b"],
+        ["evidence/x", "b"],
+    ] {
+        assert!(validate::attachment_paths(&pair.map(String::from)).is_err());
+    }
 }

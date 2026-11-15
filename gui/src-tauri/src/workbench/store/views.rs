@@ -2,6 +2,15 @@
 
 use super::*;
 
+pub(crate) enum RuntimeFileOwner {
+    Private,
+    Project {
+        workspace_id: String,
+        checkpoint_id: Option<String>,
+    },
+    Discovery,
+}
+
 impl Store {
     /// Reads one app-owned preference. Preferences never enter harness
     /// fingerprints or archives' research semantics.
@@ -109,8 +118,16 @@ impl Store {
     }
 
     pub(crate) fn runtime_root(&self, session_id: &str) -> WorkbenchResult<PathBuf> {
+        self.runtime_file_scope(session_id).map(|(root, _)| root)
+    }
+
+    /// Resolve the folder and its owner together so callers cannot mix scopes.
+    pub(crate) fn runtime_file_scope(
+        &self,
+        session_id: &str,
+    ) -> WorkbenchResult<(PathBuf, RuntimeFileOwner)> {
         if let Some(root) = crate::workbench::discovery::runtime_root(self, session_id)? {
-            return Ok(root);
+            return Ok((root, RuntimeFileOwner::Discovery));
         }
         let snapshot = self.session_snapshot(session_id)?;
         if let (Some(workspace), Some(checkpoint)) = (
@@ -121,13 +138,28 @@ impl Store {
                 .get("projectCheckpointId")
                 .and_then(Value::as_str),
         ) {
-            return crate::workbench::project::session_task_root(self, &workspace.id, checkpoint);
+            let root =
+                crate::workbench::project::session_task_root(self, &workspace.id, checkpoint)?;
+            return Ok((
+                root,
+                RuntimeFileOwner::Project {
+                    workspace_id: workspace.id.clone(),
+                    checkpoint_id: Some(checkpoint.into()),
+                },
+            ));
         }
         if let Some(workspace) = snapshot
             .workspace
             .filter(|workspace| workspace.root.is_some())
         {
-            return self.registered_root(&workspace);
+            let root = self.registered_root(&workspace)?;
+            return Ok((
+                root,
+                RuntimeFileOwner::Project {
+                    workspace_id: workspace.id,
+                    checkpoint_id: None,
+                },
+            ));
         }
         let root = self
             .root
@@ -135,7 +167,7 @@ impl Store {
             .join("conversations")
             .join(session_id);
         secure_directory(&root)?;
-        Ok(root)
+        Ok((root, RuntimeFileOwner::Private))
     }
 
     pub fn reconcile_workspace_roots(

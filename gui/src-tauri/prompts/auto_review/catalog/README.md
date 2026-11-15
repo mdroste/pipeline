@@ -1,6 +1,6 @@
 # Review specialist catalog
 
-Paper Review picks its subject and method specialists from this catalog. Each
+Paper Review searches this registry for its subject and method specialists. Each
 specialist, and each document type, is one folder with a `specialist.json`
 manifest and a Markdown prompt. The build checks every manifest against
 `specialist.schema.json` and generates the Rust catalog the app uses.
@@ -10,6 +10,11 @@ manifest and a Markdown prompt. The build checks every manifest against
 | `subjects/{id}/` | Routing details for one subfield | `focus.md`, the subfield's review focus |
 | `methods/{id}/` | Routing details for one method | `prompt.md`, the method's review focus |
 | `genres/{id}/` | Routing details for one document type | `prompt.md`, a short paragraph added to every reviewer's prompt |
+
+The planner starts with relevant routing cards and a directory of subject and
+method groups. It can search for more candidates or request specific cards in
+a batch. Routing cards contain scope and exclusions. The full assessment
+instructions are loaded when a selected reviewer runs.
 
 ## How prompts are assembled
 

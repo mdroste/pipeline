@@ -2,28 +2,19 @@ import { providerName } from "../lib/workspaceProviders";
 import type { AppRoute } from "../lib/router";
 import { useWorkspacePageController } from "../hooks/useWorkspacePageController";
 import WorkspaceMenu from "./WorkspaceMenu";
-import WorkspaceToolPicker from "./WorkspaceToolPicker";
-import WorkspaceComposerControls, {
-  loadAccountSummary,
-  loadClaudeUsage,
-} from "./WorkspaceComposerControls";
-import RetainedWorkspaceView from "./RetainedWorkspaceView";
+import WorkspaceComposerToolbar from "./workspace/WorkspaceComposerToolbar";
 import WorkspaceRailNavigation from "./WorkspaceRailNavigation";
-import { useNavRailSlot } from "./nav-rail/navRailSlot";
-import {
-  workspaceDestinations,
-  type WorkspaceDestination,
-} from "../lib/workspaceNavigation";
+import { useWorkspaceRail } from "./workspace/useWorkspaceRail";
+import { workspaceDestinations } from "../lib/workspaceNavigation";
 import WorkspaceDesk from "./WorkspaceDesk";
 import WorkspaceConversationView from "./WorkspaceConversationView";
-import WorkspaceContextInspector from "./WorkspaceContextInspector";
 import WorkspaceContextTray from "./WorkspaceContextTray";
 import {
   lazy,
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -31,7 +22,6 @@ import {
 import { createPortal } from "react-dom";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import { turnStateLabel, turnTimeLabel } from "../lib/workspaceTurnLabels";
 import "./WorkspaceNavigation.css";
 import "./WorkspaceInspector.css";
 import RequestCard from "./WorkspaceRequestCard";
@@ -42,16 +32,15 @@ import { MenuItem, MenuLabel, MenuSeparator } from "../ui/Menu";
 import { Icon } from "../ui/icons";
 import WorkspaceIcon from "./WorkspaceIcon";
 import WorkspaceComposerMenu from "./WorkspaceComposerMenu";
-import WorkspaceConversationOutline from "./WorkspaceConversationOutline";
-import { MoveConversationDialog } from "./WorkspaceConversationActions";
-import type { ReviewHandoff } from "../lib/workbenchTypes";
+import WorkspaceInspectors from "./workspace/WorkspaceInspectors";
+import WorkspaceDialogs from "./workspace/WorkspaceDialogs";
+import type { ReviewHandoff } from "../lib/workbench/releaseTypes";
 import ReportIssueLink from "./ReportIssueLink";
+import type { FileLocation } from "../lib/fileLinks";
 
 const WorkspaceProjectSurface = lazy(() => import("./WorkspaceProjectSurface"));
-const WorkspaceProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
-const WorkspaceFollowups = lazy(() => import("./research-programs/Followups"));
+const ConversationArtifacts = lazy(() => import("./ConversationArtifacts"));
 const WorkspaceTaskCards = lazy(() => import("./WorkspaceTaskCards"));
-const WorkspaceResearchPanel = lazy(() => import("./WorkspaceResearchPanel"));
 const WorkspaceHarnessEditor = lazy(() => import("./WorkspaceHarnessEditor"));
 /** Placeholder title until the first exchange is auto-titled or the user renames. */
 const DEFAULT_TITLE = "New conversation";
@@ -97,7 +86,6 @@ export default function WorkspacePage({
       hasOlderSessions,
       loadOlderSessions,
       sessionId,
-      tasksEnabled,
       projectRequest,
       resetRequest,
       destination,
@@ -187,6 +175,30 @@ export default function WorkspacePage({
     onNewProjectRequestHandled,
   });
   const [conversationFirst, setConversationFirst] = useState(0);
+  const artifactsId = useId();
+  const artifactScope =
+    snapshot && snapshot.session.id === sessionId
+      ? JSON.stringify([
+          sessionId,
+          snapshot.workspace?.id,
+          snapshot.workspace?.root,
+          snapshot.session.overrides?.projectCheckpointId,
+        ])
+      : null;
+  const [artifactSelection, setArtifactSelection] = useState<{
+    scope: string;
+    location: FileLocation | null;
+  } | null>(null);
+  const artifactsOpen = artifactSelection?.scope === artifactScope;
+  if (artifactSelection && !artifactsOpen) setArtifactSelection(null);
+  const collapseArtifacts = useCallback(() => setArtifactSelection(null), []);
+  const openArtifacts = useCallback(
+    (location: FileLocation | null) => {
+      if (artifactScope)
+        setArtifactSelection({ scope: artifactScope, location });
+    },
+    [artifactScope],
+  );
   const assistantPane = useRef<HTMLElement>(null);
   const setComposerBusy = (value: boolean) => {
     contextBusyRef.current = value;
@@ -235,31 +247,13 @@ export default function WorkspacePage({
     setError,
   ]);
 
-  // The sidebar's actions run the latest closures without re-reporting.
-  const railActions = useRef({
-    newConversation: () => undefined as void,
-    openView: (_destination: WorkspaceDestination) => undefined as void,
-  });
-  railActions.current = {
-    newConversation: () =>
-      void createSession().catch((cause) =>
-        setError(workbenchErrorMessage(cause)),
-      ),
-    openView: navigateProject,
-  };
-  const rail = useNavRailSlot();
-  const setRailWorkspace = rail?.setWorkspace;
-  const projectName = currentWorkspace?.name ?? null;
-  useLayoutEffect(() => {
-    setRailWorkspace?.({
-      projectId: workspaceId,
-      projectName,
-      newConversation: () => railActions.current.newConversation(),
-      openView: (view) => railActions.current.openView(view),
-    });
-    return () => setRailWorkspace?.(null);
-  }, [setRailWorkspace, workspaceId, projectName]);
-  const dismissRail = () => rail?.dismissRef.current?.();
+  const { rail, dismissRail } = useWorkspaceRail(
+    workspaceId,
+    currentWorkspace?.name ?? null,
+    createSession,
+    navigateProject,
+    setError,
+  );
   // The project pane is memoized, so typing here leaves it alone. Its callbacks
   // stay stable and run the latest closures.
   const paneActions = useRef({ createSession, onAllProjects, onReviewHandoff });
@@ -354,36 +348,22 @@ export default function WorkspacePage({
           />,
           rail.slot,
         )}
-      {toolPickerOpen && workspaceId && (
-        <WorkspaceToolPicker
-          workspaceId={workspaceId}
-          current={destination}
-          onChoose={navigateProject}
-          onClose={() => setToolPickerOpen(false)}
-        />
-      )}
-
-      {projectDialog && (
-        <Suspense fallback={null}>
-          <WorkspaceProjectDialog
-            onClose={() => setProjectDialog(false)}
-            onCreated={projectCreated}
-          />
-        </Suspense>
-      )}
-      {moveTarget && (
-        <MoveConversationDialog
-          key={moveTarget.id}
-          session={moveTarget}
-          workspaces={workspaces}
-          busy={moving}
-          error={moveError}
-          onMove={(target) => void moveSession(moveTarget, target)}
-          onClose={() => {
-            if (!moving) setMoveTarget(null);
-          }}
-        />
-      )}
+      <WorkspaceDialogs
+        workspaceId={workspaceId}
+        destination={destination}
+        toolPickerOpen={toolPickerOpen}
+        navigateProject={navigateProject}
+        setToolPickerOpen={setToolPickerOpen}
+        projectDialog={projectDialog}
+        setProjectDialog={setProjectDialog}
+        projectCreated={projectCreated}
+        moveTarget={moveTarget}
+        workspaces={workspaces}
+        moving={moving}
+        moveError={moveError}
+        moveSession={moveSession}
+        setMoveTarget={setMoveTarget}
+      />
       <WorkspaceDesk
         key={workspaceId ?? "unfiled"}
         workspaceId={workspaceId}
@@ -439,6 +419,33 @@ export default function WorkspacePage({
         projectRequest={projectRequest}
         resetRequest={resetRequest}
         conversationFirstRequest={conversationFirst}
+        artifacts={
+          artifactsOpen && snapshot
+            ? {
+                id: artifactsId,
+                onCollapse: collapseArtifacts,
+                content: (
+                  <Suspense
+                    fallback={
+                      <p
+                        className="px-4 py-2 text-ui-meta text-ink-muted"
+                        role="status"
+                      >
+                        Loading artifacts…
+                      </p>
+                    }
+                  >
+                    <ConversationArtifacts
+                      snapshot={snapshot}
+                      active={Boolean(active)}
+                      initial={artifactSelection.location}
+                      onClose={collapseArtifacts}
+                    />
+                  </Suspense>
+                ),
+              }
+            : undefined
+        }
         project={
           workspaceId || (harnessEditor && snapshot) ? (
             <>
@@ -553,6 +560,19 @@ export default function WorkspacePage({
                 <Icon name="plus" />
               </IconButton>
             )}
+            <IconButton
+              label="Artifacts"
+              size="sm"
+              tooltipSide="bottom"
+              aria-controls={artifactsOpen ? artifactsId : undefined}
+              aria-expanded={artifactsOpen}
+              disabled={!artifactScope}
+              onClick={() =>
+                artifactsOpen ? collapseArtifacts() : openArtifacts(null)
+              }
+            >
+              <Icon name="folder" />
+            </IconButton>
             <WorkspaceMenu
               label="Conversation menu"
               triggerRef={conversationMenuRef}
@@ -634,162 +654,69 @@ export default function WorkspacePage({
           <WorkspaceConversationView
             assistantName={providerName(runtime)}
             header={null}
+            onOpenFile={openArtifacts}
             dropState={dropState}
             inspectorOpen={Boolean(inspector)}
             inspector={
-              <>
-                <RetainedWorkspaceView
-                  key={`settings-${sessionId}`}
-                  active={inspector === "settings"}
-                >
-                  {snapshot && (
-                    <Suspense
-                      fallback={
-                        <section className="workspace-panel-loading">
-                          Opening assistant settings…
-                        </section>
+              <WorkspaceInspectors
+                inspector={inspector}
+                sessionId={sessionId}
+                snapshot={snapshot}
+                running={Boolean(active) || submitting}
+                contextBusy={contextBusy}
+                runtime={runtime}
+                model={model}
+                effort={effort}
+                outlineEntries={outlineEntries}
+                selectedMessage={selectedMessage}
+                onJump={jumpToMessage}
+                closeInspector={closeInspector}
+                acceptSnapshot={acceptSnapshot}
+                saveCurrentDraft={saveCurrentDraft}
+                setError={setError}
+                onOpenSettings={() => setInspector("settings")}
+                onContextBusy={(value) => {
+                  contextBusyRef.current = value;
+                  setContextBusy(value);
+                }}
+                onEditHarness={() => {
+                  setInspector(null);
+                  setHarnessEditor(true);
+                  setProjectRequest((value) => value + 1);
+                }}
+                onMove={
+                  snapshot
+                    ? () => {
+                        setMoveError(null);
+                        setMoveTarget(snapshot.session);
                       }
-                    >
-                      <WorkspaceResearchPanel
-                        key={snapshot.session.id}
-                        embedded
-                        active={inspector === "settings"}
-                        title="Assistant settings"
-                        snapshot={snapshot}
-                        onSnapshot={acceptSnapshot}
-                        beforeChange={saveCurrentDraft}
-                        initialTab="setup"
-                        allowedTabs={["setup", "recipes"]}
-                        onBusy={(value) => {
-                          contextBusyRef.current = value;
-                          setContextBusy(value);
-                        }}
-                        settingsDisabled={
-                          Boolean(active) || submitting || contextBusy
-                        }
-                        onClose={() => closeInspector()}
-                        onError={setError}
-                        onEditHarness={() => {
-                          setInspector(null);
-                          setHarnessEditor(true);
-                          setProjectRequest((value) => value + 1);
-                        }}
-                        onMove={() => {
-                          setMoveError(null);
-                          setMoveTarget(snapshot.session);
-                        }}
-                      />
-                    </Suspense>
-                  )}
-                </RetainedWorkspaceView>
-                <RetainedWorkspaceView
-                  key={`activity-${sessionId}`}
-                  active={inspector === "activity"}
-                >
-                  <section
-                    className="workspace-simple-inspector"
-                    aria-label="Assistant activity"
-                  >
-                    <div className="workspace-inspector-heading">
-                      <h2>Activity</h2>
-                      <button
-                        type="button"
-                        onClick={() => closeInspector()}
-                        aria-label="Close inspector"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <p role="status">
-                      {active || submitting
-                        ? `${providerName(runtime)} is working…`
-                        : "No response running."}
-                    </p>
-                    {sessionId && (
-                      <Suspense fallback={null}>
-                        <WorkspaceFollowups
-                          key={sessionId}
-                          sessionId={sessionId}
-                          active={Boolean(active) || contextBusy || submitting}
-                          model={model}
-                          effort={effort}
-                          onError={setError}
-                          onDispatch={(value) => {
-                            submittingRef.current = value;
-                            setSubmitting(value);
-                          }}
-                          onRefresh={() => hydrate()}
-                          onBranch={async (id) => {
-                            await loadSessions(workspaceId, undefined, true);
-                            await selectSession(id);
-                          }}
-                        />
-                      </Suspense>
-                    )}
-                    <details className="mt-5">
-                      <summary className="cursor-pointer text-xs">
-                        Recent responses
-                      </summary>
-                      {snapshot?.turns
-                        .slice(-10)
-                        .reverse()
-                        .map((turn) => (
-                          <div key={turn.id} className="workspace-activity-row">
-                            {turnStateLabel(turn)}
-                            <span>{turnTimeLabel(turn.createdAt)}</span>
-                          </div>
-                        ))}
-                    </details>
-                  </section>
-                </RetainedWorkspaceView>
-                {inspector === "outline" ? (
-                  <WorkspaceConversationOutline
-                    embedded
-                    key={sessionId}
-                    entries={outlineEntries}
-                    selectedId={selectedMessage}
-                    onJump={(id) => {
-                      closeInspector(false);
-                      jumpToMessage(id);
-                    }}
-                    onClose={() => closeInspector()}
-                  />
-                ) : inspector === "context" ? (
-                  <WorkspaceContextInspector
-                    sessionId={sessionId}
-                    workspaceName={snapshot?.workspace?.name ?? null}
-                    onClose={() => closeInspector()}
-                    onOpenSettings={() => setInspector("settings")}
-                  />
-                ) : null}
-              </>
+                    : undefined
+                }
+                onDispatch={(value) => {
+                  submittingRef.current = value;
+                  setSubmitting(value);
+                }}
+                onRefresh={() => hydrate()}
+                onBranch={async (id) => {
+                  await loadSessions(workspaceId, undefined, true);
+                  await selectSession(id);
+                }}
+              />
             }
             composerControls={
-              <WorkspaceComposerControls
+              <WorkspaceComposerToolbar
                 models={models}
                 model={model}
                 effort={effort}
+                snapshot={snapshot}
                 disabled={
                   !snapshot || contextBusy || Boolean(active) || submitting
                 }
                 runtime={runtime}
-                loadAccount={
-                  runtime === "codex" ? loadAccountSummary : undefined
-                }
-                loadClaudeUsage={
-                  runtime === "claude" ? loadClaudeUsage : undefined
-                }
-                onRuntimeChange={(next) => {
-                  setRuntime(next);
-                  setModel("");
-                  setEffort("");
-                  saveSelection("", "", next);
-                }}
-                onChange={(nextModel, nextEffort) => {
-                  setModel(nextModel);
-                  setEffort(nextEffort);
-                  saveSelection(nextModel, nextEffort);
-                }}
+                setRuntime={setRuntime}
+                setModel={setModel}
+                setEffort={setEffort}
+                saveSelection={saveSelection}
               />
             }
             composerSetup={
@@ -893,7 +820,7 @@ export default function WorkspacePage({
               </>
             }
             taskCards={
-              tasksEnabled && sessionId && onTasks ? (
+              sessionId && onTasks ? (
                 <Suspense fallback={null}>
                   <WorkspaceTaskCards
                     key={sessionId}

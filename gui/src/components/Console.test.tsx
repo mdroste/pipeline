@@ -508,7 +508,7 @@ describe("Console", () => {
         logs={[
           {
             ...log("LLM request · Claude Code CLI", "info", 3),
-            label: "Orientation",
+            label: "Document bundle preparation",
             request: chosen,
           },
           {
@@ -556,7 +556,7 @@ describe("Console", () => {
     render(
       <Console
         logs={[
-          session(1, "Step: Orientation", claudeCode),
+          session(1, "Step: Document bundle preparation", claudeCode),
           session(2, "Step: Technical [Section 2 · Codex]", codex),
           session(3, "Merge: Technical", claudeCode),
           session(4, "LLM PDF extraction", REQUEST),
@@ -570,7 +570,7 @@ describe("Console", () => {
       screen.getAllByRole("option").map((option) => option.textContent),
     ).toEqual([
       "All sessions (5)",
-      "Orientation · Claude",
+      "Document bundle preparation · Claude",
       "Technical · Section 2 · Codex",
       "Merge · Technical · Claude",
       "LLM PDF extraction · Claude",

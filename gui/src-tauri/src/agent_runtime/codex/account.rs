@@ -1,5 +1,6 @@
 //! Shared account, model and quota operations. No product state or credentials.
 use super::transport::{AppServerClient, RequestError, DEFAULT_REQUEST_TIMEOUT};
+use super::wire::required_string;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -366,21 +367,6 @@ impl From<WireRateLimitBucket> for RateLimitBucket {
             secondary: bucket.secondary.map(Into::into),
         }
     }
-}
-
-fn required_string(value: &Value, path: &[&str], context: &str) -> Result<String, RequestError> {
-    let mut cursor = value;
-    for key in path {
-        cursor = cursor.get(key).ok_or_else(|| {
-            RequestError::unavailable(format!("{context} omitted {}", path.join(".")))
-        })?;
-    }
-    cursor.as_str().map(str::to_string).ok_or_else(|| {
-        RequestError::unavailable(format!(
-            "{context} field {} was not a string",
-            path.join(".")
-        ))
-    })
 }
 
 pub(crate) fn is_safe_auth_url(url: &str) -> bool {

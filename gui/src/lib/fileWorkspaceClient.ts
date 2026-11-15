@@ -17,6 +17,7 @@ export interface FilePreview {
   kind?: FileKind;
   /** Opens a `pipeline-file` URL. Viewers fall back to `base64` without one. */
   streamToken?: string | null;
+  rangeCapture?: boolean;
   /** Compared with `FileAdapter.stat` to notice changes on disk. */
   stamp?: string | null;
   modifiedMs?: number | null;
@@ -90,12 +91,14 @@ export interface DocumentText {
 }
 export interface FileAdapter {
   id: string;
+  artifactSessionId?: string;
   read: (path: string) => Promise<FilePreview>;
   /** Bytes inline, for images embedded in rendered Markdown. */
   readInline?: (path: string) => Promise<FilePreview>;
   save?: (file: FilePreview, text: string) => Promise<string>;
   reveal?: (path: string) => Promise<void>;
   external?: (path: string) => Promise<void>;
+  openCopyWith?: (path: string) => Promise<void>;
   /** Stop serving a stream once its viewer closes. */
   release?: (token: string) => void;
   list?: (directory: string) => Promise<FileListing>;
@@ -128,27 +131,16 @@ export interface FileSearchResult {
   skippedFiles: number;
   truncated: boolean;
 }
+export class ExpiredStream extends Error {
+  constructor() {
+    super("The file view expired. Reload it to continue.");
+  }
+}
 export const streamUrl = (token: string) =>
   convertFileSrc(token, "pipeline-file");
 
-/**
- * A captured PDF for the reader. Its bytes arrive over the file scheme in one
- * read, so the token is released at once and no viewer has to hold it.
- */
-export async function readCapturedPdf(
-  adapter: FileAdapter,
-): Promise<string | Uint8Array> {
-  const file = await adapter.read("");
-  if (file.streamToken) {
-    try {
-      return await fetchRange(streamUrl(file.streamToken), 0, file.bytes);
-    } finally {
-      adapter.release?.(file.streamToken);
-    }
-  }
-  if (!file.base64) throw new Error("PDF unavailable");
-  return file.base64;
-}
+export const releaseFileStream = (token: string) =>
+  void invoke("workbench_file_release", { token }).catch(() => undefined);
 
 /**
  * Bytes from a stream URL. The server may answer a long range in parts, so
@@ -167,6 +159,7 @@ export async function fetchRange(
       headers: { Range: `bytes=${start + filled}-${end - 1}` },
       signal,
     });
+    if (response.status === 410) throw new ExpiredStream();
     if (response.status !== 206 && response.status !== 200)
       throw new Error(
         response.status === 409 || response.status === 404
@@ -205,8 +198,7 @@ export function workspaceFileAdapter(scope: WorkspaceFileScope): FileAdapter {
       invoke<FilePreview>("workbench_file_open", { request: request(path) }),
     readInline: (path) =>
       invoke<FilePreview>("workbench_file_read", { request: request(path) }),
-    release: (token) =>
-      void invoke("workbench_file_release", { token }).catch(() => undefined),
+    release: releaseFileStream,
     ...(!scope.revisionId
       ? {
           save: async (file: FilePreview, content: string) =>
@@ -335,9 +327,8 @@ export function artifactFileAdapter(
         externalPath: content.abs_path,
       };
     },
-    release: (token) =>
-      void invoke("workbench_file_release", { token }).catch(() => undefined),
+    release: releaseFileStream,
     reveal: (path) => invoke("reveal_run_artifact", { runId, relPath: path }),
-    external: (path) => invoke("open_run_artifact", { runId, relPath: path }),
+    external: (path) => artifactClient.open({ runId, relPath: path }),
   };
 }

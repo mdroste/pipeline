@@ -1,4 +1,5 @@
 @import "./ui/dropdowns.css";
+@import "./ui/foundations.css";
 
 @tailwind base;
 @tailwind components;
@@ -44,25 +45,29 @@
   --ui-border: #e5e5e5;
   --ui-border-strong: #d4d4d4;
   --ui-text: #262626;
-  --ui-muted: #737373;
+  --ui-muted: #525252;
   --ui-accent: rgb(var(--color-accent-500));
   --ui-accent-soft: rgb(var(--color-accent-500) / 0.16);
   --ui-inverse: #171717;
   --ui-on-inverse: #ffffff;
   --ui-danger: #b91c1c;
+  --ui-danger-soft: #fef2f2;
+  --ui-success: #047857;
+  --ui-success-soft: #ecfdf5;
+  --ui-running: #1d4ed8;
+  --ui-running-soft: #eff6ff;
   --ui-warning: #92400e;
   --ui-warning-soft: #fffbeb;
   --ui-scrim: rgb(0 0 0 / 0.16);
 
-  /* The page palette: the quieter text, hairlines, and accent of the standard
-     app page (ui/page.css). The accent is green here and gray in dark mode,
-     which keeps green for status. */
-  --ui-page-text: #272b26;
-  --ui-page-line: #e7e5e0;
-  --ui-page-muted: #73766f;
-  --ui-page-soft: #f7f8f4;
-  --ui-page-accent: #344e41;
-  --ui-page-on-accent: #ffffff;
+  /* Compatibility names for page chrome. Home decoration and research
+     content keep their own colors; ordinary primary actions use inverse. */
+  --ui-page-text: var(--ui-text);
+  --ui-page-line: var(--ui-border);
+  --ui-page-muted: var(--ui-muted);
+  --ui-page-soft: var(--ui-sunken);
+  --ui-page-accent: var(--ui-inverse);
+  --ui-page-on-accent: var(--ui-on-inverse);
 
   /* Three radii: controls, floating containers, large containers. */
   --ui-radius-sm: 6px;
@@ -81,31 +86,51 @@
   --ui-text-body: 0.875rem;
   --ui-text-title: 1rem;
   --ui-text-display: 1.25rem;
+  --ui-text-page: 1.5rem;
+
+  /* Interface spacing only; never use these for document or virtual row units. */
+  --ui-space-1: 0.25rem;
+  --ui-space-2: 0.5rem;
+  --ui-space-3: 0.75rem;
+  --ui-space-4: 1rem;
+  --ui-space-6: 1.5rem;
+  --ui-space-8: 2rem;
+  --ui-page-gutter: var(--ui-space-6);
+  --ui-section-gap: var(--ui-space-6);
+  --ui-row-padding: var(--ui-space-3);
+  --ui-control-height: 2.25rem;
+  --ui-control-height-sm: 1.875rem;
+  --ui-focus: var(--ui-inverse);
 }
 
 .dark {
-  --ui-surface: #0a0a0a;
-  --ui-raised: #1c1c1c;
-  --ui-sunken: #202020;
-  --ui-border: #333333;
+  --ui-surface: #181818;
+  --ui-raised: #292929;
+  --ui-sunken: #212121;
+  --ui-border: #323232;
   --ui-border-strong: #454545;
-  --ui-text: #e5e5e5;
+  --ui-text: #d8d8d8;
   --ui-muted: #a3a3a3;
   --ui-inverse: #f5f5f5;
   --ui-on-inverse: #171717;
   --ui-danger: #f87171;
+  --ui-danger-soft: rgb(127 29 29 / 0.25);
+  --ui-success: #6ee7b7;
+  --ui-success-soft: rgb(6 78 59 / 0.3);
+  --ui-running: #d4d4d4;
+  --ui-running-soft: #262626;
   --ui-warning: #fcd34d;
   --ui-warning-soft: rgb(120 53 15 / 0.25);
   --ui-scrim: rgb(0 0 0 / 0.5);
-  --ui-page-text: #e5e5e5;
-  --ui-page-line: #333333;
-  --ui-page-muted: #a3a3a3;
-  --ui-page-soft: #202020;
-  --ui-page-accent: #d4d4d4;
-  --ui-page-on-accent: #171717;
   --ui-shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
   --ui-shadow-2: 0 4px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
   --ui-shadow-3: 0 12px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
+}
+
+[data-density="compact"] {
+  --ui-section-gap: var(--ui-space-4);
+  --ui-row-padding: var(--ui-space-2);
+  --ui-control-height: 2rem;
 }
 
 /* A theme change crossfades the whole window as one picture (useAppTheme), so

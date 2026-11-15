@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { RunQueueSnapshot } from "../../lib/types";
+import type { RunQueueSnapshot } from "../../lib/reviewTypes";
 
 /** Reloads history whenever the review queue moves on, so a review appears once
  *  its run exists and its row changes when it ends. Matches queue entries by

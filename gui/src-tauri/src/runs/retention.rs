@@ -37,18 +37,28 @@ pub(super) fn apply_retention_holds(state: &mut [(String, bool, u64)]) {
 /// Trash each candidate unless a hold arrived after the plan was made. The
 /// check and the move share the lock, so a re-run that takes its hold first
 /// keeps its parent, and one that comes later finds the run gone.
-pub(super) fn trash_unheld(
+pub(crate) fn trash_unheld(
     candidates: Vec<String>,
     delete: impl Fn(&str) -> Result<(), String>,
 ) -> usize {
     let mut removed = 0usize;
     for run_id in candidates {
-        let holds = retention_holds();
-        if !holds.contains(&run_id) && delete(&run_id).is_ok() {
+        if with_unheld_run(&run_id, || delete(&run_id)).is_ok() {
             removed += 1;
         }
     }
     removed
+}
+
+pub(super) fn with_unheld_run<T>(
+    id: &str,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let holds = retention_holds();
+    if holds.iter().any(|held| held == id) {
+        return Err("A queued or running Review still needs this run. Cancel or finish it before moving the run to Trash.".into());
+    }
+    action()
 }
 
 /// Count of runs on disk and total bytes they occupy (best-effort walk).
@@ -321,7 +331,7 @@ pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, Stri
     }
     let sized = sized_runs_for_retention()?;
     let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes)?;
-    Ok(trash_unheld(plan.candidates, delete_run))
+    Ok(trash_unheld(plan.candidates, super::trash::move_to_trash))
 }
 
 /// Apply a manually confirmed purge only when the current deletion plan still

@@ -1,6 +1,9 @@
 import { moduleName, moduleDescription } from "./harness-editor/harnessCopy";
 import { useState } from "react";
-import type { EffectiveHarness, HarnessCatalog } from "../lib/workbenchTypes";
+import type {
+  EffectiveHarness,
+  HarnessCatalog,
+} from "../lib/workbench/harnessTypes";
 
 /** Quick edits create an explicit copy, so another conversation's preset is safe. */
 export default function WorkspaceAssistantPresetForm({

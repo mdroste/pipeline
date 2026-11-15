@@ -157,6 +157,7 @@ it("keeps the review template editable and validates the edited chain", async ()
     target: { value: "Minimum wage employment effects" },
   });
   // Structural edit: remove the final deliver step; the chain stays valid.
+  await user.click(screen.getByRole("tab", { name: "Steps & limits" }));
   await user.click(
     screen.getByRole("button", { name: /Remove Return the reviewed paper/ }),
   );

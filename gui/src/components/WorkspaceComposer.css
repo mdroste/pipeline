@@ -3,16 +3,16 @@
   flex-shrink: 0;
   max-height: 60%;
   overflow-y: auto;
-  padding: 0.5rem 0.875rem 0.75rem;
+  padding: var(--ui-space-2) var(--ui-space-4) var(--ui-space-3);
   background: var(--ui-surface);
 }
 .workspace-composer {
   position: relative;
   padding: 0.5rem;
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--ui-border-strong);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-2);
+  box-shadow: var(--ui-shadow-1);
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
@@ -21,7 +21,7 @@
   border-color: var(--ui-accent);
   box-shadow:
     0 0 0 3px var(--ui-accent-soft),
-    var(--ui-shadow-2);
+    var(--ui-shadow-1);
 }
 .workspace-composer[data-drop="over"] {
   border-color: var(--ui-accent);
@@ -72,7 +72,7 @@
 .workspace-composer-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--ui-space-2);
 }
 .workspace-composer-leading {
   display: flex;
@@ -88,9 +88,9 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 62.4375rem;
+  width: var(--ui-control-height);
+  height: var(--ui-control-height);
+  border-radius: 50%;
   background: var(--ui-inverse);
   color: var(--ui-on-inverse);
   transition: opacity 0.15s;
@@ -109,8 +109,8 @@
   min-width: 0;
   align-items: center;
   gap: 0.25rem;
-  height: 2rem;
-  padding: 0 0.5rem;
+  height: var(--ui-control-height-sm);
+  padding: 0 var(--ui-space-2);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   font-size: var(--ui-text-label);
@@ -149,7 +149,7 @@
   flex: 0 1 auto;
   min-width: 0;
   align-items: center;
-  height: 1.75rem;
+  height: var(--ui-control-height-sm);
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   background: var(--ui-sunken);
@@ -178,7 +178,7 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
+  width: var(--ui-control-height-sm);
   height: 100%;
   border-radius: inherit;
   color: var(--ui-muted);
@@ -193,7 +193,7 @@
 }
 .workspace-source-more {
   flex-shrink: 0;
-  height: 1.75rem;
+  height: var(--ui-control-height-sm);
   padding: 0 0.5rem;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);

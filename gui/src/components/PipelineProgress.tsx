@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { appClient } from "../lib/appClient";
 import type {
   PipelineState,
   PassStatus,
@@ -34,7 +34,7 @@ function fmtElapsed(ms: number): string {
 
 const BASE_STAGES = [
   { key: "extracting", label: "Creating document bundle" },
-  { key: "orienting", label: "Creating orientation map" },
+  { key: "orienting", label: "Identifying content" },
   { key: "dispatching", label: "Reviewers working together" },
   { key: "merging", label: "Merge cross-agent reports" },
   { key: "synthesizing", label: "Next step" },
@@ -107,7 +107,7 @@ function historyPlan(history: RuntimeStage[]): ExecutionPlanStage[] {
       entry.kind === "extracting"
         ? "Creating document bundle"
         : entry.kind === "orienting"
-          ? "Creating orientation map"
+          ? "Identifying content"
           : entry.kind === "dispatching"
             ? "Parallel agent wave"
             : entry.kind === "merging"
@@ -189,8 +189,7 @@ function routedAdaptiveSpecialists(routing: ReviewRoutingSummary): Array<{
 }
 
 function processingLabel(stage: DisplayStage): string {
-  if (stage.kind === "orienting")
-    return stage.label || "Creating orientation map";
+  if (stage.kind === "orienting") return stage.label || "Identifying content";
   if (/source.?tree|inventory/i.test(stage.label))
     return "Creating source-tree inventory";
   if (/workflow context|prepare run/i.test(stage.label))
@@ -248,7 +247,9 @@ function StageMarker({
     "relative z-[1] grid h-6 w-6 flex-none place-items-center rounded-full text-[0.75rem] font-semibold tabular-nums";
   if (status === "done") {
     return (
-      <span className={`${base} bg-green-600 text-white`}>
+      <span
+        className={`${base} bg-[var(--ui-success-soft)] text-[var(--ui-success)]`}
+      >
         <svg
           className="h-3 w-3"
           fill="none"
@@ -267,7 +268,7 @@ function StageMarker({
   }
   if (status === "failed") {
     return (
-      <span className={`${base} bg-red-600 text-white`}>
+      <span className={`${base} bg-[var(--ui-danger-soft)] text-danger`}>
         <svg
           className="h-3 w-3"
           fill="none"
@@ -297,7 +298,7 @@ function StageMarker({
     // The halo sits outside the marker so it pulses around it, not over it.
     return (
       <span className="relative z-[1] grid h-6 w-6 flex-none place-items-center">
-        <span className="absolute -inset-1 animate-pulse rounded-full bg-gray-400/40 dark:bg-gray-500/40" />
+        <span className="absolute -inset-1 rounded-full border border-line-strong" />
         <span className={`${base} bg-inverse text-on-inverse`}>
           {number ?? <span className="h-2 w-2 rounded-full bg-current" />}
         </span>
@@ -808,10 +809,12 @@ function PassMeta({
         <button
           type="button"
           onClick={() =>
-            invoke("cancel_pass", {
-              passKey: subitem.passKey,
-              runKey: runKey ?? null,
-            }).catch(() => {})
+            appClient
+              .cancelPass({
+                passKey: subitem.passKey,
+                runKey: runKey ?? null,
+              })
+              .catch(() => {})
           }
           aria-label={`Cancel ${subitem.label}`}
           className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"

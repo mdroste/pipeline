@@ -4,12 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ModelCatalog,
-  PipelineConfig,
   RosterEntry,
   RunModelOverrides,
-  Settings,
-  StepConfig,
-} from "../lib/types";
+} from "../lib/reviewModelTypes";
+import type { PipelineConfig, StepConfig } from "../lib/workflowTypes";
+import type { Settings } from "../lib/settingsTypes";
 import RunModelChoice from "./RunModelChoice";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -74,7 +73,7 @@ function step(id: string, patch: Partial<StepConfig> = {}): StepConfig {
 function entry(patch: Partial<RosterEntry>): RosterEntry {
   return {
     stage: "orientation",
-    label: "Orientation map",
+    label: "Document bundle preparation",
     step_ids: [],
     step_labels: [],
     provider: "codex",
@@ -203,7 +202,7 @@ describe("RunModelChoice", () => {
       name: "Calls on other models",
     });
     expect(note).toHaveTextContent(
-      "Orientation map → ChatGPT · GPT-5.6 Sol (ChatGPT's choice) · ChatGPT default thinking (Settings exception)",
+      "Document bundle preparation → ChatGPT · GPT-5.6 Sol (ChatGPT's choice) · ChatGPT default thinking (Settings exception)",
     );
 
     await user.click(

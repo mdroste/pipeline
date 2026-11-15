@@ -9,7 +9,7 @@ import type {
   HarnessPreset,
   InstructionSection,
   ModuleAvailability,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/harnessTypes";
 
 export type ModuleKind = HarnessModule["kind"];
 
@@ -248,7 +248,6 @@ export type AccessKey =
   | "fileMode"
   | "commandNetwork"
   | "commandDomains"
-  | "browser"
   | "contextBudgetBytes"
   | "webSearch";
 
@@ -309,14 +308,6 @@ export const ACCESS_ROWS: AccessRow[] = [
       "With command internet access on: list domains separated by commas (for example, pypi.org, *.pythonhosted.org). ChatGPT and Claude Code treat blank as public internet. API and local server conversations need at least one site, or commands won't run.",
     builtIn: "",
     kind: "text",
-  },
-  {
-    key: "browser",
-    label: "Browser interaction",
-    description:
-      "Use a visible browser with a separate profile. Pipeline downloads the browser when needed; sign in directly in its window.",
-    builtIn: false,
-    kind: "boolean",
   },
   {
     key: "contextBudgetBytes",
@@ -395,8 +386,6 @@ export function effectiveAccessValue(
       return effective.commandNetwork;
     case "commandDomains":
       return effective.capabilities?.commandDomains.join(", ") ?? "";
-    case "browser":
-      return effective.capabilities?.browser ?? false;
     case "contextBudgetBytes":
       return effective.contextBudgetBytes;
     case "webSearch":

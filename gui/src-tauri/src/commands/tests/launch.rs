@@ -309,7 +309,7 @@ fn native_text_documents_pass_review_handoff_validation() {
     let temp = tempfile::tempdir().unwrap();
     let mut config = empty_test_config();
     config.extraction.input_mode = "document".into();
-    for extension in ["md", "markdown", "txt"] {
+    for extension in ["md", "markdown", "txt", "pptx", "tex"] {
         let path = temp.path().join(format!("generated.{extension}"));
         std::fs::write(&path, "# Generated draft\n\nEvidence.").unwrap();
         validate_primary_input_selection(&config, path.to_str(), Some("document")).unwrap();

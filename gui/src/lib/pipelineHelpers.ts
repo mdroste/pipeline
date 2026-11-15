@@ -2,7 +2,7 @@
 // Kept separate from PipelinePage.tsx so the rules can be unit-tested or reused
 // by future UI surfaces (e.g. a step-test runner) without lifting the whole page.
 
-import type { InputSlot, PipelineConfig, StepConfig } from "./types";
+import type { InputSlot, PipelineConfig, StepConfig } from "./workflowTypes";
 
 // ── Placeholder catalog ─────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ export type PromptContext =
 const PARALLEL_PLACEHOLDERS: PlaceholderEntry[] = [
   {
     token: "{orientation}",
-    description: "Survey / orientation map reference block",
+    description: "Survey / document overview reference block",
   },
   {
     token: "{input_path}",
@@ -67,7 +67,10 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
       ];
     case "sequential": {
       const base: PlaceholderEntry[] = [
-        { token: "{orientation}", description: "Path to orientation map JSON" },
+        {
+          token: "{orientation}",
+          description: "Path to document overview JSON",
+        },
         {
           token: "{prior_outputs}",
           description: "Selected upstream reports concatenated",
@@ -150,7 +153,7 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
 export function inputSlotExtensions(slot: InputSlot): string[] {
   return slot.extensions?.length
     ? slot.extensions
-    : ["pdf", "tex", "docx", "md", "markdown", "txt"];
+    : ["pdf", "tex", "docx", "pptx", "md", "markdown", "txt"];
 }
 
 // ── Linting ─────────────────────────────────────────────────────────
@@ -333,7 +336,7 @@ export function lintCrossStepReferences(
       ) {
         warnings.push({
           stepId: step.id,
-          message: `The run condition uses '${condition.pointer}', which is missing from the orientation output format.`,
+          message: `The run condition uses '${condition.pointer}', which is missing from the document overview format.`,
           field: "condition",
         });
       }

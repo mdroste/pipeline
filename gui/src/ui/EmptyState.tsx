@@ -19,7 +19,7 @@ export default function EmptyState({
 }) {
   if (compact) {
     return (
-      <p className="px-1 py-1 text-xs leading-5 text-gray-400 dark:text-gray-500">
+      <p className="px-1 py-1 text-ui-meta leading-5 text-ink-muted">
         {title}
         {description ? ` ${description}` : ""}
       </p>

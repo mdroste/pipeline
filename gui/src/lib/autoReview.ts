@@ -1,4 +1,4 @@
-import type { PipelineConfig } from "./types";
+import type { PipelineConfig } from "./workflowTypes";
 
 export const AUTO_REVIEW_CONTRACT = "auto-review-v2";
 /** Default built-in profile, and the fallback after a deletion. */

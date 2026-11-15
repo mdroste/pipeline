@@ -1,6 +1,7 @@
-//! Workspace-specific native configuration.
+//! Workspace-specific native configuration and launcher grants shared with the probe.
 use std::path::Path;
-fn toml_basic_string(value: &str) -> String {
+
+pub(super) fn toml_basic_string(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len() + 2);
     encoded.push('"');
     for character in value.chars() {
@@ -18,6 +19,26 @@ fn toml_basic_string(value: &str) -> String {
     encoded
 }
 
+pub(super) fn launcher_read_grants(launcher: &Path) -> Result<String, String> {
+    let launcher = launcher
+        .to_str()
+        .ok_or("Codex launcher path is not valid UTF-8")?;
+    let canonical_launcher = std::fs::canonicalize(launcher)
+        .map_err(|error| format!("Failed to resolve Codex launcher: {error}"))?;
+    let canonical_launcher = canonical_launcher
+        .to_str()
+        .ok_or("Resolved Codex launcher path is not valid UTF-8")?;
+    Ok(if launcher == canonical_launcher {
+        format!("{} = \"read\"\n", toml_basic_string(launcher))
+    } else {
+        format!(
+            "{} = \"read\"\n{} = \"read\"\n",
+            toml_basic_string(launcher),
+            toml_basic_string(canonical_launcher),
+        )
+    })
+}
+
 pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result<(), String> {
     std::fs::create_dir_all(codex_home)
         .map_err(|error| format!("Failed to create Workbench Codex home: {error}"))?;
@@ -29,23 +50,7 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
     }
     let path = codex_home.join("config.toml");
     let pending = codex_home.join("config.toml.pending");
-    let launcher = launcher
-        .to_str()
-        .ok_or("Codex launcher path is not valid UTF-8")?;
-    let canonical_launcher = std::fs::canonicalize(launcher)
-        .map_err(|error| format!("Failed to resolve Codex launcher: {error}"))?;
-    let canonical_launcher = canonical_launcher
-        .to_str()
-        .ok_or("Resolved Codex launcher path is not valid UTF-8")?;
-    let launcher_permissions = if launcher == canonical_launcher {
-        format!("{} = \"read\"\n", toml_basic_string(launcher))
-    } else {
-        format!(
-            "{} = \"read\"\n{} = \"read\"\n",
-            toml_basic_string(launcher),
-            toml_basic_string(canonical_launcher),
-        )
-    };
+    let launcher_permissions = launcher_read_grants(launcher)?;
     let mut config = format!(
         "cli_auth_credentials_store = \"ephemeral\"\n\
          default_permissions = \"workbench-inspect\"\n\
@@ -112,6 +117,28 @@ mod tests {
     };
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt as _, BufReader};
+
+    #[test]
+    fn launcher_grants_encode_the_selected_path_and_its_canonical_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("Codex é");
+        std::fs::write(&target, "").unwrap();
+        let alias = dir.path().join("Codex \"alias\"");
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        let canonical = std::fs::canonicalize(&target).unwrap();
+        assert_eq!(
+            super::launcher_read_grants(&alias).unwrap(),
+            format!(
+                "\"{}/Codex \\\"alias\\\"\" = \"read\"\n\"{}\" = \"read\"\n",
+                dir.path().display(),
+                canonical.display(),
+            ),
+        );
+        assert_eq!(
+            super::toml_basic_string("a\\b\n\r\t\u{1}"),
+            "\"a\\\\b\\n\\r\\t\\u0001\""
+        );
+    }
 
     fn process_is_running(pid: u32) -> bool {
         if pid == 0 || pid > i32::MAX as u32 {

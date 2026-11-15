@@ -296,3 +296,39 @@ fn csv_errors_name_the_row_and_the_encoding() {
     let wide = csv::window(b"\xff\xfea\0", "csv", 0).unwrap_err();
     assert!(wide.message.contains("UTF-16"), "{}", wide.message);
 }
+
+#[test]
+fn saved_connector_provenance_survives_dataset_round_trip() {
+    let mut acquisition =
+        local("workspace", std::path::Path::new("fixture.csv"), "fixture").acquisition;
+    acquisition.provider = "world_bank".into();
+    acquisition.retrieved_at = "2026-10-28T00:00:00Z".into();
+    let mut saved = serde_json::json!({
+        "schemaVersion": 1,
+        "artifactId": "data_fixture",
+        "contentHash": "ab".repeat(32),
+        "externalReference": null,
+        "rows": 2,
+        "columns": [],
+        "acquisition": acquisition,
+        "diagnosticsCoverage": "exhaustive captured rows",
+        "delimiter": "csv",
+        "limitations": [],
+        "connector": {
+            "connector": "world_bank",
+            "query": {"indicator": "fixture"},
+            "requestUrls": ["https://api.worldbank.org/v2/fixture"],
+            "lastUpdated": null,
+            "licence": "CC BY 4.0",
+            "notice": "Fixture notice",
+            "citation": "Fixture citation",
+            "termsUrl": "https://www.worldbank.org/terms",
+            "termsReviewed": "2026-10-28"
+        }
+    });
+    let dataset: DatasetVersion = serde_json::from_value(saved.clone()).unwrap();
+    assert_eq!(serde_json::to_value(dataset).unwrap(), saved);
+    saved.as_object_mut().unwrap().remove("connector");
+    let dataset: DatasetVersion = serde_json::from_value(saved.clone()).unwrap();
+    assert_eq!(serde_json::to_value(dataset).unwrap(), saved);
+}

@@ -15,9 +15,9 @@ import { researchClient } from "../lib/workbench/researchClient";
 import { projectClient } from "../lib/projectClient";
 import {
   briefNotes,
-  isThinProject,
   projectSessions,
-} from "../lib/projectOverview";
+} from "../lib/project-overview/conversations";
+import { isThinProject } from "../lib/project-overview/manuscript";
 import {
   button,
   folderName,

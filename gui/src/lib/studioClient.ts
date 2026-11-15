@@ -2,12 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ProjectRecord } from "./projectClient";
 import type {
   ExecutionProfile,
-  PaperWithRevision,
   ResearchExecution,
   ResearchResultV1,
-  ReviewHandoff,
-} from "./workbenchTypes";
-import type { Finding } from "./types";
+} from "./workbench/executionTypes";
+import type { PaperWithRevision } from "./workbench/researchTypes";
+import type { ReviewHandoff } from "./workbench/releaseTypes";
+import type { Finding } from "./reviewTypes";
 export type StudioKind =
   | "build"
   | "response"
@@ -344,6 +344,8 @@ export type StudioAction =
       afterLine: number | null;
     };
 export const studioClient = {
+  exportFile: (args: { path: string; content: string }) =>
+    invoke<void>("workbench_studio_export_file", args),
   mutate: async <T>(workspaceId: string, action: StudioAction): Promise<T> => {
     const response = await invoke<T | { outcome: string }>(
       "workbench_studio_mutate",

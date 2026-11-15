@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Settings } from "../../lib/types";
+import type { Settings } from "../../lib/settingsTypes";
 import { Field, inputClass } from "./controls";
 import { useSettingsOperation } from "./SaveState";
 

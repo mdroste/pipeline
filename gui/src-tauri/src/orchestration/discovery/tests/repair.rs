@@ -11,6 +11,7 @@ fn reply(c: &Coordinator, p: &Portfolio, text: &str) -> TaskRun {
         .receipts
         .entry("action".into())
         .or_insert_with(|| crate::orchestration::state::Receipt {
+            action_kind: None,
             sequence: 1,
             address: "action".into(),
             step_id: "action".into(),
@@ -151,4 +152,36 @@ async fn a_failure_to_save_costs_no_repair_and_retry_reads_the_same_reply_again(
     assert_eq!(p.papers[0].rounds.len(), 1, "{}", p.run.reason);
     assert_eq!(p.run.repairs, 0);
     assert_ne!(p.run.active_child.as_ref(), Some(&child.id));
+}
+
+#[tokio::test]
+async fn retry_adopts_a_journaled_child_without_reserving_another_action() {
+    let _turn = crate::orchestration::tests::exclusive_turn_state().await;
+    let temp = tempfile::tempdir().unwrap();
+    let c = coordinator(&temp);
+    let (w, mut p, mut child, _) = author_turn(&c, crate::workbench::api::NAMESPACE);
+    first_turn_ended(&c, &w, &mut child);
+    let op = child.progress.receipts["action"].operation.clone();
+    child.progress.receipts.get_mut("action").unwrap().state = "unknown".into();
+    child.state = "attention".into();
+    c.store
+        .write(&mut child, "recovery", "Interrupted")
+        .unwrap();
+    let result = json!({"state":"completed","finalText":qualification::response(&p).to_string()});
+    crate::orchestration::adapters::atomic_json(
+        &c.store.root.join("actions").join(&op).join("result.json"),
+        &result,
+    )
+    .unwrap();
+    p.run.state = "attention".into();
+    storage::save(&c.store, &mut p, "attention", None).unwrap();
+    let reserved = p.run.actions_reserved;
+    assert!(commands::retry(&c, &mut p).await.unwrap().is_none());
+    save(&c, &mut p, "retry", None).await.unwrap();
+    advance(&c, &mut p).await.unwrap();
+    let recovered = c.store.get(&child.id).unwrap();
+    assert_eq!(recovered.progress.receipts["action"].operation, op);
+    assert_eq!(recovered.progress.receipts["action"].state, "completed");
+    assert_eq!(recovered.progress.outputs["action"], result);
+    assert_eq!(p.run.actions_reserved, reserved);
 }

@@ -12,7 +12,7 @@ import type {
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
-} from "../../lib/workbenchTypes";
+} from "../../lib/workbench/harnessTypes";
 import HarnessInstructionsEditor from "./HarnessInstructionsEditor";
 import HarnessModulesEditor from "./HarnessModulesEditor";
 import {

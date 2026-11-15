@@ -5,7 +5,7 @@
 import { computeWaves } from "./pipelineHelpers";
 import { adaptiveAgentCountLabel, type AdaptiveAgentRange } from "./autoReview";
 import { PROVIDER_LABELS, type Provider } from "./providers";
-import type { MergeConfig, StepConfig } from "./types";
+import type { MergeConfig, StepConfig } from "./workflowTypes";
 
 /** A selectable overview node: a step id or one of the pseudo-stages. */
 export type WaveSelection =
@@ -75,7 +75,7 @@ export function preparationKind(inputMode?: string): PreparationKind {
 export function preparationTitle(kind: PreparationKind): string {
   if (kind === "source_tree") return "Prepare source-tree inventory";
   if (kind === "context") return "Prepare review context";
-  return "Prepare document bundle";
+  return "Document bundle preparation";
 }
 
 export function agentName(agent: string): string {
@@ -164,10 +164,14 @@ export function buildOverview({
         adaptiveReview
           ? systemNode(
               "orientation",
-              "Orient + classify",
+              "Choose reviewers",
               "Map the paper, choose specialists",
             )
-          : systemNode("orientation", "Orient", "Shared map of the paper"),
+          : systemNode(
+              "orientation",
+              "Identify content",
+              "Shared map of the paper",
+            ),
       ],
     },
   ];
@@ -197,7 +201,7 @@ export function buildOverview({
           ...systemNode(
             "auto_adaptive_agents",
             "Adaptive agents",
-            `${adaptiveLabel} auto-selected after orientation`,
+            `${adaptiveLabel} selected for this document`,
           ),
           adaptive: adaptiveLabel,
         });

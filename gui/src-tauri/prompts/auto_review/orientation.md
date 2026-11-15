@@ -1,6 +1,6 @@
-Build a structured orientation map and a bounded review plan for this academic paper. Multiple independent reviewers will use this object. Your routing choices determine which specialist reviewers the host application assembles for this run, so classify the paper from its actual claims, evidence, and methods rather than keywords, author affiliations, or departmental labels.
+Build a document overview and a bounded review plan for this academic paper. Multiple independent reviewers will use this object. Your routing choices determine which specialist reviewers the host application assembles for this run, so classify the paper from its actual claims, evidence, and methods rather than keywords, author affiliations, or departmental labels.
 
-Populate the supplied orientation schema from the paper itself. The schema defines the inventory fields, routing fields, allowed paper forms, catalog-backed specialist IDs, document genres, and panel-size bounds.
+Populate the supplied response schema from the paper itself. The schema defines the inventory fields, routing fields, allowed paper forms, catalog-backed specialist IDs, document genres, and panel-size bounds.
 
 SUBJECT SPECIALIST CATALOG
 
@@ -32,13 +32,12 @@ Routing rules:
 8. For sensitive or dual-use work, classify at a high level from the stated discipline and evidence. Do not reproduce, extend, or infer operationally harmful procedures in routing notes.
 9. If classification is genuinely ambiguous, record the ambiguity and choose the smallest set covering it. `selection_notes` must contain exactly one paper-specific reason for every selected subject and method ID, and no unselected IDs; reviewers see these notes as pointers, not established facts.
 
-Inventory rules:
+Document preparation:
 
-- List every proposition, theorem, lemma, corollary, definition, and explicit assumption in `formal_results`.
-- List every explicitly defined symbol in `notation`; do not invent definitions.
+- The host supplies observed sections, results, exhibits, and extraction notes separately. Do not recreate inventory fields omitted from the response schema. Empty observed inventories do not establish that the document lacks those elements.
 - Record the paper's own contribution claim in `stated_contribution`.
-- Flag garbled or incomplete extraction rather than treating it as an error in the paper.
-- If the paper contains more entries than an inventory array's schema bound allows, keep the entries most relevant to the main claims and record the overflow in `extraction_quality_notes`.
+- Use the prefetched routing cards as candidates. Search the reviewer registry when a central subject or method is missing; batch independent lookups.
+- Request supporting passages when a missing detail could change the selected expertise. Flag unresolved extraction problems rather than treating them as errors in the paper.
 
 <paper>
 {paper_text}

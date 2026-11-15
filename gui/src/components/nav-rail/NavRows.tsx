@@ -13,6 +13,7 @@ export function NavRow({
   onClick,
   suffix,
   title,
+  expanded,
 }: {
   icon: IconName;
   label: string;
@@ -22,12 +23,14 @@ export function NavRow({
   onClick: () => void;
   suffix?: ReactNode;
   title?: string;
+  expanded?: boolean;
 }) {
   return (
     <button
       type="button"
       className="nav-row"
       aria-current={current ? "page" : undefined}
+      aria-expanded={expanded}
       data-active={active || undefined}
       disabled={disabled}
       onClick={onClick}
@@ -40,32 +43,58 @@ export function NavRow({
   );
 }
 
-/** A destination that also holds children. The row opens the destination;
- *  the chevron only shows or hides the children. */
+/** A group uses one disclosure button unless its row opens a destination. */
 export function NavGroup({
   label,
   open,
   onToggle,
+  onOpenPage,
+  suffix,
   children,
   ...row
-}: Parameters<typeof NavRow>[0] & {
+}: Omit<Parameters<typeof NavRow>[0], "onClick" | "expanded"> & {
   open: boolean;
   onToggle: () => void;
+  onOpenPage?: () => void;
   children: ReactNode;
 }) {
+  const chevron = <Icon name="chevron-down" className="h-3.5 w-3.5" />;
   return (
     <div className="nav-group">
-      <NavRow label={label} {...row} />
-      <button
-        type="button"
-        className="nav-chevron"
-        data-open={open || undefined}
-        aria-expanded={open}
-        aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
-        onClick={onToggle}
-      >
-        <Icon name="chevron-down" className="h-3.5 w-3.5" />
-      </button>
+      <NavRow
+        label={label}
+        {...row}
+        onClick={onOpenPage ?? onToggle}
+        expanded={onOpenPage ? undefined : open}
+        suffix={
+          onOpenPage ? (
+            suffix
+          ) : (
+            <>
+              {suffix}
+              <span
+                className="nav-chevron pointer-events-none"
+                data-open={open || undefined}
+                aria-hidden="true"
+              >
+                {chevron}
+              </span>
+            </>
+          )
+        }
+      />
+      {onOpenPage && (
+        <button
+          type="button"
+          className="nav-chevron"
+          data-open={open || undefined}
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+          onClick={onToggle}
+        >
+          {chevron}
+        </button>
+      )}
       {open && (
         <div className="nav-children" role="group" aria-label={label}>
           {children}

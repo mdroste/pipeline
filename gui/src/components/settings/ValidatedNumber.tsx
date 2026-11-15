@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useSettingsOperation } from "./SaveState";
 
 /** Keep incomplete input local. Only a committed, valid number reaches autosave. */
@@ -19,6 +19,7 @@ export default function ValidatedNumber({
 }) {
   const [draft, setDraft] = useState(String(value));
   const [error, setError] = useState("");
+  const errorId = useId();
   useEffect(() => {
     setDraft(String(value));
   }, [value]);
@@ -47,6 +48,7 @@ export default function ValidatedNumber({
       <input
         aria-label={label}
         aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
         type="number"
         min={min}
         max={max}
@@ -64,10 +66,10 @@ export default function ValidatedNumber({
             setError("");
           }
         }}
-        className="settings-number"
+        className="ui-input settings-number"
       />
       {error && (
-        <p role="alert" className="settings-error">
+        <p id={errorId} role="alert" className="settings-error">
           {error}
         </p>
       )}

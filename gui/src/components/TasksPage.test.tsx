@@ -59,10 +59,14 @@ beforeEach(() => {
   mocks.invoke.mockImplementation(
     async (command: string, args: Record<string, unknown> = {}) => {
       switch (command) {
-        case "task_list":
+        case "task_storage_issues":
+        case "automation_list":
         case "task_schedules":
         case "task_saved_chains":
         case "task_events":
+        case "mission_list":
+        case "mission_methods":
+        case "discovery_list":
           return [];
         case "task_background":
           return false;
@@ -90,10 +94,11 @@ beforeEach(() => {
 it("still lists automations when the saved run has been removed", async () => {
   const implementation = mocks.invoke.getMockImplementation()!;
   mocks.invoke.mockImplementation((command, args) => {
+    if (command === "task_storage_issues") return Promise.resolve([]);
     if (command === "task_get")
       return Promise.reject(new Error("Query returned no rows"));
-    if (command === "task_list")
-      return Promise.resolve([{ ...run, state: "running" }]);
+    if (command === "automation_list")
+      return Promise.resolve([{ ...run, kind: "task", state: "running" }]);
     return implementation(command, args);
   });
   render(<TasksPage initialTaskId="removed" />);
@@ -164,7 +169,7 @@ it("surfaces preparation failures without launching or clearing the request", as
 });
 it("keeps recurring schedules separate from active occurrences", async () => {
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
   await screen.findByText("Make time for recurring work.");
   expect(screen.getByRole("tab", { name: "Scheduled" })).toHaveAttribute(
@@ -175,7 +180,7 @@ it("keeps recurring schedules separate from active occurrences", async () => {
 });
 it("handles task errors emitted by the native coordinator", async () => {
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   act(() =>
     mocks.listeners.get("tasks:error")?.({
       payload: "Another instance owns task execution",
@@ -271,7 +276,7 @@ it("inspects the retained operation for a prior attempt after retry", async () =
 it("roves tabs without loading until activation and associates every panel", async () => {
   const user = (await import("@testing-library/user-event")).default.setup();
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   const active = screen.getByRole("tab", { name: "Active" });
   const scheduled = screen.getByRole("tab", { name: "Scheduled" });
   const calls = mocks.invoke.mock.calls.length;
@@ -289,7 +294,7 @@ it("roves tabs without loading until activation and associates every panel", asy
     scheduled.getAttribute("aria-controls"),
   );
   await user.keyboard("{End}");
-  expect(screen.getByRole("tab", { name: "Research" })).toHaveFocus();
+  expect(screen.getByRole("tab", { name: "History" })).toHaveFocus();
   await user.keyboard("{Home}");
   expect(active).toHaveFocus();
   for (const tab of screen.getAllByRole("tab"))
@@ -346,6 +351,7 @@ it("reloads repeated task links and reports unsaved builder edits", async () => 
 
 it("asks before an in-page action discards an unsaved automation draft", async () => {
   const summary = {
+    kind: "task",
     id: "test-run",
     name: "Workspace follow-up",
     state: "draft",
@@ -354,7 +360,7 @@ it("asks before an in-page action discards an unsaved automation draft", async (
   };
   const implementation = mocks.invoke.getMockImplementation()!;
   mocks.invoke.mockImplementation((command, ...args) =>
-    command === "task_list"
+    command === "automation_list"
       ? Promise.resolve([summary])
       : implementation(command, ...args),
   );
@@ -367,11 +373,9 @@ it("asks before an in-page action discards an unsaved automation draft", async (
   mocks.confirmDialog.mockResolvedValue(false);
   fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
-  fireEvent.click(
-    await screen.findByRole("button", { name: /Workspace follow-up/ }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Change type" }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(2));
-  fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+  fireEvent.click(screen.getByRole("tab", { name: "History" }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(3));
   expect(screen.getByLabelText("Idea or instructions")).toHaveValue(
     "Keep this draft",
@@ -379,7 +383,10 @@ it("asks before an in-page action discards an unsaved automation draft", async (
   expect(mocks.invoke).not.toHaveBeenCalledWith("task_get", expect.anything());
 
   mocks.confirmDialog.mockResolvedValue(true);
-  fireEvent.click(screen.getByRole("button", { name: /Workspace follow-up/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Workspace follow-up/ }),
+  );
   await screen.findByRole("region", { name: "Automation details" });
   expect(screen.queryByLabelText("Idea or instructions")).toBeNull();
 });
@@ -387,6 +394,7 @@ it("asks before an in-page action discards an unsaved automation draft", async (
 it("offers the full action limit the automation validator accepts", async () => {
   render(<TasksPage initialSessionId="session" />);
   await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.click(screen.getByRole("tab", { name: "Steps & limits" }));
   const limit = screen.getByRole("spinbutton", { name: "Action limit" });
   fireEvent.change(limit, { target: { value: "1024" } });
   fireEvent.blur(limit);
@@ -503,4 +511,189 @@ it("does not record a run in progress as seen", async () => {
   expect(mocks.invoke).not.toHaveBeenCalledWith("task_mark_seen", {
     id: run.id,
   });
+});
+
+it("offers every automation starting point from the same entry on Active and History", async () => {
+  const user = (await import("@testing-library/user-event")).default.setup();
+  render(<TasksPage />);
+  await screen.findByText("No active automations.");
+  await user.click(screen.getByRole("button", { name: "+ New automation" }));
+  for (const name of [
+    "Review and revise",
+    "Follow up",
+    "Wait for input",
+    "Investigate a question",
+    "Discover research projects",
+    "Start empty",
+  ]) {
+    expect(screen.getByRole("button", { name })).toBeVisible();
+  }
+  expect(screen.queryByText("No active automations.")).toBeNull();
+  expect(
+    mocks.invoke.mock.calls.some(([name]) =>
+      /^(mission_prepare|task_prepare|discovery_start)$/.test(name),
+    ),
+  ).toBe(false);
+  await user.click(
+    screen.getByRole("button", { name: "Close new automation" }),
+  );
+  await user.click(screen.getByRole("tab", { name: "History" }));
+  await screen.findByRole("heading", {
+    name: "Completed work will appear here.",
+  });
+  expect(screen.queryByRole("tab", { name: "Research" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "+ New research automation" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "+ New automation" }));
+  await user.click(
+    screen.getByRole("button", { name: "Investigate a question" }),
+  );
+  expect(
+    await screen.findByRole("form", { name: "New research automation" }),
+  ).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Tools & review" })).toBeVisible();
+  expect(
+    screen.queryByRole("region", { name: "Research automation list" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Change type" }));
+  await user.click(
+    screen.getByRole("button", { name: "Discover research projects" }),
+  );
+  expect(
+    await screen.findByRole("form", {
+      name: "New research discovery automation",
+    }),
+  ).toBeVisible();
+  expect(screen.getByRole("radio", { name: /I’ll choose/ })).toBeChecked();
+});
+
+it("opens the selected regular template directly and prepares it from the shared chooser", async () => {
+  const user = (await import("@testing-library/user-event")).default.setup();
+  render(<TasksPage />);
+  await user.click(screen.getByRole("button", { name: "+ New automation" }));
+  await user.click(screen.getByRole("button", { name: "Follow up" }));
+  await user.selectOptions(
+    await screen.findByLabelText("Conversation"),
+    "session",
+  );
+  await user.type(
+    screen.getByLabelText("What should happen next?"),
+    "Inspect the new results.",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Preview automation →" }),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Start automation" }),
+  ).toBeVisible();
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    "task_prepare",
+    expect.objectContaining({
+      request: expect.objectContaining({
+        sessionId: "session",
+        chain: expect.objectContaining({
+          steps: [
+            expect.objectContaining({
+              kind: "workspace",
+              prompt: "Inspect the new results.",
+            }),
+          ],
+        }),
+      }),
+    }),
+  );
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "task_control"),
+  ).toBe(false);
+});
+
+it("opens the prepared research scope from the shared chooser before starting", async () => {
+  const { newMission } = await import("../lib/missionClient");
+  const user = (await import("@testing-library/user-event")).default.setup();
+  const mission = {
+    id: "mission-one",
+    revision: 1,
+    definition: newMission(),
+    state: "draft",
+    reason: "Prepared research scope",
+    sourceSessionId: "session",
+    workspaceId: "project",
+    scope: run.scope,
+    plannerScope: run.scope,
+    challengerScope: run.scope,
+    capabilities: [],
+    goals: [],
+    rounds: [],
+    questions: [],
+    methods: [],
+    selectedMethods: [],
+    activeChild: null,
+    childIds: [],
+    phase: "plan",
+    actionsReserved: 0,
+    activeSeconds: 0,
+    stagnantRounds: 0,
+    createdAt: 100,
+    updatedAt: 100,
+    deadlineAt: null,
+    dueAt: null,
+    brief: "",
+    attentionCount: 0,
+    changes: [],
+  };
+  const implementation = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) => {
+    if (command === "task_sessions")
+      return Promise.resolve([
+        { id: "session", title: "Research idea", workspaceName: "Project" },
+      ]);
+    if (command === "mission_choices")
+      return Promise.resolve({
+        workspaceId: "project",
+        root: "/research/task",
+        canEdit: false,
+        commandNetwork: false,
+        canHostCompute: true,
+        checks: [],
+        experiments: [],
+        monitors: [],
+      });
+    if (command === "mission_prepare" || command === "mission_get")
+      return Promise.resolve(mission);
+    if (command === "mission_events") return Promise.resolve([]);
+    return implementation(command, args);
+  });
+  render(<TasksPage />);
+  await user.click(screen.getByRole("button", { name: "+ New automation" }));
+  await user.click(
+    screen.getByRole("button", { name: "Investigate a question" }),
+  );
+  await screen.findByRole("option", { name: "Research idea · Project" });
+  await user.selectOptions(
+    screen.getByLabelText("Source conversation"),
+    "session",
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  await user.click(preview);
+  expect(
+    await screen.findByRole("button", { name: "Start research automation" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Research automation details" }),
+  ).toHaveTextContent("Prepared research scope");
+  expect(mocks.invoke).toHaveBeenCalledWith(
+    "mission_prepare",
+    expect.objectContaining({
+      request: expect.objectContaining({ sessionId: "session" }),
+    }),
+  );
+  expect(
+    mocks.invoke.mock.calls.some(
+      ([name]) => name === "mission_control" || name === "task_control",
+    ),
+  ).toBe(false);
 });

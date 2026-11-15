@@ -1,4 +1,6 @@
+import { flushDrafts } from "../../lib/flushDrafts";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -40,6 +42,7 @@ vi.mock("../file-workspace/SourceEditor", async () => {
         label: string;
         value: string;
         path: string;
+        readOnly?: boolean;
         reveal?: SourceLineRequest | null;
         onChange?: (value: string) => void;
       },
@@ -54,6 +57,7 @@ vi.mock("../file-workspace/SourceEditor", async () => {
         <textarea
           aria-label={props.label}
           value={props.value}
+          readOnly={props.readOnly}
           onChange={(event) => props.onChange?.(event.target.value)}
         />
       );
@@ -420,4 +424,183 @@ it("discards and reloads a draft only after asking", async () => {
   await waitFor(() => expect(editor).toHaveValue("Accepted edit"));
   expect(mocks.confirmDialog).toHaveBeenCalledTimes(2);
   expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull();
+});
+
+it("keeps the original copy selected if opening another copy fails", async () => {
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await screen.findByLabelText("Manuscript source editor");
+  mocks.editor.mockRejectedValueOnce(new Error("Copy unavailable"));
+  fireEvent.change(screen.getByLabelText("Edit in"), {
+    target: { value: "checkpoint" },
+  });
+  await screen.findByText("Copy unavailable");
+  expect(screen.getByLabelText("Edit in")).toHaveValue("");
+  expect(editorProps().path).toBe("ws/working/main.tex");
+});
+
+it("commits the copy selection with its file and blocks concurrent switching", async () => {
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await screen.findByLabelText("Manuscript source editor");
+  let resolve!: (v: unknown) => void;
+  mocks.editor.mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  fireEvent.change(screen.getByLabelText("Edit in"), {
+    target: { value: "checkpoint" },
+  });
+  expect(screen.getByLabelText("Edit in")).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Edit in"), { target: { value: "" } });
+  await act(async () =>
+    resolve({
+      path: "main.tex",
+      content: "Copy text",
+      hash: "copy",
+      checkpointId: "checkpoint",
+    }),
+  );
+  expect(screen.getByLabelText("Edit in")).toHaveValue("checkpoint");
+  expect(editorProps().path).toBe("ws/checkpoint/main.tex");
+  mocks.mutate.mockResolvedValueOnce({ hash: "saved" });
+  fireEvent.change(screen.getByLabelText("Manuscript source editor"), {
+    target: { value: "Copy draft" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save task draft" }));
+  await waitFor(() =>
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      "ws",
+      expect.objectContaining({
+        checkpointId: "checkpoint",
+        content: "Copy draft",
+      }),
+    ),
+  );
+});
+
+it("retains the latest manuscript draft on pagehide before the debounce", async () => {
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  const editor = await screen.findByLabelText("Manuscript source editor");
+  fireEvent.change(editor, { target: { value: "Latest unsaved words" } });
+  fireEvent(window, new Event("pagehide"));
+  expect(
+    JSON.parse(
+      localStorage.getItem("pipeline.manuscriptDraft.ws.working.main.tex")!,
+    ),
+  ).toMatchObject({ draft: "Latest unsaved words" });
+});
+
+it("keeps edits delivered after discard confirmation while the file is loading", async () => {
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  const editor = await screen.findByLabelText("Manuscript source editor");
+  fireEvent.change(editor, { target: { value: "Draft I agreed to discard" } });
+  mocks.confirmDialog.mockResolvedValue(true);
+  let resolve!: (v: unknown) => void;
+  mocks.editor.mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  const reads = mocks.editor.mock.calls.length;
+  fireEvent.click(
+    screen.getByRole("button", { name: "Discard unsaved draft" }),
+  );
+  await waitFor(() => expect(mocks.editor).toHaveBeenCalledTimes(reads + 1));
+  expect(editor).toHaveAttribute("readonly");
+  fireEvent.change(editor, {
+    target: { value: "NEW words typed after confirming" },
+  });
+  await act(async () =>
+    resolve({
+      path: "main.tex",
+      content: "Saved source",
+      hash: "hash",
+      checkpointId: null,
+    }),
+  );
+  expect(editor).toHaveValue("NEW words typed after confirming");
+});
+
+it("flushes the current draft before native exit and blocks exit when retention fails", async () => {
+  const { editor } = await openManuscript();
+  fireEvent.change(editor, { target: { value: "Just typed" } });
+  act(() => flushDrafts());
+  expect(
+    JSON.parse(
+      localStorage.getItem("pipeline.manuscriptDraft.ws.working.main.tex")!,
+    ),
+  ).toMatchObject({ draft: "Just typed" });
+  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    throw new DOMException("Full", "QuotaExceededError");
+  });
+  fireEvent.change(editor, { target: { value: "Not retained yet" } });
+  act(() => expect(() => flushDrafts()).toThrow("Save your files"));
+  expect(editor).toHaveValue("Not retained yet");
+  // Once the user saves, a denied cleanup alone must not trap them in the app.
+  const remove = vi.spyOn(localStorage, "removeItem").mockImplementation(() => {
+    throw new Error("Storage unavailable");
+  });
+  try {
+    mocks.mutate.mockResolvedValueOnce({ hash: "saved" });
+    fireEvent.click(screen.getByRole("button", { name: "Save working copy" }));
+    await screen.findByText(/Saved. Rebuild the manuscript/);
+    act(() => expect(() => flushDrafts()).not.toThrow());
+  } finally {
+    remove.mockRestore();
+  }
+  write.mockRestore();
+});
+
+it("keeps the open copy identified when it leaves the list of available edits", async () => {
+  const { rerender } = await openManuscript();
+  mocks.editor.mockResolvedValueOnce({
+    ...onDisk("Copy", "copy-hash"),
+    checkpointId: "checkpoint",
+  });
+  fireEvent.change(screen.getByLabelText("Edit in"), {
+    target: { value: "checkpoint" },
+  });
+  await waitFor(() =>
+    expect(editorProps().path).toBe("ws/checkpoint/main.tex"),
+  );
+  rerender(
+    <Manuscript
+      workspaceId="ws"
+      data={{ ...data, changes: [] }}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  expect(screen.getByLabelText("Edit in")).toHaveValue("checkpoint");
+  expect(
+    screen.getByRole("option", { name: /no longer available/ }),
+  ).toBeDisabled();
 });

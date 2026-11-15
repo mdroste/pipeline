@@ -10,7 +10,9 @@
 
 mod activity;
 mod answers;
+pub(crate) mod approval;
 mod budget;
+pub(crate) mod idea_team;
 mod protocol;
 mod shell;
 #[cfg(test)]
@@ -21,10 +23,11 @@ pub(crate) mod transport;
 pub(crate) mod usage;
 mod wsl;
 
+use super::chat_approval::Mode;
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
-use super::turn_loop::{TurnEvents, UnsavedText};
+use super::turn_loop::{persist_and_publish, TurnEvents, UnsavedText};
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -69,17 +72,13 @@ pub(super) struct Turn {
     pub id: String,
     pub binding: String,
     pub model: Option<String>,
+    pub approval_root: Option<String>,
     pub unsaved: UnsavedText,
 }
 
 impl Turn {
     pub async fn emit(&self, app: &impl TurnEvents, event: NormalizedEvent) -> Result<(), String> {
-        let binding = self.binding.clone();
-        let persisted = event.clone();
-        run_store(move |store| store.project_codex_event(&binding, &persisted))
-            .await
-            .map_err(|e| e.message)?;
-        app.publish(&event)
+        persist_and_publish(&self.binding, app, event).await
     }
 
     pub async fn item(
@@ -124,6 +123,7 @@ pub(crate) async fn submit(
     binding: Option<SessionBinding>,
     prepared: PreparedHarness,
     automated: bool,
+    approval_mode: Mode,
     control: super::submission::Control,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
     let session = request.session_id.clone();
@@ -152,11 +152,16 @@ pub(crate) async fn submit(
     })
     .await?;
     let tool_specs = tools::catalog(&prepared.effective);
+    let approval_root = root
+        .as_ref()
+        .filter(|_| approval_mode != Mode::Sandbox)
+        .map(|path| path.to_string_lossy().into_owned());
     let args = protocol::arguments(
         &prepared.effective,
         request.model.as_deref(),
         request.effort.as_deref(),
         root.as_deref(),
+        approval_mode,
     );
     // Bash starts in a root it can write, so relative paths outlive this
     // turn's temporary process folder.
@@ -164,11 +169,15 @@ pub(crate) async fn submit(
         .as_deref()
         .filter(|_| prepared.effective.capabilities.shell_write);
     let sandbox = root.as_deref().map(|root| {
-        shell::sandbox(
+        let mut sandbox = shell::sandbox(
             root,
             &prepared.effective.capabilities,
             prepared.effective.command_network,
-        )
+        );
+        if approval_root.is_some() {
+            sandbox["autoAllowBashIfSandboxed"] = json!(false);
+        }
+        sandbox
     });
     // CLI auth, configuration and handshake all finish before sending a prompt.
     let mut process = control
@@ -203,7 +212,10 @@ pub(crate) async fn submit(
     let turn_id = id.clone();
     let config = prepared.config_snapshot_id;
     let context = prepared.context_snapshot_id;
-    let bound = run_store(move |store| {
+    let (bound, lease) = run_store(move |store| {
+        let lease = super::submission::session_lease(&store, &session)?.ok_or_else(|| {
+            WorkbenchError::conflict("Another Pipeline instance owns this conversation's turn")
+        })?;
         let bound = store.bind_session(&session, NAMESPACE, &thread_copy)?;
         store.set_binding_harness(
             &bound.id,
@@ -212,7 +224,7 @@ pub(crate) async fn submit(
         )?;
         store.record_turn_submission(&bound.id, &submission, &turn_id)?;
         store.attach_turn_snapshots(&bound.id, &submission, &config, &context)?;
-        Ok(bound)
+        Ok((bound, lease))
     })
     .await?;
     let turn = Turn {
@@ -221,6 +233,7 @@ pub(crate) async fn submit(
         id: id.clone(),
         binding: bound.id,
         model: request.model,
+        approval_root,
         unsaved: UnsavedText::default(),
     };
     // The draft is cleared on acknowledgement, and Stop or a store failure can
@@ -238,6 +251,7 @@ pub(crate) async fn submit(
     let task_turn = turn.clone();
     let original = prompt.user_text.clone();
     tokio::spawn(async move {
+        let _lease = lease;
         let result = control
             .run(transport::drive(
                 &mut process,
@@ -354,6 +368,7 @@ pub(crate) async fn shutdown() {
 pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> {
     // Keep the owner stable while reading persisted state. A finishing worker
     // must not clear its ownership between this snapshot and the liveness check.
+    let lease = super::submission::session_lease(&store, &session)?;
     let owner = running().lock().unwrap_or_else(|e| e.into_inner());
     let snapshot = store.conversation_snapshot(&session)?;
     let Some(binding) = snapshot
@@ -361,6 +376,9 @@ pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> 
         .filter(|b| b.runtime_namespace == NAMESPACE)
     else {
         return Ok(false);
+    };
+    let Some(_lease) = lease else {
+        return Ok(true);
     };
     // Submission records the turn before installing its process owner. Check
     // setup after the snapshot so a newly recorded turn cannot look abandoned.

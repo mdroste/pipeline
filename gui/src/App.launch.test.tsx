@@ -35,7 +35,10 @@ const { previewConfig, runSetup, reset } = createAppTestFixture(
 async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
 }) {
-  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  const expand = screen.queryByRole("button", {
+    name: "Reviews",
+    expanded: false,
+  });
   if (expand) await user.click(expand);
 }
 

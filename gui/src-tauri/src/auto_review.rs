@@ -10,6 +10,7 @@ mod catalog;
 mod materialize;
 mod presentation;
 mod prompts;
+pub(crate) mod registry;
 mod schema_contract;
 mod schemas;
 mod selection;
@@ -19,11 +20,11 @@ pub use catalog::{
     CatalogRole, GenreSpec, MethodLevel, MethodSpec, SubjectLevel, SubjectSpec, GENRES, METHODS,
     RESEARCH_ARTICLE_GENRE, SLIDE_DECK_GENRE, SUBJECTS,
 };
-pub(crate) use materialize::uses_auto_review_contract;
 pub use materialize::{
     copyable_specialist_step, materialize_config, quick_steps, steps,
     validate_auto_review_preflight,
 };
+pub(crate) use materialize::{specialist_donor, uses_auto_review_contract};
 pub use presentation::{specialist_context_text, specialist_report_markdown};
 pub use prompts::{
     apply_agent_count_instruction, expand_orientation_prompt, orientation_prompt,
@@ -33,6 +34,7 @@ pub use schemas::{
     is_specialist_schema, orientation_schema, quick_orientation_schema, resolve_schema_catalogs,
     slide_orientation_schema, specialist_schema,
 };
+pub(crate) use selection::adaptive_agent_count_range;
 pub use selection::{
     adaptive_agent_bounds, configured_agent_count, validate_contract_for_schema,
     validate_profile_contract_identity, validate_review_plan, validate_review_plan_object,
