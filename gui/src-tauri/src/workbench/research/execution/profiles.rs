@@ -1,4 +1,6 @@
 //! Execution-profile validation, persistence, and adapter flags.
+//! Reads refresh opted-in manuscript inputs through the project owner without
+//! rewriting the saved profile; preview and launch fingerprint the expanded view.
 
 use super::types::{ExecutionProfile, SaveExecutionProfileRequest};
 use crate::workbench::research::{
@@ -239,7 +241,9 @@ pub(crate) fn get_execution_profile(
     store: &Store,
     profile_id: &str,
 ) -> WorkbenchResult<ExecutionProfile> {
-    open_connection(store)?.query_row("SELECT id, workspace_id, name, adapter, argv_json, cwd, environment_json, inputs_json, timeout_seconds, outputs_json, tested_at, test_status, revision FROM execution_profiles WHERE id = ?1", [profile_id], profile_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read execution profile", error))?.ok_or_else(|| WorkbenchError::invalid("Execution profile was not found"))
+    let mut profile = open_connection(store)?.query_row("SELECT id, workspace_id, name, adapter, argv_json, cwd, environment_json, inputs_json, timeout_seconds, outputs_json, tested_at, test_status, revision FROM execution_profiles WHERE id = ?1", [profile_id], profile_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read execution profile", error))?.ok_or_else(|| WorkbenchError::invalid("Execution profile was not found"))?;
+    crate::workbench::project::refresh_manuscript_inputs(store, &mut profile)?;
+    Ok(profile)
 }
 
 pub fn list_execution_profiles(

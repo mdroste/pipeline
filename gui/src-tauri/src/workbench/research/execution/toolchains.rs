@@ -34,7 +34,7 @@ pub struct ToolchainReport {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedToolchain {
-    /// `stata`, `r`, `python`, `julia`, `quarto`, `jupyter` or `matlab`.
+    /// `stata`, `r`, `python`, `julia`, `quarto`, `jupyter`, `matlab` or `latex`.
     pub kind: String,
     /// The execution adapter that runs this tool, when one exists.
     pub adapter: Option<String>,
@@ -139,7 +139,13 @@ fn dedupe(candidates: Vec<Candidate>) -> Vec<Candidate> {
         if *count >= MAX_PER_KIND {
             continue;
         }
-        let identity = std::fs::canonicalize(&candidate.path).unwrap_or(candidate.path.clone());
+        let identity = if candidate.kind == "latex" {
+            // TeX engines select their format from the invocation name, even
+            // when several names resolve to the same executable.
+            candidate.path.clone()
+        } else {
+            std::fs::canonicalize(&candidate.path).unwrap_or(candidate.path.clone())
+        };
         // A virtual-environment interpreter resolves to its base interpreter,
         // yet its environment differs, so project entries are always kept.
         if candidate.source != "projectEnvironment" && !seen.insert((candidate.kind, identity)) {
@@ -210,4 +216,18 @@ pub(super) fn runtime_identity(profile: &ExecutionProfile, launch: &Value) -> Va
         }
     };
     json!({"kind":kind,"program":program,"executableHash":launch["hash"],"version":version,"versionText":text,"versionSource":source})
+}
+
+/// Resolve TeX without probing versions or running any project code.
+pub(crate) fn tex_program(engine: &str) -> Option<PathBuf> {
+    locations::candidates(&Host::current())
+        .into_iter()
+        .find(|candidate| {
+            candidate.kind == "latex"
+                && candidate
+                    .path
+                    .file_stem()
+                    .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(engine))
+        })
+        .map(|candidate| candidate.path)
 }

@@ -15,6 +15,8 @@ mod process;
 mod proxy;
 #[cfg(test)]
 mod tests;
+#[cfg(windows)]
+mod windows;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,7 +41,15 @@ fn unavailable_reason() -> Option<String> {
     }
     #[cfg(target_os = "linux")]
     {
-        crate::deps::resolve_command("bwrap").is_none().then(|| "Install bubblewrap to use commands. Command internet access also needs slirp4netns, iproute2, iptables and util-linux.".into())
+        if crate::deps::resolve_command("bwrap").is_none() {
+            return Some("Install bubblewrap to use commands. Command internet access also needs slirp4netns, iproute2, iptables and util-linux.".into());
+        }
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/fuse")
+            .err()
+            .map(|_| "Linux commands need FUSE support and permission to open /dev/fuse.".into())
     }
     #[cfg(windows)]
     {
@@ -66,7 +76,11 @@ pub(crate) fn run_guard_if_requested() -> bool {
     {
         linux::run_if_requested()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        windows::run_if_requested()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         false
     }
@@ -134,11 +148,11 @@ async fn run(
     #[cfg(windows)]
     {
         // Never mutate host ACLs or accept the SDK's less isolated compatibility
-        // tiers. Request-specific probing also checks proxy/deny-path support.
+        // tiers. Request-specific probing also checks filesystem restrictions.
         let probe = mxc_sdk::v1::probe(Some(&request)).map_err(|e| e.to_string())?;
         if probe.tier != Some("base-container") || probe.error.is_some() {
             return Err(probe.error.unwrap_or_else(|| "Windows cannot enforce this command's restrictions. Update Windows before trying again.".into()));
         }
     }
-    process::run(request, scratch).await
+    process::run(request, scratch, proxy).await
 }

@@ -1,5 +1,6 @@
 // The Build sheet: what to build, and the approval to run it. Saved settings
 // lead with the run step, because a build is run far more often than set up.
+import ManuscriptTexTools from "./ManuscriptTexTools";
 import type { Dispatch, SetStateAction } from "react";
 import { Fold } from "../../ui";
 import {
@@ -11,7 +12,7 @@ import { parseArgvText } from "../../lib/argvText";
 import type { ProjectRecord } from "../../lib/projectClient";
 import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 import { button, input, Field, Select, Text, lines } from "./shared";
-import { JobLauncher } from "./Jobs";
+import ManuscriptBuildReview from "./ManuscriptBuildReview";
 
 export const initialBuild: BuildConfig = {
   name: "Manuscript build",
@@ -19,31 +20,26 @@ export const initialBuild: BuildConfig = {
   directory: ".",
   rootDocument: "main.tex",
   expectedPdf: "main.pdf",
-  engine: "pdflatex",
+  engine: "latexmk",
+  automaticDependencies: true,
+  executable: null,
   timeoutSeconds: 120,
   inputs: ["main.tex"],
   advancedArgv: null,
 };
-const BUILD_FILES = /\.(tex|bib|bst|sty|cls|png|jpe?g|pdf|eps)$/i;
-
-/** A first build for this file: its folder, its PDF, and the source and figure
- * files beside it, for the researcher to check before saving. */
-export function suggestBuild(path: string, files: string[]): BuildConfig {
+/** Start with the root only; the backend discovers dependencies before each build. */
+export function suggestBuild(path: string): BuildConfig {
   const slash = path.lastIndexOf("/");
   const directory = slash < 0 ? "." : path.slice(0, slash);
   const prefix = slash < 0 ? "" : `${directory}/`;
   const rootDocument = path.slice(prefix.length);
   const expectedPdf = rootDocument.replace(/\.[^.]*$/, "") + ".pdf";
-  const nearby = files
-    .filter((f) => f.startsWith(prefix) && BUILD_FILES.test(f))
-    .map((f) => f.slice(prefix.length))
-    .filter((f) => f !== expectedPdf);
   return {
     ...initialBuild,
     directory,
     rootDocument,
     expectedPdf,
-    inputs: [...new Set([rootDocument, ...nearby])],
+    inputs: [rootDocument],
   };
 }
 
@@ -62,7 +58,9 @@ export default function ManuscriptBuildSheet({
   profile,
   onSaved,
   onQueued,
+  readyToBuild,
 }: {
+  readyToBuild: boolean;
   workspaceId: string;
   busy: boolean;
   run: (work: () => Promise<unknown>) => Promise<void>;
@@ -92,24 +90,46 @@ export default function ManuscriptBuildSheet({
         <Select
           label="Engine"
           value={config.engine}
-          onChange={(engine) => setConfig((c) => ({ ...c, engine }))}
+          onChange={(engine) =>
+            setConfig((c) => ({ ...c, engine, executable: null }))
+          }
           options={["pdflatex", "xelatex", "lualatex", "latexmk"].map((v) => ({
             value: v,
             label: v,
           }))}
         />
       </div>
-      <Text
-        label="Declared inputs (one per line, relative to build directory)"
-        multiline
-        value={config.inputs.join("\n")}
-        onChange={(s) => setConfig((c) => ({ ...c, inputs: s.split("\n") }))}
+      <ManuscriptTexTools
+        workspaceId={workspaceId}
+        config={config}
+        setConfig={setConfig}
+        saved={Boolean(chosen)}
       />
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={config.automaticDependencies ?? false}
+          onChange={(e) =>
+            setConfig((c) => ({
+              ...c,
+              automaticDependencies: e.target.checked,
+            }))
+          }
+        />
+        Track dependencies automatically
+      </label>
       <p className="text-xs text-ink-muted">
-        List all sections, bibliography files, tables, and figures used in the
-        build. Pipeline tracks changes only in the files you list.
+        {config.automaticDependencies
+          ? "Sources, bibliographies, and figures are tracked before each build."
+          : "List every file used by this manuscript in More build settings."}
       </p>
       <Fold title="More build settings">
+        <Text
+          label="Additional inputs (one per line, relative to build directory)"
+          multiline
+          value={config.inputs.join("\n")}
+          onChange={(s) => setConfig((c) => ({ ...c, inputs: s.split("\n") }))}
+        />
         {configs.length > 0 && (
           <Select
             label="Saved configuration"
@@ -204,6 +224,12 @@ export default function ManuscriptBuildSheet({
               },
             );
             setConfigId(saved.id);
+            setConfig(saved.body.config);
+            setAdvanced(
+              saved.body.config.advancedArgv
+                ? JSON.stringify(saved.body.config.advancedArgv, null, 2)
+                : "",
+            );
             await onSaved();
           })
         }
@@ -219,7 +245,23 @@ export default function ManuscriptBuildSheet({
           <p className="text-xs text-ink-muted">
             {config.engine} · {config.rootDocument}
           </p>
-          <JobLauncher profile={profile} onQueued={onQueued} />
+          {readyToBuild &&
+          JSON.stringify(config) === JSON.stringify(chosen?.body.config) &&
+          advanced ===
+            (config.advancedArgv
+              ? JSON.stringify(config.advancedArgv, null, 2)
+              : "") ? (
+            <ManuscriptBuildReview
+              key={`${profile.id}:${profile.revision}`}
+              profile={profile}
+              onQueued={onQueued}
+            />
+          ) : (
+            <p className="text-sm">
+              Save build settings, then close this panel and choose Build to
+              save manuscript drafts before running.
+            </p>
+          )}
           <Fold title="Build settings">{settings}</Fold>
         </>
       ) : (

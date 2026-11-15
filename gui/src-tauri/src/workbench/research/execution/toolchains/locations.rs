@@ -1,5 +1,7 @@
 //! Standard install locations and PATH lookups for each platform.
 
+mod tex;
+
 use super::probe::{folder_version, matlab_release, plist_version};
 use super::Candidate;
 use crate::workbench::research::execution::adapters::{is_stata_program, program_stem};
@@ -252,6 +254,7 @@ pub(in crate::workbench::research::execution) fn candidates(host: &Host) -> Vec<
             );
         }
     }
+    tex::standard_locations(&mut found);
     on_path(&mut found);
     found.items
 }
@@ -538,7 +541,7 @@ fn linux(found: &mut Found<'_>) {
     }
 }
 
-const PATH_NAMES: [(&str, &[&str]); 7] = [
+const PATH_NAMES: [(&str, &[&str]); 8] = [
     ("stata", &UNIX_STATA),
     ("r", &["Rscript"]),
     ("python", &["python3", "python"]),
@@ -546,6 +549,7 @@ const PATH_NAMES: [(&str, &[&str]); 7] = [
     ("quarto", &["quarto"]),
     ("jupyter", &["jupyter"]),
     ("matlab", &["matlab"]),
+    ("latex", &["latexmk", "pdflatex", "xelatex", "lualatex"]),
 ];
 
 fn on_path(found: &mut Found<'_>) {

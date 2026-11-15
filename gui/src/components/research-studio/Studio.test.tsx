@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   runExecution: vi.fn(),
   invoke: vi.fn(),
   listExecutionProfiles: vi.fn(),
+  detectToolchains: vi.fn(),
   confirmDialog: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
@@ -65,6 +66,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.records.mockResolvedValue([]);
   mocks.listExecutionProfiles.mockResolvedValue([]);
+  mocks.detectToolchains.mockResolvedValue({ tools: [] });
   mocks.editor.mockResolvedValue({
     path: "main.tex",
     content: "Old text",
@@ -135,8 +137,8 @@ it("retains a trailing newline while editing build dependencies", async () => {
   );
   await screen.findByLabelText("Manuscript source editor");
   fireEvent.click(screen.getByRole("button", { name: "Build" }));
-  const dependencies = screen.getByLabelText(
-    "Declared inputs (one per line, relative to build directory)",
+  const dependencies = await screen.findByLabelText(
+    "Additional inputs (one per line, relative to build directory)",
   );
   fireEvent.change(dependencies, { target: { value: "main.tex\n" } });
   expect(dependencies).toHaveValue("main.tex\n");
@@ -172,7 +174,12 @@ it("restores the original draft hash and does not resurrect a discarded draft", 
     ),
   );
   mocks.confirmDialog.mockResolvedValue(true);
-  fireEvent.click(screen.getByText("Discard unsaved draft"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Discard unsaved draft" }),
+  );
   await waitFor(() =>
     expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull(),
   );

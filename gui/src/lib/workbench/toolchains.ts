@@ -14,7 +14,14 @@ export type ExecutionAdapter =
   | "quarto";
 
 export type ToolchainKind =
-  "stata" | "r" | "python" | "julia" | "quarto" | "jupyter" | "matlab";
+  | "stata"
+  | "r"
+  | "python"
+  | "julia"
+  | "quarto"
+  | "jupyter"
+  | "matlab"
+  | "latex";
 
 export interface DetectedToolchain {
   kind: ToolchainKind;
@@ -153,7 +160,7 @@ export function isUntouchedTemplate(
 
 const KINDS: Record<ExecutionAdapter, ToolchainKind[]> = {
   command: ["stata", "r", "python", "julia", "quarto", "jupyter", "matlab"],
-  latex: [],
+  latex: ["latex"],
   stata: ["stata"],
   r: ["r"],
   python: ["python"],

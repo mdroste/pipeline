@@ -162,3 +162,32 @@ select.manuscript-file:hover {
 .manuscript-sheet > * + * {
   margin-top: 12px;
 }
+
+.manuscript-build-review > * + * {
+  margin-top: var(--ui-space-3);
+}
+.manuscript-command {
+  padding: var(--ui-space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-sunken);
+  font-size: var(--ui-text-meta);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.manuscript-inputs {
+  max-height: 12rem;
+  margin-top: var(--ui-space-2);
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.manuscript-inputs li {
+  padding: var(--ui-space-1) 0;
+}
+
+.manuscript-pdf > .pdf-reader,
+.manuscript-pdf .pdf-positioner {
+  min-height: 0;
+}

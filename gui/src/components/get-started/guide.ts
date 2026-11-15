@@ -12,6 +12,10 @@ export type StarterTemplate = (typeof STARTER_TEMPLATES)[number];
 
 export const TOOL_NOTES: Record<ToolchainKind, { name: string; use: string }> =
   {
+    latex: {
+      name: "TeX",
+      use: "Build manuscripts with your installed TeX tools and preview their PDFs in Projects.",
+    },
     stata: {
       name: "Stata",
       use: "Run do-files as local checks in a project. Pipeline reads the log for error codes and records the Stata version.",
@@ -78,7 +82,7 @@ function chatgptRow({
   const row = {
     id: "chatgpt" as const,
     name: "ChatGPT",
-    use: "Conversations and Reviews · your ChatGPT subscription",
+    use: "Your ChatGPT subscription",
     target: "workspace-provider",
   };
   if (accountError)
@@ -117,7 +121,7 @@ function claudeRow({
   const row = {
     id: "claude" as const,
     name: "Claude Code",
-    use: "Conversations and Reviews · your Claude subscription",
+    use: "Your Claude subscription",
     target: "anthropic-provider",
   };
   const claude = dep(dependencies, "Claude CLI");
@@ -155,7 +159,7 @@ function apiRow({ settings }: ConnectionInputs): ConnectionRow {
   const row = {
     id: "api" as const,
     name: "API keys",
-    use: "Conversations and reviews · the provider bills each use",
+    use: "The provider bills each use",
     target: "anthropic-provider",
   };
   if (settings === undefined)
@@ -186,7 +190,7 @@ function localRow({
   const row = {
     id: "local" as const,
     name: "Local model server",
-    use: "Conversations and reviews · a server you run, such as Ollama",
+    use: "A server you run, such as Ollama",
     target: "local-provider",
   };
   const local = dep(dependencies, "Local LLM server");
@@ -215,7 +219,7 @@ export function connectionSummary(rows: ConnectionRow[]) {
     rows.some((row) => row.id === id && row.tone === "ok");
   const conversations =
     ready("chatgpt") || ready("claude") || ready("api") || ready("local");
-  if (conversations) return "You can start Conversations and Reviews now.";
+  if (conversations) return "You're ready to get started.";
   return "Connect at least one provider before your first Review. The example review needs no connection.";
 }
 

@@ -191,6 +191,11 @@ the original pages before relying on search results.
 
 Turning on **Web search** lets the assistant find and read public pages.
 **Internet access for commands** controls command access separately.
+For API and local or custom server conversations on Windows, the first networked
+command after opening Pipeline asks for administrator approval for a temporary
+firewall guard. Pipeline and its commands keep their ordinary permissions.
+Declining approval prevents that command from running. Web search and page
+reading remain available.
 **Allowed command sites** applies to commands; it does not restrict web search
 or page reading. Web downloads are limited to 32 MB per file. Pipeline keeps
 the source URL, retrieval time, and file fingerprint with the download result.
@@ -282,7 +287,9 @@ Commands are included with Pipeline and work offline. They run in Bash on macOS
 and Linux, and PowerShell on Windows. Pipeline restricts access to the selected
 folder and a temporary folder, and limits commands to two minutes.
 
-Linux needs `bubblewrap`. Command internet access also needs `slirp4netns`,
+Linux needs `bubblewrap` and access to `/dev/fuse` for protected file access.
+Some systems also require an administrator to permit user namespaces for Pipeline.
+Command internet access also needs `slirp4netns`,
 `iproute2`, `iptables`, and `util-linux`. Windows needs an updated Windows 11
 installation with native ProcessContainer support. **Access & inheritance**
 shows whether commands are available. Unsupported systems can still use

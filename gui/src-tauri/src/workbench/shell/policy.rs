@@ -4,8 +4,7 @@
 use super::proxy;
 use mxc_sdk::v1::{
     ContainerRequest, FilesystemPolicy, NetworkAction, NetworkEgressPolicy, NetworkIngressPolicy,
-    NetworkPeerPolicy, NetworkPolicy, NetworkPortPolicy, NetworkProtocol, NetworkRulePolicy,
-    NetworkRuntimeConfig,
+    NetworkPolicy,
 };
 use std::path::{Path, PathBuf};
 
@@ -72,10 +71,9 @@ pub(super) fn request(
         }
     }
     for path in protected_paths(&root) {
-        fs.denied_paths
-            .push(text(&path.canonicalize().unwrap_or(path))?);
+        fs.denied_paths.push(text(&protected_path(path)?)?);
     }
-    let tmp = text(&scratch)?;
+    let tmp = command_directory(&scratch)?;
     let mut environment = vec![
         ("PATH".into(), crate::env::full_path()),
         ("LANG".into(), "en_US.UTF-8".into()),
@@ -83,25 +81,37 @@ pub(super) fn request(
         ("TMPDIR".into(), tmp.clone()),
         ("TEMP".into(), tmp.clone()),
         ("TMP".into(), tmp.clone()),
-        ("NO_PROXY".into(), String::new()),
         ("no_proxy".into(), String::new()),
     ];
+    #[cfg(not(windows))]
+    environment.push(("NO_PROXY".into(), String::new()));
     #[cfg(windows)]
     {
-        environment.push(("SystemRoot".into(), text(&windows_root()?)?));
+        let windows = windows_root()?;
+        environment.push(("SystemRoot".into(), text(&windows)?));
+        environment.push(("WINDIR".into(), text(&windows)?));
+        environment.push(("COMSPEC".into(), text(&windows.join("System32/cmd.exe"))?));
+        // PowerShell otherwise treats even explicitly named .exe files as
+        // documents and can silently skip native commands in noninteractive mode.
+        environment.push(("PATHEXT".into(), ".COM;.EXE;.BAT;.CMD".into()));
         environment.push(("LOCALAPPDATA".into(), tmp.clone()));
         environment.push(("APPDATA".into(), tmp.clone()));
         environment.push(("USERPROFILE".into(), tmp));
     }
     if let Some(proxy) = proxy {
         let socks = format!("socks5h://127.0.0.1:{}", proxy.port);
-        environment.extend([
-            ("ALL_PROXY".into(), socks.clone()),
-            ("all_proxy".into(), socks),
-        ]);
-        for key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"] {
+        environment.push(("all_proxy".into(), socks.clone()));
+        for key in ["http_proxy", "https_proxy"] {
             environment.push((key.into(), proxy.url()));
         }
+        // Windows environment names are case-insensitive; duplicates break
+        // Start-Process when it builds the child's environment dictionary.
+        #[cfg(not(windows))]
+        environment.extend([
+            ("ALL_PROXY".into(), socks),
+            ("HTTP_PROXY".into(), proxy.url()),
+            ("HTTPS_PROXY".into(), proxy.url()),
+        ]);
     }
     #[cfg(target_os = "linux")]
     let command = {
@@ -127,55 +137,132 @@ pub(super) fn request(
     ).replace('\'', "'\\''"));
     let mut request = ContainerRequest::new(command);
     request.filesystem = Some(fs);
-    request.working_directory = Some(text(&root)?);
+    request.working_directory = Some(command_directory(&root)?);
     request.environment = Some(environment);
     request.inherit_default_environment = Some(false);
     request.timeout_ms = Some(120_000);
-    request.network = Some(network_policy(proxy, cfg!(windows)));
+    request.network = Some(network_policy(proxy));
+    #[cfg(windows)]
+    {
+        // PowerShell imports USER32 even for console commands. Permit Win32k
+        // initialization while keeping the default isolated UI resources,
+        // clipboard denial and input-injection denial.
+        request.ui = Some(mxc_sdk::v1::UiPolicy {
+            disable: false,
+            ..Default::default()
+        });
+    }
     #[cfg(target_os = "macos")]
     super::macos::confine(&mut request, proxy.map(|proxy| proxy.port))?;
     Ok(request)
 }
 
-/// Windows uses direct endpoint policy, not MXC's proxy shortcut, because the
-/// shortcut requires private-network server capability. The endpoint allowlist
-/// grants only outbound TCP to our listener; other egress and private ingress
-/// stay denied. Standard proxy variables supply HTTP/SOCKS client routing.
-fn network_policy(proxy: Option<&proxy::Proxy>, windows: bool) -> NetworkPolicy {
+fn command_directory(root: &Path) -> Result<String, String> {
+    let path = text(root)?;
+    #[cfg(windows)]
+    {
+        // CMD treats local \\?\ drive paths as UNC; PowerShell's path provider
+        // cannot Join-Path them either. Use ordinary Win32 spelling when it
+        // fits MAX_PATH; retain extended paths for long-path-aware programs.
+        use std::path::{Component, Prefix};
+        let ordinary = match root.components().next() {
+            Some(Component::Prefix(prefix)) => match prefix.kind() {
+                Prefix::VerbatimDisk(_) => Some(path[4..].to_owned()),
+                Prefix::VerbatimUNC(_, _) => Some(format!(r"\\{}", &path[8..])),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(ordinary) = ordinary.filter(|p| p.encode_utf16().count() < 260) {
+            return Ok(ordinary);
+        }
+    }
+    Ok(path)
+}
+
+pub(super) fn protected_path(path: PathBuf) -> Result<PathBuf, String> {
+    #[cfg(not(windows))]
+    {
+        Ok(path.canonicalize().unwrap_or(path))
+    }
+    #[cfg(windows)]
+    {
+        // PSEC accepts an absent leaf but cannot resolve a missing parent.
+        // Deny the first missing ancestor instead: the intended secret stays
+        // covered if it appears later, without creating host placeholders.
+        let mut denied = path;
+        loop {
+            match denied.canonicalize() {
+                Ok(canonical) => return Ok(canonical),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            let parent = denied.parent().ok_or("Invalid protected command path")?;
+            match parent.canonicalize() {
+                Ok(canonical) => {
+                    return Ok(
+                        canonical.join(denied.file_name().ok_or("Invalid protected command path")?)
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    denied = parent.to_path_buf();
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+}
+
+/// Unix proxy modes keep direct egress and ingress denied. Windows requests
+/// admit only offline commands until strict proxy isolation is available.
+#[cfg(not(windows))]
+fn network_policy(proxy: Option<&proxy::Proxy>) -> NetworkPolicy {
     NetworkPolicy {
         egress: Some(NetworkEgressPolicy {
             default: Some(NetworkAction::Deny),
-            allow: if windows {
-                proxy.map(|proxy| {
-                    vec![NetworkRulePolicy {
-                        to: Some(vec![NetworkPeerPolicy::new("127.0.0.1/32")]),
-                        ports: Some(vec![NetworkPortPolicy {
-                            protocol: Some(NetworkProtocol::Tcp),
-                            port: Some(proxy.port),
-                            end_port: None,
-                        }]),
-                    }]
-                })
-            } else {
-                None
-            },
+            allow: None,
             deny: None,
         }),
         ingress: Some(NetworkIngressPolicy {
             default: Some(NetworkAction::Deny),
-            host_loopback: Some(if windows && proxy.is_some() {
+            host_loopback: Some(NetworkAction::Deny),
+        }),
+        runtime_config: proxy.map(|proxy| mxc_sdk::v1::NetworkRuntimeConfig {
+            network_proxy: Some(proxy.url()),
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn network_policy(proxy: Option<&proxy::Proxy>) -> NetworkPolicy {
+    use mxc_sdk::v1::{NetworkPeerPolicy, NetworkPortPolicy, NetworkProtocol, NetworkRulePolicy};
+    // Windows broadens host loopback beyond this native endpoint rule. The
+    // privileged guard must attach per-identity WFP restrictions before the
+    // command gate opens. Runtime proxy mode would grant inbound capability.
+    NetworkPolicy {
+        egress: Some(NetworkEgressPolicy {
+            default: Some(NetworkAction::Deny),
+            deny: None,
+            allow: proxy.map(|p| {
+                vec![NetworkRulePolicy {
+                    to: Some(vec![NetworkPeerPolicy::new("127.0.0.1/32")]),
+                    ports: Some(vec![NetworkPortPolicy {
+                        protocol: Some(NetworkProtocol::Tcp),
+                        port: Some(p.port),
+                        end_port: None,
+                    }]),
+                }]
+            }),
+        }),
+        ingress: Some(NetworkIngressPolicy {
+            default: Some(NetworkAction::Deny),
+            host_loopback: Some(if proxy.is_some() {
                 NetworkAction::Allow
             } else {
                 NetworkAction::Deny
             }),
         }),
-        runtime_config: if windows {
-            None
-        } else {
-            proxy.map(|proxy| NetworkRuntimeConfig {
-                network_proxy: Some(proxy.url()),
-            })
-        },
+        runtime_config: None,
     }
 }
 
@@ -251,11 +338,20 @@ fn shell_command(command: &str, _scratch: &Path) -> Result<String, String> {
         // Windows PowerShell 5 needs a process-local .NET proxy as well as env
         // variables; it does not discover HTTP_PROXY for Invoke-WebRequest.
         let script = _scratch.join("command.ps1");
-        std::fs::write(&script, command).map_err(|e| e.to_string())?;
-        let gate = format!("if ([Console]::ReadLine() -ne 'pipeline-command-start') {{ exit 125 }}; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; if ($env:HTTPS_PROXY) {{ [Net.WebRequest]::DefaultWebProxy = [Net.WebProxy]::new($env:HTTPS_PROXY) }}; & ([ScriptBlock]::Create([IO.File]::ReadAllText('{}')))", text(&script)?.replace('\'', "''"));
+        // A scriptblock invocation otherwise masks a final nonterminating
+        // cmdlet error or native exit code. Inspect success inside its scope,
+        // before the invocation itself can reset PowerShell's $? flag.
+        let body = format!(
+            "{command}\nif (-not $?) {{ if ($LASTEXITCODE) {{ exit $LASTEXITCODE }}; exit 1 }}"
+        );
+        std::fs::write(&script, body).map_err(|e| e.to_string())?;
+        // A fresh private profile has no module-analysis cache. Import the
+        // standard command modules directly to avoid scanning every installed
+        // module on the first Get-Content, Start-Process or Invoke-WebRequest.
+        let gate = format!("if ([Console]::ReadLine() -ne 'pipeline-command-start') {{ exit 125 }}; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding; Import-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -ErrorAction Stop; if ($env:HTTPS_PROXY) {{ [Net.WebRequest]::DefaultWebProxy = [Net.WebProxy]::new($env:HTTPS_PROXY) }}; & ([ScriptBlock]::Create([IO.File]::ReadAllText('{}'))); if (-not $?) {{ exit 1 }}", text(&script)?.replace('\'', "''"));
         let bytes: Vec<u8> = gate.encode_utf16().flat_map(u16::to_le_bytes).collect();
         Ok(format!(
-            "\"{}\" -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+            "\"{}\" -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand {}",
             shell.display(),
             base64::engine::general_purpose::STANDARD.encode(bytes)
         ))
@@ -273,22 +369,46 @@ fn shell_command(command: &str, _scratch: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
     #[tokio::test]
-    async fn windows_proxy_policy_does_not_grant_private_network_servers() {
+    async fn proxy_policy_keeps_direct_network_and_ingress_denied() {
         let proxy = proxy::Proxy::start(vec!["example.com".into()])
             .await
             .unwrap();
-        let policy = network_policy(Some(&proxy), true);
-        assert!(policy.runtime_config.is_none());
-        assert_eq!(policy.ingress.unwrap().default, Some(NetworkAction::Deny));
+        let policy = network_policy(Some(&proxy));
+        assert_eq!(
+            policy.runtime_config.unwrap().network_proxy,
+            Some(proxy.url())
+        );
+        let ingress = policy.ingress.unwrap();
+        assert_eq!(ingress.default, Some(NetworkAction::Deny));
+        assert_eq!(ingress.host_loopback, Some(NetworkAction::Deny));
         let egress = policy.egress.unwrap();
         assert_eq!(egress.default, Some(NetworkAction::Deny));
-        let rules = egress.allow.unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].to.as_ref().unwrap()[0].cidr, "127.0.0.1/32");
-        let ports = rules[0].ports.as_ref().unwrap();
-        assert_eq!(ports.len(), 1);
-        assert_eq!(ports[0].protocol, Some(NetworkProtocol::Tcp));
-        assert_eq!(ports[0].port, Some(proxy.port));
+        assert!(egress.allow.is_none());
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_proxy_policy_uses_only_the_guarded_endpoint() {
+        let proxy = proxy::Proxy::start(vec!["example.com".into()])
+            .await
+            .unwrap();
+        let policy = network_policy(Some(&proxy));
+        assert!(policy.runtime_config.is_none());
+        let ingress = policy.ingress.unwrap();
+        assert_eq!(ingress.default, Some(NetworkAction::Deny));
+        assert_eq!(ingress.host_loopback, Some(NetworkAction::Allow));
+        let egress = policy.egress.unwrap();
+        assert_eq!(egress.default, Some(NetworkAction::Deny));
+        let allow = egress.allow.unwrap();
+        assert_eq!(allow.len(), 1);
+        assert_eq!(allow[0].ports.as_ref().unwrap()[0].port, Some(proxy.port));
+        let offline = network_policy(None);
+        assert!(offline.egress.unwrap().allow.is_none());
+        assert_eq!(
+            offline.ingress.unwrap().host_loopback,
+            Some(NetworkAction::Deny)
+        );
     }
 }

@@ -87,17 +87,25 @@ pub fn run() {
             |context, request, responder| {
                 static READERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
                 let is_main = context.webview_label() == "main";
+                // Honor the configured dev server without allowing arbitrary local origins.
+                let dev_origin = context
+                    .app_handle()
+                    .config()
+                    .build
+                    .dev_url
+                    .as_ref()
+                    .map(|url| url.origin().ascii_serialization());
                 tauri::async_runtime::spawn(async move {
                     let permit = READERS.acquire().await;
-                    let response =
-                        tokio::task::spawn_blocking(move || file_stream::handle(&request, is_main))
-                            .await
-                            .unwrap_or_else(|_| {
-                                let mut response = tauri::http::Response::new(Vec::new());
-                                *response.status_mut() =
-                                    tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
-                                response
-                            });
+                    let response = tokio::task::spawn_blocking(move || {
+                        file_stream::handle(&request, is_main, dev_origin.as_deref())
+                    })
+                    .await
+                    .unwrap_or_else(|_| {
+                        let mut response = tauri::http::Response::new(Vec::new());
+                        *response.status_mut() = tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
+                        response
+                    });
                     drop(permit);
                     responder.respond(response);
                 });

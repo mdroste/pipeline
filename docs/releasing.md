@@ -201,11 +201,24 @@ Before you publish, test the candidate by hand:
 - On macOS, Linux, and supported Windows 11, run the native command probes:
   `cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1`.
   Confirm restricted reads and writes, allowed and blocked sites, direct-network
-  denial, and descendant cancellation. Windows Server CI checks compilation
+  denial, and descendant cancellation. On Windows and Linux, first build the
+  desktop executable with `cargo build --locked --bin pipeline-gui` and set
+  `PIPELINE_NATIVE_TEST_HELPER` to its absolute path. Windows also needs
+  `PIPELINE_LINK_TEST_MANIFEST=1` when compiling the test program.
+  Windows Server CI checks compilation
   and refusal on unsupported hosts; it does not qualify Windows 11 isolation.
   On macOS, also check children detached through `posix_spawn` with `SETSID`,
   including children that close their output pipes. They must stop with the command.
   Confirm Python and subprocess commands work, and cleanup preserves unrelated commands.
+  On Linux, check read-only and editable folders without `.env`. Create `.env`
+  during a command and confirm it stays unreadable. Check FUSE access and
+  app-specific namespace permissions with AppArmor enabled.
+  On Windows, run from a standard account. Accept and decline the firewall
+  guard's administrator prompt, and verify that offline commands need no prompt.
+  Check that a networked command still works after reopening Pipeline, and that
+  ending either Pipeline or the guard stops its commands. Test incoming IPv4
+  and IPv6 connections and access to unrelated local services. Force a guard
+  crash and confirm restrictions remain until cleanup stops its processes.
   Verify that allowed sites work, denied sites fail, and commands cannot bypass
   the site restriction. Check private-address and redirect denial in web tools.
 - On Windows, choose **Reveal in folder** on a file whose path has a space, and

@@ -177,12 +177,11 @@ fn parse_range(value: &str, size: u64) -> Result<Option<(u64, u64)>, ()> {
     }
     Ok(Some((first, last.min(size - 1))))
 }
-fn allowed_origin(origin: &str) -> bool {
+fn allowed_origin(origin: &str, dev_origin: Option<&str>) -> bool {
     matches!(
         origin,
         "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
-    ) || (cfg!(debug_assertions)
-        && matches!(origin, "http://localhost:1420" | "http://127.0.0.1:1420"))
+    ) || (cfg!(debug_assertions) && dev_origin == Some(origin))
 }
 fn status(code: StatusCode) -> Response<Vec<u8>> {
     let mut response = Response::new(Vec::new());
@@ -286,7 +285,11 @@ fn serve(request: &Request<Vec<u8>>, is_main: bool) -> Response<Vec<u8>> {
     response
 }
 /// Answer one request. `is_main` is whether it came from the main webview.
-pub fn handle(request: &Request<Vec<u8>>, is_main: bool) -> Response<Vec<u8>> {
+pub fn handle(
+    request: &Request<Vec<u8>>,
+    is_main: bool,
+    dev_origin: Option<&str>,
+) -> Response<Vec<u8>> {
     let mut response = serve(request, is_main);
     let headers = response.headers_mut();
     headers.insert(
@@ -297,7 +300,11 @@ pub fn handle(request: &Request<Vec<u8>>, is_main: bool) -> Response<Vec<u8>> {
     if let Some(origin) = request
         .headers()
         .get(header::ORIGIN)
-        .filter(|origin| origin.to_str().is_ok_and(allowed_origin))
+        .filter(|origin| {
+            origin
+                .to_str()
+                .is_ok_and(|value| allowed_origin(value, dev_origin))
+        })
         .cloned()
     {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
@@ -356,7 +363,7 @@ mod tests {
         if let Some(range) = range {
             request = request.header("range", range);
         }
-        handle(&request.body(Vec::new()).unwrap(), true)
+        handle(&request.body(Vec::new()).unwrap(), true, None)
     }
 
     #[test]
@@ -415,7 +422,7 @@ mod tests {
             .uri(format!("pipeline-file://localhost/{token}"))
             .body(Vec::new())
             .unwrap();
-        let other = handle(&request, false);
+        let other = handle(&request, false, None);
         assert_eq!(other.status(), StatusCode::FORBIDDEN);
         assert!(other.body().is_empty());
         let post = Request::builder()
@@ -423,7 +430,10 @@ mod tests {
             .uri(format!("pipeline-file://localhost/{token}"))
             .body(Vec::new())
             .unwrap();
-        assert_eq!(handle(&post, true).status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            handle(&post, true, None).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
         revoke(&token);
         assert_eq!(get(&token, None).status(), StatusCode::GONE);
     }
@@ -463,16 +473,28 @@ mod tests {
                 .body(Vec::new())
                 .unwrap()
         };
-        let app = handle(&request("tauri://localhost"), true);
+        let app = handle(&request("tauri://localhost"), true, None);
         assert_eq!(
             app.headers()["access-control-allow-origin"],
             "tauri://localhost"
         );
         for origin in ["null", "https://example.com"] {
-            assert!(!handle(&request(origin), true)
+            assert!(!handle(&request(origin), true, None)
                 .headers()
                 .contains_key("access-control-allow-origin"));
         }
+    }
+
+    #[test]
+    fn development_origin_matches_only_the_configured_server() {
+        let dev = Some("http://127.0.0.1:1422");
+        assert_eq!(
+            allowed_origin("http://127.0.0.1:1422", dev),
+            cfg!(debug_assertions)
+        );
+        assert!(!allowed_origin("http://127.0.0.1:1420", dev));
+        assert!(!allowed_origin("http://127.0.0.1:1422", None));
+        assert!(!allowed_origin("https://example.com", dev));
     }
 
     #[test]

@@ -45,9 +45,9 @@ describe("connection rows", () => {
       ["API keys", "Saved: OpenAI", "ok"],
       ["Local model server", "Running", "ok"],
     ]);
-    expect(rows[0].use).toMatch(/Conversations and Reviews/);
-    expect(rows[2].use).toMatch(/Conversations and reviews/);
-    expect(connectionSummary(rows)).toMatch(/Conversations and Reviews now/);
+    expect(rows[0].use).toBe("Your ChatGPT subscription");
+    expect(rows[2].use).toBe("The provider bills each use");
+    expect(connectionSummary(rows)).toBe("You're ready to get started.");
   });
 
   it("reports missing connections without claiming readiness", () => {
@@ -79,9 +79,7 @@ describe("connection rows", () => {
     });
     expect(apiOnly[0].status).toBe("Checking…");
     expect(apiOnly[1].status).toBe("Checking…");
-    expect(connectionSummary(apiOnly)).toMatch(
-      /start Conversations and Reviews now/,
-    );
+    expect(connectionSummary(apiOnly)).toBe("You're ready to get started.");
     // A finished request that returned nothing is not shown as loading.
     const unavailable = connectionRows({
       dependencies: null,

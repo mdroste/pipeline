@@ -92,7 +92,10 @@ repository.
 Pipeline includes the MIT-licensed Microsoft MXC Rust SDK for operating-system
 sandboxing. Its license and those of its Rust dependencies are included in the
 bundled library notices. Linux uses separately installed Bubblewrap,
-slirp4netns, iproute2, iptables, and util-linux.
+slirp4netns, iproute2, iptables, and util-linux. Its private filesystem view uses
+the kernel FUSE interface and the compiled `fuse-backend-rs` library, under its
+Apache-2.0 and BSD-3-Clause licenses. These license texts are included in the
+bundled library notices.
 
 Operating-system components, such as WebView2, WebKit, and macOS frameworks,
 aren't redistributed with Pipeline.

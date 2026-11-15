@@ -11,6 +11,10 @@ pub struct BuildConfig {
     pub timeout_seconds: u64,
     pub inputs: Vec<String>,
     pub advanced_argv: Option<Vec<String>>,
+    #[serde(default)]
+    pub automatic_dependencies: bool,
+    #[serde(default)]
+    pub executable: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,7 +172,7 @@ pub(super) fn save_build(
         .with_extension("")
         .to_string_lossy()
         .into_owned();
-    let argv = if let Some(argv) = &config.advanced_argv {
+    let mut argv = if let Some(argv) = &config.advanced_argv {
         argv.clone()
     } else {
         match config.engine.as_str() {
@@ -186,6 +190,7 @@ pub(super) fn save_build(
                 "latexmk".into(),
                 "-norc".into(),
                 "-pdf".into(),
+                "-recorder".into(),
                 "-no-shell-escape".into(),
                 "-interaction=nonstopmode".into(),
                 "-file-line-error".into(),
@@ -199,6 +204,32 @@ pub(super) fn save_build(
             }
         }
     };
+    if config.advanced_argv.is_none() {
+        if let Some(executable) = config.executable.as_deref().filter(|s| !s.is_empty()) {
+            let path = Path::new(executable);
+            if !path.is_absolute()
+                || !path
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().eq_ignore_ascii_case(&config.engine))
+            {
+                return Err(WorkbenchError::invalid(
+                    "Choose an absolute path to the selected TeX engine",
+                ));
+            }
+            argv[0] = executable.into();
+        } else if let Some(program) = research::tex_program(&config.engine) {
+            argv[0] = program.to_string_lossy().into_owned();
+        }
+    }
+    if config.automatic_dependencies {
+        inputs = super::tex_inputs::discover_project(
+            store,
+            ws,
+            &cwd,
+            &config,
+            std::slice::from_ref(&config.expected_pdf),
+        )?;
+    }
     // Even advanced TeX engine profiles retain the no-shell-escape policy.
     if argv
         .iter()
@@ -432,10 +463,27 @@ pub fn synchronize(store: &Store, request: SyncRequest) -> WorkbenchResult<Value
         .0,
     )
     .map_err(err)?;
-    let mut cmd =
-        std::process::Command::new(crate::deps::find_on_path("synctex").ok_or_else(|| {
-            WorkbenchError::invalid("SyncTeX is unavailable; use source/page navigation")
-        })?);
+    let sibling = e
+        .command
+        .first()
+        .map(Path::new)
+        .filter(|p| p.is_absolute())
+        .and_then(Path::parent)
+        .map(|p| {
+            p.join(if cfg!(windows) {
+                "synctex.exe"
+            } else {
+                "synctex"
+            })
+        })
+        .filter(|p| p.is_file());
+    let mut cmd = std::process::Command::new(
+        sibling
+            .or_else(|| crate::deps::find_on_path("synctex"))
+            .ok_or_else(|| {
+                WorkbenchError::invalid("SyncTeX is unavailable; use source/page navigation")
+            })?,
+    );
     if let Some(source) = request.source_path {
         files::relative(&source)?;
         if !e.input_manifest["files"]

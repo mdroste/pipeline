@@ -1,4 +1,6 @@
+import { saveRetainedManuscriptDrafts } from "./manuscriptDrafts";
 import { useDraftFlush } from "../../hooks/useDraftFlush";
+import type { PdfPosition } from "../file-workspace/PdfReader";
 import SourceEditor, {
   type SourceEditorHandle,
   type SourceLineRequest,
@@ -18,7 +20,7 @@ import {
 } from "../../lib/studioClient";
 import { proseForDiff } from "../../lib/studioPresentation";
 import { lineDiff } from "../../lib/diff";
-import type { ProjectRecord } from "../../lib/projectClient";
+import { projectClient, type ProjectRecord } from "../../lib/projectClient";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
 import useReopenCount from "../../hooks/useReopenCount";
@@ -97,6 +99,7 @@ export default function Manuscript({
   const [menu, setMenu] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const [buildSheet, setBuildSheet] = useState(false);
+  const [buildPrepared, setBuildPrepared] = useState(false);
   const [side, setSide] = useState<SidePanel | null>(null);
   const sideClosed = useRef(false);
   const editor = useRef<SourceEditorHandle>(null);
@@ -108,7 +111,16 @@ export default function Manuscript({
   const [buildsLoaded, setBuildsLoaded] = useState(false);
   const [config, setConfig] = useState(initialBuild);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
-  const [configId, setConfigId] = useState("");
+  const [configId, selectConfigId] = useState("");
+  const configKey = `pipeline.manuscriptBuild.${workspaceId}`;
+  const setConfigId = (id: string) => {
+    selectConfigId(id);
+    try {
+      localStorage.setItem(configKey, id);
+    } catch {
+      /* Saved configurations remain in the project. */
+    }
+  };
   const [advanced, setAdvanced] = useState("");
   const [selectedBuild, setSelectedBuild] = useState("");
   const [compareBuild, setCompareBuild] = useState("");
@@ -122,7 +134,19 @@ export default function Manuscript({
     null,
   );
   const [pdfPage, setPdfPage] = useState(1);
+  const pdfPosition = useRef<PdfPosition>({ page: 1 });
   const { error, busy, run, setError } = useAction();
+  // New projects need an inventory before the file switcher can list sections.
+  const inventoryRequested = useRef(false);
+  useEffect(() => {
+    if (active === false || data.inventory || inventoryRequested.current)
+      return;
+    inventoryRequested.current = true;
+    void projectClient
+      .mutate(workspaceId, { action: "checkForChanges" })
+      .then(onRefresh)
+      .catch((cause) => setError(workbenchErrorMessage(cause)));
+  }, [workspaceId, active, data.inventory, onRefresh, setError]);
   const refresh = async () =>
     setBuilds(await studioClient.records(workspaceId, "build"));
   const reopened = useReopenCount(active);
@@ -332,9 +356,16 @@ export default function Manuscript({
   useEffect(() => {
     if (autoOpened.current || !buildsLoaded) return;
     autoOpened.current = true;
-    const saved = configs[0]?.body.config;
+    let preferred: string | null = null;
+    try {
+      preferred = localStorage.getItem(configKey);
+    } catch {
+      /* Use the latest saved configuration. */
+    }
+    const selected = configs.find((c) => c.id === preferred) ?? configs[0];
+    const saved = selected?.body.config;
     if (saved) {
-      setConfigId(configs[0].id);
+      setConfigId(selected.id);
       setConfig(saved);
       setAdvanced(
         saved.advancedArgv ? JSON.stringify(saved.advancedArgv, null, 2) : "",
@@ -342,7 +373,7 @@ export default function Manuscript({
     }
     const root =
       saved &&
-      (saved.directory === "."
+      (saved.directory === "." || !saved.directory
         ? saved.rootDocument
         : `${saved.directory}/${saved.rootDocument}`);
     const target =
@@ -354,7 +385,10 @@ export default function Manuscript({
       "main.tex";
     void run(async () => {
       try {
-        await openFile(target, checkpoint);
+        await openFile(
+          target,
+          cached.current ? checkpoint : (saved?.checkpointId ?? ""),
+        );
       } catch {
         setPath(fileOptions.includes(target) ? target : "");
       }
@@ -471,37 +505,38 @@ export default function Manuscript({
       setFileState("compared");
       setShowChanges(true);
     });
-  const save = () =>
-    run(async () => {
-      if (!file) return;
-      let response: { hash: string };
-      try {
-        response = await studioClient.mutate<{ hash: string }>(workspaceId, {
-          action: "saveText",
-          checkpointId: file.checkpointId,
-          path: file.path,
-          expectedHash: file.hash,
-          content: draft,
-        });
-      } catch (e) {
-        // A conflict is a newer file, or a save refused while a response runs.
-        if ((e as { code?: unknown } | null)?.code !== "storage_conflict")
-          throw e;
-        const current = await studioClient.editor(
-          workspaceId,
-          file.path,
-          file.checkpointId,
-        );
-        if (current.hash === file.hash) throw e;
-        setFileState("changed");
-        return;
-      }
-      setFile({ ...file, content: draft, hash: response.hash });
-      setFileState("current");
-      forgetDraft();
-      setNotice("Saved. Rebuild the manuscript to check the updated files.");
-      await onRefresh();
-    });
+  const saveCurrent = async () => {
+    if (!file) return true;
+    let response: { hash: string };
+    try {
+      response = await studioClient.mutate<{ hash: string }>(workspaceId, {
+        action: "saveText",
+        checkpointId: file.checkpointId,
+        path: file.path,
+        expectedHash: file.hash,
+        content: draft,
+      });
+    } catch (e) {
+      // A conflict is a newer file, or a save refused while a response runs.
+      if ((e as { code?: unknown } | null)?.code !== "storage_conflict")
+        throw e;
+      const current = await studioClient.editor(
+        workspaceId,
+        file.path,
+        file.checkpointId,
+      );
+      if (current.hash === file.hash) throw e;
+      setFileState("changed");
+      return false;
+    }
+    setFile({ ...file, content: draft, hash: response.hash });
+    setFileState("current");
+    forgetDraft();
+    setNotice("Saved. Rebuild the manuscript to check the updated files.");
+    await onRefresh();
+    return true;
+  };
+  const save = () => run(saveCurrent);
   /** Follow a click in the PDF back to its source line. */
   const fromPdf = (point: { page: number; x: number; y: number }) =>
     run(async () => {
@@ -515,12 +550,29 @@ export default function Manuscript({
       const first = mapped.candidates.find((c) => c.sourcePath && c.line);
       if (first) await navigateSource(prefix + first.sourcePath!, first.line!);
     });
-  const openBuild = () => {
-    sideClosed.current = false;
-    if (!configId && !configs.length && file)
-      setConfig(suggestBuild(file.path, projectFiles));
-    setBuildSheet(true);
-  };
+  const openBuild = () =>
+    run(async () => {
+      sideClosed.current = false;
+      setBuildPrepared(false);
+      if (configId && (config.checkpointId ?? "") !== checkpoint) {
+        setBuildSheet(true);
+        throw new Error(
+          "The saved build uses a different working copy. Choose Build in under Build settings to match the editor before building.",
+        );
+      }
+      if (dirty && !(await saveCurrent())) return;
+      await saveRetainedManuscriptDrafts(workspaceId, checkpoint, file?.path);
+      if (!configId && !configs.length && file)
+        setConfig({
+          ...suggestBuild(file.path),
+          checkpointId: checkpoint || null,
+        });
+      setBuildPrepared(true);
+      setBuildSheet(true);
+    });
+  const building = data.executions.some(
+    (e) => e.adapter === "latex" && ["queued", "running"].includes(e.outcome),
+  );
   const errors = receipt?.diagnostics.filter(
     (d) => d.severity === "error",
   ).length;
@@ -607,19 +659,10 @@ export default function Manuscript({
             Compare with current file
           </button>
         )}
-        {dirty && (
-          <button
-            className="file-action"
-            disabled={busy}
-            onClick={() => void discard()}
-          >
-            Discard unsaved draft
-          </button>
-        )}
         {file && dirty && (
           <button
             ref={saveButton}
-            className="file-action primary"
+            className="file-action"
             disabled={busy}
             title="Command/Ctrl+S"
             onClick={() => void save()}
@@ -642,10 +685,11 @@ export default function Manuscript({
           </button>
         )}
         <button
-          className={`file-action${dirty ? "" : " primary"}`}
-          onClick={openBuild}
+          className="file-action primary"
+          disabled={busy || building || fileState === "changed"}
+          onClick={() => void openBuild()}
         >
-          Build
+          {building ? "Building…" : dirty ? "Save and build" : "Build"}
         </button>
         <IconButton
           size="sm"
@@ -676,9 +720,23 @@ export default function Manuscript({
           anchorRef={menuButton}
           label="More manuscript actions"
         >
+          <MenuItem
+            disabled={busy}
+            onSelect={() => {
+              setBuildPrepared(false);
+              setBuildSheet(true);
+            }}
+          >
+            Build settings
+          </MenuItem>
           <MenuItem disabled={!path || busy} onSelect={() => void load()}>
             Reload file
           </MenuItem>
+          {dirty && (
+            <MenuItem disabled={busy} onSelect={() => void discard()}>
+              Discard unsaved draft
+            </MenuItem>
+          )}
           {dirty && (
             <MenuItem disabled={busy} onSelect={() => void compare()}>
               Compare with current file
@@ -764,10 +822,14 @@ export default function Manuscript({
             <div className="file-empty">
               <EmptyState
                 icon={<Icon name="file" className="h-8 w-8" />}
-                title="No manuscript file open"
+                title={
+                  !buildsLoaded || busy
+                    ? "Opening manuscript…"
+                    : "No manuscript file open"
+                }
                 description={
-                  busy
-                    ? "Opening the file…"
+                  !buildsLoaded || busy
+                    ? "Loading your manuscript and build settings."
                     : "Choose a TeX, Markdown, BibTeX, or text file from the project."
                 }
               />
@@ -802,6 +864,11 @@ export default function Manuscript({
                       title="Exact build PDF"
                       compact
                       initialPage={pdfPage}
+                      position={{ ...pdfPosition.current, page: pdfPage }}
+                      onPosition={(position) => {
+                        pdfPosition.current = position;
+                        setPdfPage(position.page);
+                      }}
                       capture={workspaceFileAdapter({
                         workspaceId,
                         revisionId: receipt.pdf.revision.id,
@@ -874,6 +941,12 @@ export default function Manuscript({
           width={420}
         >
           <ManuscriptBuildSheet
+            readyToBuild={
+              buildPrepared &&
+              !dirty &&
+              !building &&
+              (config.checkpointId ?? "") === checkpoint
+            }
             workspaceId={workspaceId}
             busy={busy}
             run={run}
@@ -898,6 +971,8 @@ export default function Manuscript({
             onQueued={() => {
               setBuildSheet(false);
               setNotice(BUILD_STARTED);
+              sideClosed.current = false;
+              void run(onRefresh);
             }}
           />
         </Sheet>

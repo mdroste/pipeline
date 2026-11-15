@@ -159,14 +159,11 @@ describe("Get started sheet", () => {
     expect(within(list).getByText("Installed and signed in")).toBeVisible();
     expect(within(list).getByText("Saved: Anthropic")).toBeVisible();
     expect(within(list).getByText("Not running")).toBeVisible();
-    expect(within(list).getAllByText(/Conversations and Reviews/)).toHaveLength(
-      2,
-    );
-    expect(within(list).getAllByText(/Conversations and reviews/)).toHaveLength(
-      2,
-    );
+    expect(
+      within(dialog).queryByText(/Conversations and Reviews/i),
+    ).not.toBeInTheDocument();
     expect(within(dialog).getByRole("status")).toHaveTextContent(
-      "You can start Conversations and Reviews now.",
+      "You're ready to get started.",
     );
 
     await user.click(

@@ -21,19 +21,35 @@ against the current file. A file with no draft updates by itself.
 
 To build the manuscript:
 
-1. Choose **Build**. Pipeline suggests the root TeX file and the files beside
-   it. Check the engine: pdflatex, xelatex, lualatex, or latexmk.
-2. List every section, bibliography, table, and figure the build uses. Pipeline
-   tracks changes only in the files you list. **More build settings** holds the
-   expected PDF, working directory, and timeout.
-3. Choose **Save build settings**, then **Review test run** and
-   **Authorize and start test**. After a passing test, **Build** goes straight
-   to **Review run**.
+1. Choose **Build**, or **Save and build** when the open file has edits.
+   Pipeline saves manuscript drafts in the selected working copy before preparing
+   the build. A file conflict stops the build and keeps the conflicting draft.
+2. Check **Root TeX document** and **Engine**. Pipeline detects installed TeX
+   tools and suggests latexmk when available. Open **TeX installation** to choose
+   a different executable or repeat detection.
+3. Leave **Track dependencies automatically** on to find sources, bibliographies,
+   and figures throughout the build folder before each build. TeX's recorder
+   also supplies other local inputs after a build. Put unusual inputs needed for
+   the first build under **More build settings**. Turn automatic tracking off to
+   list every input yourself.
+4. Choose **Save build settings**. Review the command, then choose
+   **Authorize and build**.
+
+The project saves its root document, engine, executable choice, and build settings.
+When you return, Manuscript restores your selected configuration. Later builds
+open the command review directly. **More manuscript actions → Build settings**
+opens settings without saving manuscript drafts. **More build settings** holds
+extra inputs, saved configurations, the expected PDF, working directory, and timeout.
+
+Automatic tracking covers up to 1,000 inputs inside the build folder. It skips
+links, cache folders, and generated TeX files. For a larger folder, use a smaller
+build folder or list inputs manually. It includes nearby source files even when
+the current document does not use them.
 
 Shell escape is always off. A successful build keeps its PDF, log, and SyncTeX
 file. When a build ends, its result opens beside the source: the PDF, or its
-errors with file and line if there is no PDF. Double-click the PDF to find the
-source line.
+errors with file and line if there is no PDF. The PDF keeps your page and zoom
+when a new build opens. Double-click the PDF to find the source line.
 
 The panel beside the source has two views. **PDF** shows the build. **Builds**
 lists past builds and the chosen build's messages, with **Find between source and

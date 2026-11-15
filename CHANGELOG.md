@@ -5,6 +5,17 @@ public release was not tracked as a stable release series.
 
 ## 1.4.6 — 2026-11-11
 
+- Simplify provider descriptions in **Get started with Pipeline** by removing
+  repeated Conversations and Reviews labels.
+
+- Streamline manuscript build review and keep PDF previews updating while the
+  development window is in the background. Populate the file switcher for new
+  projects and support PDF previews with a custom development server.
+
+- Detect local TeX installations in Projects, remember manuscript build choices,
+  discover local dependencies before each build, and save manuscript drafts
+  before opening the build review and refreshing the PDF preview.
+
 - Simplify Projects around choosing or creating a project, with compact rows,
   search, and pins. Keep conversations available under **Browse chats**.
 
@@ -15,6 +26,18 @@ public release was not tracked as a stable release series.
   filtered network proxy. Keep restricted file access, allowed sites, bounded
   output, and cancellation. Add PowerShell commands on supported Windows 11
   systems alongside Bash on macOS and Linux.
+
+- Start Linux commands in folders without `.env` without creating files there.
+  Keep protected files hidden if they appear while a command runs, using the
+  system FUSE interface and a private filesystem view.
+
+- Fix Windows command startup when protected credential folders are absent,
+  launch child programs with the Windows environment they need, preserve command
+  exit codes, and keep child commands in the selected project folder.
+  Restore restricted command internet access with a temporary firewall guard.
+  Windows asks for administrator approval on first use after opening Pipeline;
+  the app and commands keep their ordinary permissions. Preserve restrictions
+  after guard failure and clean up processes before releasing the proxy.
 
 - Align shared buttons, fields, status labels, menus, and page headers across
   both themes. Keep help visible inside dialogs, support keyboard navigation

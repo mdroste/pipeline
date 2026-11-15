@@ -18,7 +18,11 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   sync: vi.fn(),
   listExecutionProfiles: vi.fn(),
+  detectToolchains: vi.fn(),
+  previewExecution: vi.fn(),
+  projectMutate: vi.fn(),
   goToLine: vi.fn(),
+  pdf: vi.fn(),
   editorProps: [] as Array<{ path: string; reveal?: SourceLineRequest | null }>,
   confirmDialog: vi.fn(),
 }));
@@ -29,11 +33,23 @@ vi.mock("../../lib/studioClient", async (original) => ({
 vi.mock("../../lib/workbench/executionClient", () => ({
   executionClient: mocks,
 }));
+vi.mock("../../lib/projectClient", async (original) => ({
+  ...(await original<typeof import("../../lib/projectClient")>()),
+  projectClient: {
+    previewExecution: mocks.previewExecution,
+    mutate: mocks.projectMutate,
+  },
+}));
 vi.mock("../DialogService", () => ({ confirmDialog: mocks.confirmDialog }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../file-workspace/PdfComparison", () => ({ default: () => null }));
-vi.mock("../file-workspace/PdfReader", () => ({ default: () => null }));
+vi.mock("../file-workspace/PdfReader", () => ({
+  default: (props: unknown) => {
+    mocks.pdf(props);
+    return null;
+  },
+}));
 vi.mock("../file-workspace/SourceEditor", async () => {
   const { forwardRef, useImperativeHandle } = await import("react");
   return {
@@ -78,7 +94,16 @@ beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
   mocks.editorProps = [];
+  mocks.projectMutate.mockResolvedValue({});
   mocks.listExecutionProfiles.mockResolvedValue([]);
+  mocks.detectToolchains.mockResolvedValue({ tools: [] });
+  mocks.previewExecution.mockResolvedValue({
+    command: ["latexmk", "main.tex"],
+    cwd: "/paper",
+    inputs: {},
+    launch: {},
+    outputs: ["main.pdf"],
+  });
   mocks.editor.mockResolvedValue({
     path: "main.tex",
     content: "\\section{Intro}",
@@ -248,20 +273,13 @@ it("inspects a finished build without being asked", async () => {
   expect(mocks.mutate).toHaveBeenCalledOnce();
 });
 
-it("suggests a first build from the open file and the files beside it", () => {
-  expect(
-    suggestBuild("paper/main.tex", [
-      "paper/main.tex",
-      "paper/refs.bib",
-      "paper/main.pdf",
-      "paper/fig/a.png",
-      "notes.md",
-    ]),
-  ).toMatchObject({
+it("starts a first build with automatic dependencies instead of a stale file list", () => {
+  expect(suggestBuild("paper/main.tex")).toMatchObject({
     directory: "paper",
     rootDocument: "main.tex",
     expectedPdf: "main.pdf",
-    inputs: ["main.tex", "refs.bib", "fig/a.png"],
+    inputs: ["main.tex"],
+    automaticDependencies: true,
   });
 });
 
@@ -357,7 +375,9 @@ it("keeps a draft when the file changes, and Compare lets it save", async () => 
   );
   expect(editor).toHaveValue("My draft");
   mocks.mutate.mockResolvedValue({ hash: "saved" });
-  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Save (working copy|task draft)$/ }),
+  );
   await waitFor(() =>
     expect(mocks.mutate).toHaveBeenCalledWith(
       "ws",
@@ -378,7 +398,9 @@ it("turns a refused save into a way forward, not a dead end", async () => {
     message: "This file changed outside the editor.",
   });
   mocks.editor.mockResolvedValue(onDisk("Accepted edit", "accepted"));
-  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Save (working copy|task draft)$/ }),
+  );
   expect(
     await screen.findByRole("button", { name: "Compare with current file" }),
   ).toBeVisible();
@@ -396,7 +418,9 @@ it("reports a save refused while a response runs as that, not as a change", asyn
     code: "storage_conflict",
     message: "Stop the running response before saving.",
   });
-  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Save (working copy|task draft)$/ }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Stop the running response",
   );
@@ -410,7 +434,10 @@ it("discards and reloads a draft only after asking", async () => {
   fireEvent.change(editor, { target: { value: "My draft" } });
   mocks.confirmDialog.mockResolvedValueOnce(false);
   fireEvent.click(
-    screen.getByRole("button", { name: "Discard unsaved draft" }),
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Discard unsaved draft" }),
   );
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledOnce());
   expect(editor).toHaveValue("My draft");
@@ -531,7 +558,10 @@ it("keeps edits delivered after discard confirmation while the file is loading",
   );
   const reads = mocks.editor.mock.calls.length;
   fireEvent.click(
-    screen.getByRole("button", { name: "Discard unsaved draft" }),
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Discard unsaved draft" }),
   );
   await waitFor(() => expect(mocks.editor).toHaveBeenCalledTimes(reads + 1));
   expect(editor).toHaveAttribute("readonly");
@@ -603,4 +633,233 @@ it("keeps the open copy identified when it leaves the list of available edits", 
   expect(
     screen.getByRole("option", { name: /no longer available/ }),
   ).toBeDisabled();
+});
+
+const buildSettings = (
+  id: string,
+  rootDocument = "main.tex",
+  engine = "latexmk",
+) => ({
+  id,
+  revision: 1,
+  body: {
+    recordType: "configuration",
+    config: {
+      name: "Paper",
+      checkpointId: null,
+      directory: ".",
+      rootDocument,
+      expectedPdf: "main.pdf",
+      engine,
+      timeoutSeconds: 120,
+      inputs: [rootDocument],
+      advancedArgv: null,
+      automaticDependencies: true,
+      executable: null,
+    },
+    profile: { id: `profile_${id}`, revision: 1, testStatus: "passed" },
+  },
+});
+
+it("restores the selected root and engine when returning to a project", async () => {
+  localStorage.setItem("pipeline.manuscriptBuild.ws", "chosen");
+  mocks.records.mockResolvedValue([
+    buildSettings("latest"),
+    buildSettings("chosen", "appendix.tex", "xelatex"),
+  ]);
+  mocks.editor.mockResolvedValue({
+    path: "appendix.tex",
+    content: "Appendix",
+    hash: "appendix",
+    checkpointId: null,
+  });
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await screen.findByLabelText("Manuscript source editor");
+  expect(mocks.editor).toHaveBeenCalledWith("ws", "appendix.tex", null);
+  fireEvent.click(screen.getByRole("button", { name: "Build" }));
+  await screen.findByText("xelatex · appendix.tex");
+  await waitFor(() =>
+    expect(mocks.previewExecution).toHaveBeenCalledWith("profile_chosen"),
+  );
+});
+
+it("saves open and retained drafts before reviewing the build", async () => {
+  mocks.records.mockResolvedValue([buildSettings("paper")]);
+  mocks.mutate.mockResolvedValue({ hash: "saved" });
+  const retained = {
+    file: {
+      path: "section.tex",
+      hash: "section",
+      content: "old",
+      checkpointId: null,
+    },
+    draft: "new section",
+  };
+  localStorage.setItem(
+    "pipeline.manuscriptDraft.ws.working.section.tex",
+    JSON.stringify(retained),
+  );
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  fireEvent.change(await screen.findByLabelText("Manuscript source editor"), {
+    target: { value: "new main" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save and build" }));
+  await waitFor(() => expect(mocks.previewExecution).toHaveBeenCalled());
+  expect(mocks.mutate).toHaveBeenNthCalledWith(
+    1,
+    "ws",
+    expect.objectContaining({
+      action: "saveText",
+      path: "main.tex",
+      content: "new main",
+    }),
+  );
+  expect(mocks.mutate).toHaveBeenNthCalledWith(
+    2,
+    "ws",
+    expect.objectContaining({
+      action: "saveText",
+      path: "section.tex",
+      content: "new section",
+    }),
+  );
+  expect(mocks.previewExecution.mock.invocationCallOrder[0]).toBeGreaterThan(
+    mocks.mutate.mock.invocationCallOrder[1],
+  );
+  expect(
+    localStorage.getItem("pipeline.manuscriptDraft.ws.working.section.tex"),
+  ).toBeNull();
+});
+
+it("keeps a conflicting retained draft and never prepares its build", async () => {
+  mocks.records.mockResolvedValue([buildSettings("paper")]);
+  mocks.mutate.mockRejectedValue(new Error("section.tex changed; reopen it"));
+  const retained = JSON.stringify({
+    file: {
+      path: "section.tex",
+      hash: "section",
+      content: "old",
+      checkpointId: null,
+    },
+    draft: "new section",
+  });
+  localStorage.setItem(
+    "pipeline.manuscriptDraft.ws.working.section.tex",
+    retained,
+  );
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await screen.findByLabelText("Manuscript source editor");
+  fireEvent.click(screen.getByRole("button", { name: "Build" }));
+  await screen.findByText(/section.tex changed; reopen it/);
+  expect(mocks.previewExecution).not.toHaveBeenCalled();
+  expect(
+    localStorage.getItem("pipeline.manuscriptDraft.ws.working.section.tex"),
+  ).toBe(retained);
+});
+
+it("keeps the PDF page and zoom when a completed build replaces the preview", async () => {
+  const props = {
+    workspaceId: "ws",
+    data,
+    onRefresh: vi.fn(),
+    onDocument: vi.fn(),
+  };
+  const view = render(<Manuscript {...props} />);
+  await waitFor(() => expect(mocks.pdf).toHaveBeenCalled());
+  act(() =>
+    mocks.pdf.mock.lastCall![0].onPosition({
+      page: 4,
+      scale: "1.5",
+      rotation: 0,
+    }),
+  );
+  const next = {
+    id: "build_next",
+    revision: 1,
+    body: {
+      recordType: "receipt",
+      executionId: "next",
+      outcome: "completed",
+      diagnostics: [],
+      pdf: { revision: { id: "next-pdf" } },
+    },
+  };
+  mocks.records.mockResolvedValue([next]);
+  view.rerender(
+    <Manuscript
+      {...props}
+      data={{
+        ...data,
+        executions: [
+          { id: "next", adapter: "latex", outcome: "completed" },
+        ] as ProjectHome["executions"],
+      }}
+    />,
+  );
+  await waitFor(() =>
+    expect(mocks.pdf.mock.lastCall![0]).toMatchObject({
+      documentKey: "ws:next-pdf",
+      position: { page: 4, scale: "1.5" },
+    }),
+  );
+});
+
+it("loads an inventory for a newly attached project before listing manuscript files", async () => {
+  const onRefresh = vi.fn();
+  const view = render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={onRefresh}
+      onDocument={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(mocks.projectMutate).toHaveBeenCalledWith("ws", {
+      action: "checkForChanges",
+    }),
+  );
+  await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  view.rerender(
+    <Manuscript
+      workspaceId="ws"
+      data={
+        {
+          ...data,
+          inventory: {
+            body: {
+              files: [{ path: "main.tex" }, { path: "sections/intro.tex" }],
+            },
+          },
+        } as ProjectHome
+      }
+      onRefresh={onRefresh}
+      onDocument={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("option", { name: "sections/intro.tex" }),
+  ).toBeInTheDocument();
+  expect(mocks.projectMutate).toHaveBeenCalledOnce();
 });

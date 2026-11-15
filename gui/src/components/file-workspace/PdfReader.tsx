@@ -1,4 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
+import { Icon } from "../../ui/icons";
 import { pdfAssetOptions } from "../../lib/pdfAssets";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -674,8 +675,13 @@ export default function PdfReader(props: Props) {
             disabled={!pdf || page <= 1}
             onClick={() => go(page - 1)}
             aria-label="Previous PDF page"
+            title="Previous PDF page"
           >
-            Previous
+            {props.compact ? (
+              <Icon name="chevron-right" className="h-4 w-4 rotate-180" />
+            ) : (
+              "Previous"
+            )}
           </button>
           <label>
             Page{" "}
@@ -690,8 +696,13 @@ export default function PdfReader(props: Props) {
             disabled={!pdf || page >= pdf.numPages}
             onClick={() => go(page + 1)}
             aria-label="Next PDF page"
+            title="Next PDF page"
           >
-            Next
+            {props.compact ? (
+              <Icon name="chevron-right" className="h-4 w-4" />
+            ) : (
+              "Next"
+            )}
           </button>
           <button
             aria-label="Zoom out"
@@ -756,8 +767,13 @@ export default function PdfReader(props: Props) {
             </button>
           )}
           {props.compact && (
-            <button aria-pressed={finding} onClick={() => setFinding(!finding)}>
-              Find text
+            <button
+              aria-label="Find text"
+              title="Find text (⌘/Ctrl+F)"
+              aria-pressed={finding}
+              onClick={() => setFinding(!finding)}
+            >
+              <Icon name="search" className="h-4 w-4" />
             </button>
           )}
         </div>

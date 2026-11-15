@@ -3,21 +3,28 @@
 //! sockets must not bridge to host daemons, and nested namespaces/io_uring must
 //! not evade the namespace or syscall restrictions. No helper download.
 use std::os::unix::process::CommandExt;
+mod filesystem;
+#[cfg(test)]
+mod tests;
+mod view;
+pub(super) use view::View;
 
 pub(super) fn command(command: &str) -> Result<(String, std::path::PathBuf), String> {
+    #[cfg(not(test))]
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    #[cfg(test)]
+    let executable = std::env::var_os("PIPELINE_NATIVE_TEST_HELPER")
+        .map(std::path::PathBuf::from)
+        .ok_or("Set PIPELINE_NATIVE_TEST_HELPER to the built Pipeline executable for Linux native tests")?;
     let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
     let path = executable
         .to_str()
         .ok_or("Invalid command executable path")?;
-    #[cfg(not(test))]
     let entry = format!(
         "{} --pipeline-native-command {}",
         quote(path),
         quote(command)
     );
-    #[cfg(test)]
-    let entry = format!("PIPELINE_TEST_COMMAND={} {} --exact workbench::shell::tests::linux_command_guard_entry --ignored --nocapture", quote(command), quote(path));
     Ok((entry, executable))
 }
 
@@ -37,6 +44,10 @@ pub(crate) fn run_if_requested() -> bool {
 }
 
 pub(super) fn execute(command: &str) -> ! {
+    if let Err(error) = view::enter() {
+        eprintln!("Could not isolate the command folder: {error}");
+        std::process::exit(125);
+    }
     if let Err(error) = install_filter() {
         eprintln!("Could not restrict command system calls: {error}");
         std::process::exit(125);

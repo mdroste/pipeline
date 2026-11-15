@@ -80,6 +80,8 @@ export interface BuildConfig {
   timeoutSeconds: number;
   inputs: string[];
   advancedArgv: string[] | null;
+  automaticDependencies?: boolean;
+  executable?: string | null;
 }
 export interface BuildRecord {
   recordType: "configuration";

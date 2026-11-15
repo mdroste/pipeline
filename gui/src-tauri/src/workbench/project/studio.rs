@@ -5,6 +5,8 @@ mod manuscript;
 mod results;
 mod review;
 mod synctex_paths;
+mod tex_inputs;
+pub(crate) use tex_inputs::refresh_manuscript_inputs;
 mod theory;
 pub use literature::*;
 pub use manuscript::*;

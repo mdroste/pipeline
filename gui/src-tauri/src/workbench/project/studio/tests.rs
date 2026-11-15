@@ -202,6 +202,8 @@ fn build_config_is_inert_and_retains_declared_root() {
         root_document: "main.tex".into(),
         expected_pdf: "main.pdf".into(),
         engine: "pdflatex".into(),
+        automatic_dependencies: false,
+        executable: None,
         timeout_seconds: 120,
         inputs: vec!["main.tex".into()],
         advanced_argv: None,
@@ -720,13 +722,10 @@ fn live_studio_build_and_synctex() {
         root_document: "main.tex".into(),
         expected_pdf: "main.pdf".into(),
         engine: "latexmk".into(),
+        automatic_dependencies: true,
+        executable: None,
         timeout_seconds: 60,
-        inputs: vec![
-            "main.tex".into(),
-            "section.tex".into(),
-            "table.tex".into(),
-            "references.bib".into(),
-        ],
+        inputs: vec!["main.tex".into()],
         advanced_argv: None,
     };
     let record = save_build(&f.store, &f.ws, None, 0, config).unwrap();
@@ -865,3 +864,5 @@ fn live_studio_result_exporters() {
     )
     .unwrap();
 }
+
+mod tex_build;

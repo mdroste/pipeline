@@ -19,7 +19,7 @@ const HASH_LIMIT: u64 = 64 * 1024 * 1024;
 /// never started during detection.
 pub(super) fn version_args(kind: &str) -> Option<&'static [&'static str]> {
     match kind {
-        "r" | "python" | "julia" | "quarto" => Some(&["--version"]),
+        "r" | "python" | "julia" | "quarto" | "latex" => Some(&["--version"]),
         "jupyter" => Some(&["nbconvert", "--version"]),
         _ => None,
     }
@@ -27,6 +27,7 @@ pub(super) fn version_args(kind: &str) -> Option<&'static [&'static str]> {
 
 pub(super) fn version_command(kind: &str) -> &'static str {
     match kind {
+        "latex" => "TeX version command",
         "r" => "Rscript --version",
         "python" => "python --version",
         "julia" => "julia --version",
@@ -38,6 +39,7 @@ pub(super) fn version_command(kind: &str) -> &'static str {
 
 pub(super) fn adapter_for(kind: &str) -> Option<&'static str> {
     match kind {
+        "latex" => Some("latex"),
         "stata" => Some("stata"),
         "r" => Some("r"),
         "python" => Some("python"),
@@ -93,7 +95,11 @@ pub(super) fn version_text(
     prefix: &[OsString],
     path: &OsStr,
 ) -> Option<String> {
-    let args = version_args(kind)?;
+    let args = if kind == "latex" && program.file_stem().is_some_and(|s| s == "latexmk") {
+        &["-norc", "-v"][..]
+    } else {
+        version_args(kind)?
+    };
     let mut command = Command::new(program);
     command
         .args(prefix)

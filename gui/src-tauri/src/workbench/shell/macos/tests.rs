@@ -104,7 +104,7 @@ print('foreground-ready', flush=True)
             if matches!(end, End::Timeout) {
                 request.timeout_ms = Some(3000);
             }
-            process::run(request, scratch).await
+            process::run(request, scratch, None).await
         });
         let started = std::time::Instant::now();
         if matches!(end, End::Cancellation) {

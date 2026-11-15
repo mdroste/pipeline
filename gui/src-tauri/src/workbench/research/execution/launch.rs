@@ -23,9 +23,20 @@ fn profile_environment<'a>(profile: &'a ExecutionProfile, key: &str) -> Option<&
 }
 
 fn effective_path(profile: &ExecutionProfile) -> String {
-    profile_environment(profile, "PATH")
+    let path = profile_environment(profile, "PATH")
         .map(str::to_owned)
-        .unwrap_or_else(crate::env::full_path)
+        .unwrap_or_else(crate::env::full_path);
+    // latexmk launches sibling engines and bibliography tools. A detected or
+    // manually chosen distribution must work even when absent from the GUI PATH.
+    if profile.adapter == "latex" && Path::new(&profile.argv[0]).is_absolute() {
+        if let Some(bin) = Path::new(&profile.argv[0]).parent() {
+            let paths = std::iter::once(bin.to_path_buf()).chain(std::env::split_paths(&path));
+            if let Ok(joined) = std::env::join_paths(paths) {
+                return joined.to_string_lossy().into_owned();
+            }
+        }
+    }
+    path
 }
 
 pub(crate) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {

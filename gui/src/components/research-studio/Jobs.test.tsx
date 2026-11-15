@@ -223,3 +223,25 @@ it("shows the message of a structured failure", async () => {
   await flush();
   expect(screen.getByRole("alert")).toHaveTextContent("The job list is busy.");
 });
+
+it("finishes a manuscript build while the native window is backgrounded", async () => {
+  const visibility = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockReturnValue("hidden");
+  mocks.jobs.mockResolvedValue([job("running")]);
+  const onCompleted = vi.fn();
+  const view = render(
+    <Jobs workspaceId="ws" onCompleted={onCompleted} quiet />,
+  );
+  await flush();
+  expect(mocks.jobs).toHaveBeenCalledOnce();
+  mocks.jobs.mockResolvedValue([job("completed")]);
+  await advance(1500);
+  expect(onCompleted).toHaveBeenCalledOnce();
+  view.rerender(
+    <Jobs workspaceId="ws" onCompleted={onCompleted} quiet visible={false} />,
+  );
+  await advance(20_000);
+  expect(mocks.jobs).toHaveBeenCalledTimes(2);
+  visibility.mockRestore();
+});

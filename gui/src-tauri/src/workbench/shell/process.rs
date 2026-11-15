@@ -85,6 +85,7 @@ impl Drop for Cancel {
 pub(super) async fn run(
     request: ContainerRequest,
     scratch: tempfile::TempDir,
+    proxy: Option<super::proxy::Proxy>,
 ) -> Result<Value, String> {
     let flag = Arc::new(Control {
         cancelled: AtomicBool::new(false),
@@ -99,6 +100,10 @@ pub(super) async fn run(
     tokio::task::spawn_blocking(move || {
         // Keep scratch alive until the OS sandbox and every reader have stopped.
         let _scratch = scratch;
+        // Keep the permitted endpoint reserved until containment cleanup finishes,
+        // including when the caller abandons this future during guard setup.
+        let _proxy = proxy;
+        let _stop_before_proxy_closes = Cancel(flag.clone());
         execute(request, flag)
     })
     .await
@@ -142,6 +147,18 @@ fn execute(request: ContainerRequest, cancelled: Arc<Control>) -> Result<Value, 
         let tree = super::macos::process_tree::Tree::prepare(&mut request)?;
         (request, tree)
     };
+    #[cfg(target_os = "linux")]
+    let (request, mut view) = {
+        let mut request = request;
+        let view = super::linux::View::prepare(&mut request)?;
+        (request, view)
+    };
+    #[cfg(windows)]
+    let mut network_guard = super::windows::Guard::prepare(&request)?;
+    // UAC and native sandbox preparation can outlive cancellation or timeout.
+    if cancelled.cancelled.load(Ordering::SeqCst) || start.elapsed() >= timeout {
+        return Err("Command cancelled or timed out before launch.".into());
+    }
     let process = v1::spawn(
         request,
         v1::SpawnOptions {
@@ -179,10 +196,20 @@ fn execute(request: ContainerRequest, cancelled: Arc<Control>) -> Result<Value, 
         .process
         .stderr_closer()
         .ok_or("Command error output cannot be cancelled")?;
+    #[cfg(windows)]
+    let pid = child.process.id();
     {
         let mut owned = cancelled.child.lock().unwrap_or_else(|e| e.into_inner());
         *owned = Some(child);
-        if !cancelled.cancelled.load(Ordering::SeqCst) {
+    }
+    #[cfg(windows)]
+    if let Some(guard) = network_guard.as_mut() {
+        // The cancellation owner can kill the gated child while IPC is pending.
+        guard.attach(pid)?;
+    }
+    {
+        let _owned = cancelled.child.lock().unwrap_or_else(|e| e.into_inner());
+        if !cancelled.cancelled.load(Ordering::SeqCst) && start.elapsed() < timeout {
             // The child cannot parse or execute the user's command until this
             // owner can synchronously stop it. Cancellation during SDK startup
             // leaves the gate closed, even if spawning finishes much later.
@@ -214,6 +241,12 @@ fn execute(request: ContainerRequest, cancelled: Arc<Control>) -> Result<Value, 
                     "Command timed out after {} seconds",
                     timeout.as_secs_f64()
                 ));
+            }
+            #[cfg(windows)]
+            if let Some(guard) = network_guard.as_ref() {
+                if let Err(error) = guard.check() {
+                    break Err(error);
+                }
             }
             let status = cancelled
                 .child
@@ -269,6 +302,19 @@ fn execute(request: ContainerRequest, cancelled: Arc<Control>) -> Result<Value, 
             json!({"exitCode":code,"stdout":stdout.0,"stderr":stderr.0,"truncated":stdout.1||stderr.1}),
         )
     });
+    #[cfg(target_os = "linux")]
+    {
+        let finished = view.finish();
+        result.and_then(|value| finished.map(|()| value))
+    }
+    #[cfg(windows)]
+    {
+        let finished = network_guard
+            .as_mut()
+            .map_or(Ok(()), |guard| guard.finish());
+        result.and_then(|value| finished.map(|()| value))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     result
 }
 

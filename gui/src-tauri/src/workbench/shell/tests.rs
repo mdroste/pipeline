@@ -12,6 +12,12 @@ fn native_workload_waits_for_parent_start_signal() {
     #[cfg(windows)]
     let command = "Set-Content started.txt ran";
     let request = policy::request(root.path(), true, scratch.path(), command, None).unwrap();
+    #[cfg(target_os = "linux")]
+    let (request, _view) = {
+        let mut request = request;
+        let view = linux::View::prepare(&mut request).unwrap();
+        (request, view)
+    };
     let mut child = mxc_sdk::v1::spawn(request, Default::default()).unwrap();
     std::thread::sleep(Duration::from_millis(200));
     assert!(!root.path().join("started.txt").exists());
@@ -20,14 +26,6 @@ fn native_workload_waits_for_parent_start_signal() {
     drop(stdin);
     child.wait().unwrap();
     assert!(root.path().join("started.txt").exists());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-#[ignore = "internal child entry point for native Linux sandbox probes"]
-fn linux_command_guard_entry() {
-    let command = std::env::var("PIPELINE_TEST_COMMAND").expect("Internal command is missing");
-    super::linux::execute(&command);
 }
 
 #[test]
@@ -64,6 +62,16 @@ fn native_policy_uses_only_supplied_environment_and_separate_scratch() {
         .readwrite_paths
         .contains(&scratch.path().canonicalize().unwrap().display().to_string()));
     assert_eq!(request.timeout_ms, Some(120_000));
+    #[cfg(windows)]
+    {
+        let mut keys = std::collections::HashSet::new();
+        for (key, _) in request.environment.as_ref().unwrap() {
+            assert!(
+                keys.insert(key.to_ascii_lowercase()),
+                "Duplicate Windows environment key: {key}"
+            );
+        }
+    }
     assert!(request
         .environment
         .unwrap()
@@ -133,10 +141,17 @@ async fn native_commands_confine_files_and_keep_output_bounded() {
 #[ignore = "requires the real native OS sandbox and public internet"]
 async fn native_commands_enforce_domain_filter_and_direct_network_denial() {
     let root = tempfile::tempdir().unwrap();
+    // Keep the network assertions independent of missing-path mount behavior.
+    // The empty-project regression below covers that separate startup case.
+    std::fs::write(root.path().join(".env"), "PRIVATE NETWORK SENTINEL").unwrap();
     #[cfg(not(windows))]
     let curl = "curl";
     #[cfg(windows)]
     let curl = "curl.exe";
+    #[cfg(not(windows))]
+    let socks_proxy = "\"${HTTPS_PROXY/http:/socks5h:}\"";
+    #[cfg(windows)]
+    let socks_proxy = "($env:HTTPS_PROXY -replace '^http:', 'socks5h:')";
     for (network, sites, command, succeeds) in [
         #[cfg(windows)]
         (
@@ -157,6 +172,18 @@ async fn native_commands_enforce_domain_filter_and_direct_network_denial() {
             vec!["example.com".into()],
             format!("{curl} -f -sS --max-time 15 https://example.com"),
             true,
+        ),
+        (
+            true,
+            vec!["example.com".into()],
+            format!("{curl} -f -sS --proxy {socks_proxy} --max-time 15 http://example.com"),
+            true,
+        ),
+        (
+            true,
+            vec!["example.com".into()],
+            format!("{curl} -f -sS --proxy {socks_proxy} --max-time 5 http://example.org"),
+            false,
         ),
         (
             true,
@@ -193,7 +220,20 @@ async fn native_commands_enforce_domain_filter_and_direct_network_denial() {
         .await
         .unwrap();
     let address = listener.local_addr().unwrap();
+    // Prove the host listener accepts connections before checking isolation.
+    let control = tokio::net::TcpStream::connect(address).await.unwrap();
+    drop(listener.accept().await.unwrap());
+    drop(control);
+    #[cfg(not(target_os = "linux"))]
     let command = format!("{curl} -sS --noproxy '*' --max-time 2 http://{address}");
+    // The sandbox's loopback is a separate interface on Linux. Probe the
+    // slirp host gateway at a different port so this exercises the firewall,
+    // rather than merely trying an empty sandbox-local loopback interface.
+    #[cfg(target_os = "linux")]
+    let command = format!(
+        "{curl} -sS --noproxy '*' --max-time 2 \"${{HTTP_PROXY%:*}}:{}\"",
+        address.port()
+    );
     let result = run(root.path(), false, &["example.com".into()], true, &command)
         .await
         .unwrap();
@@ -203,6 +243,133 @@ async fn native_commands_enforce_domain_filter_and_direct_network_denial() {
             .await
             .is_err()
     );
+}
+
+async fn empty_project(writable: bool) {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(not(windows))]
+    let command = "printf started";
+    #[cfg(windows)]
+    let command = "[Console]::Write('started')";
+    let result = run(root.path(), writable, &[], false, command)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["exitCode"],
+        json!(0),
+        "writable={writable}: {result}"
+    );
+    assert_eq!(result["stdout"], "started", "{result}");
+    assert!(
+        !root.path().join(".env").exists(),
+        "The sandbox created a protected path in the host project"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
+async fn native_empty_readonly_project_starts_without_creating_protected_paths() {
+    empty_project(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
+async fn native_empty_writable_project_starts_without_creating_protected_paths() {
+    empty_project(true).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "requires the real native Windows sandbox"]
+async fn native_missing_secret_parent_stays_denied_when_created_after_launch() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let missing = root.path().join("missing/credentials/secret.txt");
+    let mut request = policy::request(
+        root.path(), true, scratch.path(),
+        "Set-Content ready.txt ready; while (-not (Test-Path continue.txt)) { Start-Sleep -Milliseconds 10 }; Get-Content missing/credentials/secret.txt; Set-Content missing/credentials/secret.txt changed; Set-Content allowed.txt ok",
+        None,
+    ).unwrap();
+    let denied = policy::protected_path(missing.clone()).unwrap();
+    assert_eq!(denied, root.path().canonicalize().unwrap().join("missing"));
+    request
+        .filesystem
+        .as_mut()
+        .unwrap()
+        .denied_paths
+        .push(denied.to_str().unwrap().to_owned());
+    request.timeout_ms = Some(10_000);
+    let probe = mxc_sdk::v1::probe(Some(&request)).unwrap();
+    assert_eq!(probe.tier, Some("base-container"), "{probe:?}");
+    assert!(probe.error.is_none(), "{probe:?}");
+    let task = tokio::spawn(process::run(request, scratch, None));
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while !root.path().join("ready.txt").exists() {
+            assert!(!task.is_finished(), "Sandbox failed before readiness");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!root.path().join("missing").exists());
+    std::fs::create_dir_all(missing.parent().unwrap()).unwrap();
+    std::fs::write(&missing, "LATE PRIVATE SENTINEL").unwrap();
+    std::fs::write(root.path().join("continue.txt"), "go").unwrap();
+    let result = task.await.unwrap().unwrap();
+    assert!(
+        !result.to_string().contains("LATE PRIVATE SENTINEL"),
+        "{result}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(missing).unwrap(),
+        "LATE PRIVATE SENTINEL"
+    );
+    assert!(root.path().join("allowed.txt").exists(), "{result}");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "requires the real native Windows sandbox"]
+async fn native_windows_cmd_child_keeps_project_working_directory() {
+    let root = tempfile::Builder::new()
+        .prefix("pipeline José 日本語 ")
+        .tempdir()
+        .unwrap();
+    std::fs::write(root.path().join("input.txt"), "project-input").unwrap();
+    let result = run(
+        root.path(), true, &[], false,
+        "& (Join-Path $env:SystemRoot 'System32/cmd.exe') /d /c 'type input.txt & echo project-output> output.txt'",
+    ).await.unwrap();
+    assert_eq!(result["exitCode"], json!(0), "{result}");
+    assert!(
+        result["stdout"].as_str().unwrap().contains("project-input"),
+        "{result}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("output.txt"))
+            .unwrap()
+            .trim(),
+        "project-output"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "requires the real native Windows sandbox"]
+async fn native_windows_preserves_native_and_powershell_exit_status() {
+    let root = tempfile::tempdir().unwrap();
+    for (command, expected) in [
+        (
+            "& (Join-Path $env:SystemRoot 'System32/cmd.exe') /d /c 'exit 7'",
+            7,
+        ),
+        ("Get-Content missing.txt", 1),
+        ("throw 'terminal failure'", 1),
+        ("Get-Content missing.txt; [Console]::Write('recovered')", 0),
+    ] {
+        let result = run(root.path(), false, &[], false, command).await.unwrap();
+        assert_eq!(result["exitCode"], json!(expected), "{command}: {result}");
+    }
 }
 
 #[tokio::test]
@@ -238,54 +405,151 @@ async fn native_proxy_socks5_forwards_an_allowed_public_site() {
     assert!(body.contains("Example Domain"), "{body}");
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CommandEnd {
+    Completion,
+    Cancellation,
+    Timeout,
+}
+
+#[cfg(windows)]
+fn windows_background_script(delay_seconds: u64) -> String {
+    use base64::Engine;
+    // This independent PowerShell child needs the same explicit module imports
+    // as the command bootstrap before it can signal meaningful readiness.
+    let script = format!("$ErrorActionPreference='Stop'; Import-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -ErrorAction Stop; $root=(Get-Location).Path; [IO.File]::WriteAllText((Join-Path $root 'child.tmp'), 'ready'); [IO.File]::Move((Join-Path $root 'child.tmp'), (Join-Path $root 'child.ready')); Start-Sleep {delay_seconds}; [IO.File]::WriteAllText((Join-Path $root 'after-stop.txt'), 'escaped')");
+    base64::engine::general_purpose::STANDARD.encode(
+        script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[cfg(windows)]
 #[tokio::test]
-#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
-async fn native_command_cancellation_stops_background_descendants() {
+#[ignore = "requires the real native Windows sandbox"]
+async fn native_windows_waited_child_can_finish() {
+    // Positive control: the exact child used by the cleanup tests can reach
+    // its delayed write when the parent waits instead of ending the command.
     let root = tempfile::tempdir().unwrap();
+    let encoded = windows_background_script(1);
+    let command = format!("$child = Start-Process (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}' -WorkingDirectory (Get-Location) -NoNewWindow -PassThru -Wait; exit $child.ExitCode");
+    let result = run(root.path(), true, &[], false, &command).await.unwrap();
+    assert_eq!(result["exitCode"], json!(0), "{result}");
+    assert!(root.path().join("child.ready").exists(), "{result}");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("after-stop.txt"))
+            .unwrap()
+            .trim(),
+        "escaped"
+    );
+}
+
+async fn background_cleanup(end: CommandEnd, network: bool) {
+    let root = tempfile::Builder::new()
+        .prefix("pipeline command probe ")
+        .tempdir()
+        .unwrap();
+    std::fs::write(root.path().join(".env"), "PRIVATE LIFECYCLE SENTINEL").unwrap();
     let path = root.path().to_path_buf();
+    let pause = !matches!(end, CommandEnd::Completion);
     #[cfg(not(windows))]
-    let command = "(sleep 3; echo escaped > after-cancel.txt) & echo ready > started.txt; sleep 30";
+    let command = format!("(printf ready > child.tmp; mv child.tmp child.ready; sleep 10; printf escaped > after-stop.txt) & while [ ! -f child.ready ]; do sleep 0.01; done; printf foreground-ready; {}", if pause { "sleep 30" } else { ":" });
     #[cfg(windows)]
-    let command = "Start-Process powershell -ArgumentList '-NoProfile -Command Start-Sleep 3; Set-Content after-cancel.txt escaped' -WorkingDirectory (Get-Location); Set-Content started.txt ready; Start-Sleep 30";
-    let task = tokio::spawn(async move { run(&path, true, &[], false, command).await });
+    let command = {
+        let encoded = windows_background_script(10);
+        format!("Start-Process (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe') -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand {encoded}' -WorkingDirectory (Get-Location) -NoNewWindow; while (-not (Test-Path child.ready)) {{ Start-Sleep -Milliseconds 10 }}; [Console]::Write('foreground-ready'); {}", if pause { "Start-Sleep 30" } else { "" })
+    };
+    let task = tokio::spawn(async move {
+        if matches!(end, CommandEnd::Timeout) {
+            let scratch = tempfile::tempdir().unwrap();
+            let proxy = if network {
+                Some(
+                    proxy::Proxy::start(vec!["example.com".into()])
+                        .await
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            let mut request =
+                policy::request(&path, true, scratch.path(), &command, proxy.as_ref()).unwrap();
+            request.timeout_ms = Some(5000);
+            #[cfg(windows)]
+            {
+                let probe = mxc_sdk::v1::probe(Some(&request)).unwrap();
+                assert_eq!(probe.tier, Some("base-container"), "{probe:?}");
+                assert!(probe.error.is_none(), "{probe:?}");
+            }
+            process::run(request, scratch, proxy).await
+        } else {
+            run(&path, true, &["example.com".into()], network, &command).await
+        }
+    });
     tokio::time::timeout(Duration::from_secs(20), async {
-        while !root.path().join("started.txt").exists() {
+        while !root.path().join("child.ready").exists() {
             assert!(
                 !task.is_finished(),
-                "Sandbox command failed before signalling readiness"
+                "Sandbox failed before the child signalled readiness"
             );
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
     .unwrap();
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    tokio::time::sleep(Duration::from_secs(4)).await;
-    assert!(!root.path().join("after-cancel.txt").exists());
+    // Start the observation window after the child is known to be alive.
+    // Windows container/PowerShell startup can itself take several seconds.
+    let child_started = std::time::Instant::now();
+    if matches!(end, CommandEnd::Cancellation) {
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    } else {
+        let result = tokio::time::timeout(Duration::from_secs(20), task)
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(end, CommandEnd::Timeout) {
+            assert!(result.unwrap_err().contains("timed out after 5 seconds"));
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result["exitCode"], json!(0), "{result}");
+            assert!(
+                result["stdout"]
+                    .as_str()
+                    .unwrap()
+                    .contains("foreground-ready"),
+                "{result}"
+            );
+        }
+    }
+    assert!(
+        root.path().join("child.ready").exists(),
+        "{end:?}: child never started"
+    );
+    tokio::time::sleep(Duration::from_secs(11).saturating_sub(child_started.elapsed())).await;
+    assert!(
+        !root.path().join("after-stop.txt").exists(),
+        "{end:?}: child wrote after cleanup"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
+async fn native_command_cancellation_stops_background_descendants() {
+    background_cleanup(CommandEnd::Cancellation, false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
 async fn native_shell_exit_reaps_background_descendants() {
-    let root = tempfile::tempdir().unwrap();
-    #[cfg(not(windows))]
-    let command = "(sleep 3; echo escaped > after-exit.txt) & echo done";
-    #[cfg(windows)]
-    let command = "Start-Process powershell -ArgumentList '-NoProfile -Command Start-Sleep 3; Set-Content after-exit.txt escaped' -WorkingDirectory (Get-Location); Write-Output done";
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        run(root.path(), true, &[], false, command),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert!(
-        result["stdout"].as_str().unwrap().contains("done"),
-        "{result}"
-    );
-    tokio::time::sleep(Duration::from_secs(4)).await;
-    assert!(!root.path().join("after-exit.txt").exists());
+    background_cleanup(CommandEnd::Completion, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
+async fn native_command_timeout_stops_background_descendants() {
+    background_cleanup(CommandEnd::Timeout, false).await;
 }
 
 #[cfg(unix)]
@@ -349,4 +613,63 @@ async fn native_setsid_children_cannot_outlive_the_command() {
         !root.path().join("after-exit.txt").exists(),
         "A detached process survived command completion"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox outside the test runner sandbox"]
+async fn native_commands_protect_secrets_and_git_metadata_inside_writable_roots() {
+    let root = tempfile::Builder::new()
+        .prefix("pipeline protected files ")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir(root.path().join(".git")).unwrap();
+    std::fs::write(root.path().join(".git/config"), "readable control file").unwrap();
+    std::fs::write(root.path().join(".gitconfig"), "preserved git config").unwrap();
+    std::fs::write(root.path().join(".env"), "PRIVATE ENV SENTINEL").unwrap();
+    #[cfg(not(windows))]
+    let command = "cat .git/config; cat .env; printf changed > .git/config; printf changed > .gitconfig; printf changed > .env; printf scratch-ok > \"$TMPDIR/scratch.txt\"; cat \"$TMPDIR/scratch.txt\"; printf project-ok > allowed.txt";
+    #[cfg(windows)]
+    let command = "Get-Content .git/config; Get-Content .env; Set-Content .git/config changed; Set-Content .gitconfig changed; Set-Content .env changed; Set-Content (Join-Path $env:TEMP 'scratch.txt') scratch-ok; Get-Content (Join-Path $env:TEMP 'scratch.txt'); Set-Content allowed.txt project-ok";
+    let result = run(root.path(), true, &[], false, command).await.unwrap();
+    assert!(
+        result["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("readable control file"),
+        "{result}"
+    );
+    assert!(
+        result["stdout"].as_str().unwrap().contains("scratch-ok"),
+        "{result}"
+    );
+    assert!(
+        !result.to_string().contains("PRIVATE ENV SENTINEL"),
+        "{result}"
+    );
+    for (name, expected) in [
+        (".git/config", "readable control file"),
+        (".gitconfig", "preserved git config"),
+        (".env", "PRIVATE ENV SENTINEL"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(root.path().join(name)).unwrap(),
+            expected,
+            "{name}: {result}"
+        );
+    }
+    assert!(std::fs::read_to_string(root.path().join("allowed.txt"))
+        .unwrap()
+        .contains("project-ok"));
+}
+
+#[tokio::test]
+#[ignore = "requires the real native OS sandbox and network namespace prerequisites"]
+async fn native_network_commands_stop_background_descendants_on_every_exit_path() {
+    for end in [
+        CommandEnd::Completion,
+        CommandEnd::Cancellation,
+        CommandEnd::Timeout,
+    ] {
+        background_cleanup(end, true).await;
+    }
 }

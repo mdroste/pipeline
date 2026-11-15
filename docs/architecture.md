@@ -293,19 +293,38 @@ bounded output and cancellation independently of Review processes.
 
 The per-command Rust proxy admits domain names before DNS resolution, rejects
 nonpublic addresses, and connects to the checked addresses. HTTP requests are
-checked independently; CONNECT and SOCKS5 carry admitted destinations only.
+checked independently. CONNECT and SOCKS5 carry admitted destinations only.
 OS restrictions prevent direct outbound connections around the proxy. Dropping
-a command closes its proxy and stops its owned processes. macOS also identifies
+a command stops its owned processes before releasing its proxy. macOS also identifies
 descendants by their inherited sandbox policy, so detached children remain
 subject to cleanup. Ownership is verified before the command starts. Normal
 Python, subprocess, and session creation remain available. Output readers have
-a separate shutdown deadline. Windows proxy mode
-uses an outbound TCP endpoint allowlist for the proxy, with private-network
-ingress denied. Localhost access is enabled for that endpoint; the OS filter
-blocks connections to other local services. Unix socket access is denied by
+a separate shutdown deadline.
+
+Windows networked commands require a temporary,
+elevated firewall guard in the same executable. The app and workloads remain
+unelevated. The guard authenticates its parent and installs per-container WFP
+restrictions before the command starts. Restrictions survive guard failure.
+Cleanup stops the matching processes before removing their filters. The guard
+runs before desktop initialization and exits with its parent. Web search and
+page reading remain separate host tools.
+
+Unix socket access is denied by
 the macOS profile and a Linux seccomp guard entered inside Bubblewrap. The
-Linux guard runs before desktop initialization in the same executable.
+Linux guard runs before desktop initialization in the same executable. It
+mounts a filtered project view in a private user and mount namespace before
+installing the syscall restrictions. The view protects absent secret paths
+without creating mountpoints in the project. Rust serves authorized file
+operations through the kernel FUSE interface; no filesystem helper is downloaded.
+The command owns the view's lifetime and drops its server after process cleanup.
+Linux hosts must permit user namespaces for Pipeline and its sandbox helpers,
+including through any AppArmor policy.
 Unsupported policies fail before the workload starts.
+
+Windows allows the Win32k initialization required by PowerShell while retaining
+native UI resource isolation, clipboard denial, and input-injection denial.
+Protected paths with absent parents are denied at their first missing ancestor,
+so later-created secrets stay covered without creating host placeholders.
 
 Review PDF export in `commands/export/pdf.rs` uses a short-lived mode of the
 Pipeline executable with an isolated native webview. WKWebView on macOS,

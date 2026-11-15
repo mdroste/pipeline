@@ -373,6 +373,8 @@ fn live_latexmk_rebuild_with_nothing_changed_is_a_finished_build() {
         root_document: "main.tex".into(),
         expected_pdf: "main.pdf".into(),
         engine: "latexmk".into(),
+        automatic_dependencies: true,
+        executable: None,
         timeout_seconds: 60,
         inputs: vec!["main.tex".into()],
         advanced_argv: None,

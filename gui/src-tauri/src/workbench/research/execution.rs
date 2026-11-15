@@ -40,6 +40,7 @@ pub(crate) use results::validate_result;
 pub use results::{
     compare_results, list_structured_results, record_structured_result, verify_evidence_results,
 };
+pub(crate) use toolchains::tex_program;
 pub use toolchains::{
     detect_toolchains, DetectedToolchain, EnvironmentFile, ProjectEnvironment, PythonEnvironment,
     ToolchainReport,

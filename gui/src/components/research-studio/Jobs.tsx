@@ -131,7 +131,8 @@ export default function Jobs({
     let timer: ReturnType<typeof setTimeout>;
     let running = false;
     const refresh = async () => {
-      if (document.visibilityState === "hidden") {
+      // Finish a paper build even while the native window loses visibility.
+      if (document.visibilityState === "hidden" && !quiet) {
         timer = setTimeout(() => void refresh(), IDLE_POLL_MS);
         return;
       }
@@ -151,11 +152,12 @@ export default function Jobs({
       }
       // Collapsed, check less often: enough to notice a job ending or a
       // newly queued one.
-      const delay = open
-        ? ACTIVE_POLL_MS
-        : running
-          ? RUNNING_POLL_MS
-          : IDLE_POLL_MS;
+      const delay =
+        open || (quiet && running)
+          ? ACTIVE_POLL_MS
+          : running
+            ? RUNNING_POLL_MS
+            : IDLE_POLL_MS;
       if (!disposed) timer = setTimeout(() => void refresh(), delay);
     };
     void refresh();
@@ -163,7 +165,7 @@ export default function Jobs({
       disposed = true;
       clearTimeout(timer);
     };
-  }, [visible, open, workspaceId, setError]);
+  }, [visible, open, workspaceId, setError, quiet]);
   const active = jobs.filter((j) => ACTIVE_JOB_STATES.includes(j.state));
   // Jobs are newest first, so an older failure stops mattering once repaired.
   const settled =

@@ -418,3 +418,40 @@ fn environment_identity_hashes_only_present_files() {
     assert_eq!(identity["files"][0]["path"], "Manifest.toml");
     assert_eq!(identity["checked"][0], "Project.toml");
 }
+
+#[test]
+fn tex_discovery_finds_native_distributions_without_path() {
+    let temp = tempfile::tempdir().unwrap();
+    for platform in [Platform::MacOs, Platform::Windows, Platform::Linux] {
+        let mut h = host(platform);
+        let bin = match platform {
+            Platform::MacOs => {
+                h.frameworks.push(temp.path().join("Library/Frameworks"));
+                temp.path().join("Library/TeX/texbin")
+            }
+            Platform::Windows => {
+                h.user_programs.push(temp.path().join("Programs"));
+                temp.path().join("Programs/MiKTeX/miktex/bin/x64")
+            }
+            Platform::Linux => {
+                h.prefixes.push(temp.path().join("local"));
+                temp.path().join("local/texlive/2026/bin/x86_64-linux")
+            }
+        };
+        for name in ["latexmk", "pdflatex", "xelatex", "lualatex"] {
+            file(
+                &bin.join(if platform == Platform::Windows {
+                    format!("{name}.exe")
+                } else {
+                    name.into()
+                }),
+                "tool",
+            );
+        }
+        let report = detect_with(&h, None);
+        assert_eq!(tools(&report, "latex").len(), 4, "{report:?}");
+        assert!(tools(&report, "latex")
+            .iter()
+            .all(|t| t.adapter.as_deref() == Some("latex")));
+    }
+}
