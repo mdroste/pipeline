@@ -76,7 +76,7 @@ if name != 'inherited':
     os.close(2)
 with open(name + '.tmp', 'w') as f: f.write(str(os.getpid()))
 os.replace(name + '.tmp', name + '.ready')
-time.sleep(6)
+time.sleep(15)
 with open(name + '.escaped', 'w') as f: f.write('survived')
 "#;
         std::fs::write(root.path().join("child.py"), child).unwrap();
@@ -102,7 +102,9 @@ print('foreground-ready', flush=True)
             let mut request =
                 policy::request(&path, true, scratch.path(), &python(&script), None).unwrap();
             if matches!(end, End::Timeout) {
-                request.timeout_ms = Some(3000);
+                // The deadline includes native sandbox and Python startup.
+                // Leave time for every child to publish its ready marker.
+                request.timeout_ms = Some(10_000);
             }
             process::run(request, scratch, None).await
         });
@@ -122,7 +124,7 @@ print('foreground-ready', flush=True)
             task.abort();
             assert!(task.await.unwrap_err().is_cancelled());
         } else {
-            let result = tokio::time::timeout(Duration::from_secs(10), task)
+            let result = tokio::time::timeout(Duration::from_secs(20), task)
                 .await
                 .unwrap()
                 .unwrap();
@@ -132,21 +134,21 @@ print('foreground-ready', flush=True)
                     assert_eq!(result["exitCode"], json!(0), "{result}");
                     assert_eq!(result["stdout"], "foreground-ready\n", "{result}");
                 }
-                End::Timeout => assert!(result.unwrap_err().contains("timed out after 3 seconds")),
+                End::Timeout => assert!(result.unwrap_err().contains("timed out after 10 seconds")),
                 End::Cancellation => unreachable!(),
             }
         }
         for name in ["inherited", "closed", "double-fork", "subprocess"] {
             let pid: libc::pid_t =
                 std::fs::read_to_string(root.path().join(format!("{name}.ready")))
-                    .unwrap()
+                    .unwrap_or_else(|error| panic!("{end:?}: {name} never became ready: {error}"))
                     .parse()
                     .unwrap();
             assert!(!live(pid), "{end:?}: {name} process {pid} survived cleanup");
         }
         // Keep the disposable root around beyond the attempted write. This
         // catches late activity as well as checking that the PIDs stopped.
-        tokio::time::sleep(Duration::from_secs(7).saturating_sub(started.elapsed())).await;
+        tokio::time::sleep(Duration::from_secs(16).saturating_sub(started.elapsed())).await;
         for name in ["inherited", "closed", "double-fork", "subprocess"] {
             assert!(
                 !root.path().join(format!("{name}.escaped")).exists(),

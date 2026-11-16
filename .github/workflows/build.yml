@@ -132,6 +132,8 @@ jobs:
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    env:
+      PIPELINE_LINK_TEST_MANIFEST: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -146,6 +148,8 @@ jobs:
         with:
           workspaces: gui/src-tauri -> target
           shared-key: tests-${{ matrix.os }}
+          cache-workspace-crates: true
+          cache-on-failure: true
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -172,8 +176,6 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Native lifecycle and CLI tests
         working-directory: gui/src-tauri
-        env:
-          PIPELINE_LINK_TEST_MANIFEST: "1"
         run: cargo test --locked --all-targets
       - name: Native macOS command isolation and proxy
         if: runner.os == 'macOS'
@@ -184,8 +186,6 @@ jobs:
       - name: Native PDF export
         working-directory: gui/src-tauri
         shell: bash
-        env:
-          PIPELINE_LINK_TEST_MANIFEST: "1"
         run: |
           cargo build --locked --bin pipeline-gui
           if [[ "$RUNNER_OS" == "Windows" ]]; then
