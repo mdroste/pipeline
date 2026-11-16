@@ -50,7 +50,8 @@ export function useProjectSurfaceData(
       (current) =>
         current ??
         home.settings.body.manuscriptRevisionId ??
-        home.papers[0]?.revision?.id ??
+        home.papers.find((document) => !document.paper.archived)?.revision
+          ?.id ??
         null,
     );
   }, [workspaceId]);

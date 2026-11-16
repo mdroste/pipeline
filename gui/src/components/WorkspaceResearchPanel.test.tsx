@@ -171,7 +171,7 @@ it("requires an explicit paper choice for a project review without a conversatio
     screen.getByRole("button", { name: "Review this revision…" }),
   ).toBeDisabled();
   expect(screen.queryByRole("separator")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Paper to review"), {
+  fireEvent.change(screen.getByLabelText("Document to review"), {
     target: { value: "paper-2" },
   });
   fireEvent.click(

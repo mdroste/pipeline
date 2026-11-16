@@ -34,21 +34,8 @@ import ProjectSubnav from "./project-surface/ProjectSubnav";
 import type { WorkspaceProjectSurfaceProps } from "./project-surface/types";
 import ReportIssueLink from "./ReportIssueLink";
 
-const PAPER_EXTENSIONS = [
-  "pdf",
-  "tex",
-  "md",
-  "txt",
-  "docx",
-  "bib",
-  "py",
-  "r",
-  "jl",
-  "do",
-  "json",
-  "csv",
-  "tsv",
-];
+import ImportDocumentDialog from "./project-surface/ImportDocumentDialog";
+import { documentExtensions, documentType } from "../lib/documentTypes";
 
 /** A saved or linked view the project no longer offers opens the overview. */
 const offered = (tab: string): ProjectTab =>
@@ -71,6 +58,10 @@ function WorkspaceProjectSurface({
   onConversationFirst,
   onProjectBrief,
 }: WorkspaceProjectSurfaceProps) {
+  const [pendingImport, setPendingImport] = useState<{
+    path: string;
+    folder: boolean;
+  } | null>(null);
   const [layout] = useState(() => loadDeskLayout(workspaceId));
   const [tab, setLocalTab] = useState<ProjectTab>(() =>
     offered(destination ?? layout.tab),
@@ -229,27 +220,17 @@ function WorkspaceProjectSurface({
         directory: folder,
         filters: folder
           ? undefined
-          : [{ name: "Research document", extensions: PAPER_EXTENSIONS }],
+          : [{ name: "Research document", extensions: documentExtensions }],
       });
       if (typeof selected !== "string") return;
-      const result = await researchClient.importPaper({
-        workspaceId,
-        paperId: null,
-        title: folderName(selected),
-        role: "manuscript",
-        path: selected,
-        operationId: op(),
-      });
-      setRevisionId(result.revision?.id ?? null);
-      setInitialSelection(undefined);
-      setTab("documents");
+      setPendingImport({ path: selected, folder });
     });
   const paperOfRevision = async (id: string) => {
     const { revision } = await projectClient.read(workspaceId, id);
     const paper = data?.papers.find((p) => p.paper.id === revision.paperId);
     if (!paper)
       throw new Error(
-        "This version's paper is no longer in the project, so it can't take a new version.",
+        "This version's document is no longer in the project, so it can't take a new version.",
       );
     return paper;
   };
@@ -270,6 +251,7 @@ function WorkspaceProjectSurface({
         paperId: paper.paper.id,
         title: paper.paper.title,
         role: paper.paper.role,
+        documentType: documentType(paper.paper),
         path,
         operationId: op(),
       });
@@ -384,6 +366,20 @@ function WorkspaceProjectSurface({
       ref={deskRoot}
       className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface"
     >
+      {pendingImport && (
+        <ImportDocumentDialog
+          workspaceId={workspaceId}
+          path={pendingImport.path}
+          folder={pendingImport.folder}
+          onClose={() => setPendingImport(null)}
+          onImported={async (document) => {
+            setRevisionId(document.revision?.id ?? null);
+            setInitialSelection(undefined);
+            setTab("documents");
+            await refresh();
+          }}
+        />
+      )}
       {/* Standalone chrome for direct-rendered surfaces (fixtures, tests).
           Inside the app, WorkspacePage owns navigation in its sidebar. */}
       {!navigationInSidebar && (

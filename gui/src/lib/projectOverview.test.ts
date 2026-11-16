@@ -862,3 +862,12 @@ describe("arranging by stage", () => {
     expect(arrangeOverview(home(), [], "drafting").needs).toBeNull();
   });
 });
+
+it("does not treat slide decks as the main paper", () => {
+  const deck = paper("slides", "2026-11-16T12:00:00Z");
+  deck.paper.documentType = "slides";
+  deck.paper.role = "other";
+  const data = home({ papers: [deck] });
+  data.settings.body.manuscriptRevisionId = "slides";
+  expect(currentManuscript(data).paper).toBeNull();
+});

@@ -63,7 +63,7 @@ export default function DefaultModelSettings({
     <>
       <SectionHeader
         title="Default model"
-        description="Reviews and new conversations use this. A workflow or conversation can choose differently."
+        description="Used for reviews and new conversations."
       />
       <div className="grid gap-2 sm:grid-cols-3">
         <label className={labelClass}>

@@ -16,50 +16,42 @@ export function resolveSection(section: SettingsSection): Section {
   return section;
 }
 
-export const SECTION_INFO = {
+export const SECTION_INFO: Record<
+  Section,
+  { title: string; description?: string; icon: string }
+> = {
   general: {
     title: "General",
-    description: "Theme, text size, editor, and startup.",
-    detail: "Appearance & startup",
     icon: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5",
   },
   providers: {
     title: "Connections",
     description:
       "Connect Pipeline to Claude, ChatGPT, Gemini, or a local server.",
-    detail: "Accounts & connections",
     icon: "M8 3v4m8-4v4M6 7h12v3a6 6 0 0 1-12 0V7Zm6 9v5",
   },
   workflow: {
     title: "Reviews",
     description:
       "Default models, limits, and PDF extraction for reviews. A workflow can override these.",
-    detail: "Models, limits & PDF extraction",
     icon: "M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-12v4m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 6v8M6 9h9",
   },
   conversations: {
     title: "Conversations",
-    description:
-      "Message shortcuts and naming preferences for your conversations.",
-    detail: "Messages & automatic titles",
     icon: "M4 4h16v12H8l-4 4V4Z",
   },
   storage: {
     title: "Data & Storage",
     description: "Where your research is saved, plus backups and cleanup.",
-    detail: "Folders, backups & cleanup",
     icon: "M3 7h7l2 2h9v11H3V7Zm0 0V4h7l2 3",
   },
   notifications: {
     title: "Notifications",
-    description: "Choose what Pipeline notifies you about.",
-    detail: "Completion, errors & attention",
     icon: "M18 8a6 6 0 0 0-12 0v6l-2 3h16l-2-3V8ZM10 21h4",
   },
   advanced: {
     title: "Advanced & About",
     description: "Logging, installed tools, and app updates.",
-    detail: "Diagnostics & version",
     icon: "M12 8v4m0 4h.01M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0Z",
   },
 };

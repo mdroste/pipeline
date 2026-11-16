@@ -1,3 +1,4 @@
+import { documentType } from "../documentTypes";
 import type { BuildReceipt } from "../studioClient";
 import type { OverviewBlock, OverviewRow, ProjectSignals } from "./types";
 import type { PaperWithRevision } from "../workbench/researchTypes";
@@ -14,18 +15,20 @@ export function currentManuscript(data: ProjectHome): {
   chosen: boolean;
   superseded: boolean;
 } {
-  const papers = data.papers.filter((paper) => paper.revision);
+  const papers = data.papers.filter(
+    (paper) =>
+      paper.revision &&
+      documentType(paper.paper) === "paper" &&
+      !paper.paper.archived,
+  );
   const chosenId = data.settings.body.manuscriptRevisionId;
   const chosen = papers.find((paper) => paper.revision?.id === chosenId);
   if (chosen) return { paper: chosen, chosen: true, superseded: false };
   return {
-    paper:
-      papers.find((paper) => paper.paper.role === "manuscript") ??
-      papers[0] ??
-      null,
+    paper: papers[0] ?? null,
     chosen: false,
     // A choice that matches no current paper points at an earlier import.
-    superseded: Boolean(chosenId),
+    superseded: Boolean(chosenId) && papers.length > 0,
   };
 }
 
@@ -182,7 +185,7 @@ export function draftBlock(
         action: { kind: "run", label: "Open report", runId: last.run_id },
       });
   }
-  return block("draft", "The paper", rows);
+  return block("draft", "Project activity", rows);
 }
 
 /** Out of sync: what in the draft no longer matches what it was derived from. */

@@ -120,9 +120,6 @@ export function ExtractionSection({
               <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
                 Manual methods
               </span>
-              <span className="text-[0.625rem] font-medium uppercase tracking-wider text-gray-500 dark:text-neutral-400">
-                Best to basic ↓
-              </span>
             </div>
 
             <div className="relative space-y-1.5 pl-4">
@@ -188,10 +185,7 @@ export function ExtractionSection({
         </div>
 
         <details className="settings-disclosure">
-          <summary>
-            Advanced parser settings{" "}
-            <span>Performance & document structure</span>
-          </summary>
+          <summary>Advanced parser settings</summary>
           {!paddleInstalled && (
             <p className="settings-row-description mt-3">
               These settings apply only when Pipeline uses PaddleOCR-VL Full

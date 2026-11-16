@@ -100,7 +100,16 @@ pub(in crate::workbench) fn home_record(
     }
 }
 pub fn selected_manuscript(store: &Store, workspace_id: &str) -> WorkbenchResult<Option<String>> {
-    Ok(decode::<ProjectHomeSettings>(&home_record(store, workspace_id)?)?.manuscript_revision_id)
+    let selected =
+        decode::<ProjectHomeSettings>(&home_record(store, workspace_id)?)?.manuscript_revision_id;
+    let Some(id) = selected else {
+        return Ok(None);
+    };
+    let valid: bool = store.connection()?.query_row(
+        "SELECT EXISTS(SELECT 1 FROM paper_revisions r JOIN papers p ON p.id=r.paper_id WHERE r.id=?1 AND p.workspace_id=?2 AND p.document_type='paper' AND p.archived=0)",
+        rusqlite::params![id, workspace_id], |row| row.get(0),
+    ).map_err(err)?;
+    Ok(valid.then_some(id))
 }
 pub fn excluded_notes(store: &Store, workspace_id: &str) -> WorkbenchResult<Vec<String>> {
     Ok(decode::<ProjectHomeSettings>(&home_record(store, workspace_id)?)?.excluded_note_ids)
@@ -111,8 +120,7 @@ pub fn project_context(store: &Store, workspace_id: &str) -> WorkbenchResult<Str
         research::list_notes_with_selection(store, workspace_id, true, &settings.brief_note_ids)?;
     let mut text = format!(
         "Current paper version: {}\nReference results run: {}\n",
-        settings
-            .manuscript_revision_id
+        selected_manuscript(store, workspace_id)?
             .as_deref()
             .unwrap_or("not selected"),
         settings

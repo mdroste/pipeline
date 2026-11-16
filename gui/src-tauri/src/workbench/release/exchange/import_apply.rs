@@ -4,7 +4,7 @@ use super::import_plan::{local_object, plan, rewrite_ids};
 use super::package::extract;
 use super::types::{BlobEntry, ExchangeTarget, ImportExchangeRequest, ImportReport};
 use super::{err, hash_file, json_text, now, random_id, str_of, text};
-use crate::workbench::research::imported_mark;
+use crate::workbench::research::{self, imported_mark};
 use crate::workbench::store::{CreateWorkspaceRequest, Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, OptionalExtension as _, TransactionBehavior};
 use serde_json::{json, Value};
@@ -155,6 +155,20 @@ pub fn import_exchange(
             match kind {
                 "paper" => {
                     tx.execute("INSERT INTO papers(id,workspace_id,title,role,current_revision_id,created_at,updated_at) VALUES(?1,?2,?3,?4,NULL,?5,?6)", params![id, workspace_id, text(&value,"title"), str_of(&value,"role").unwrap_or_else(|| "other".into()), text(&value,"createdAt"), text(&value,"updatedAt")]).map_err(err)?;
+                    let kind = value["documentType"].as_str().unwrap_or_else(|| {
+                        research::legacy_document_type(value["role"].as_str().unwrap_or("other"))
+                    });
+                    research::validate_document_type(kind)?;
+                    tx.execute(
+                        "UPDATE papers SET document_type=?2,pinned=?3,archived=?4 WHERE id=?1",
+                        params![
+                            id,
+                            kind,
+                            value["pinned"].as_bool().unwrap_or(false),
+                            value["archived"].as_bool().unwrap_or(false)
+                        ],
+                    )
+                    .map_err(err)?;
                     let mut current: Option<String> = None;
                     for r in value["revisions"].as_array().into_iter().flatten() {
                         let rid = text(r, "id");

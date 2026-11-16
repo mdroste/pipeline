@@ -287,6 +287,8 @@ pub struct ProjectReviewLink {
     staged_path: String,
     external_reference: Option<String>,
     content_hash: String,
+    paper_id: String,
+    revision_id: String,
 }
 
 pub fn project_review_links(
@@ -296,7 +298,7 @@ pub fn project_review_links(
 ) -> WorkbenchResult<Vec<ProjectReviewLink>> {
     validate_id("workspace id", workspace_id)?;
     let connection = store.connection()?;
-    let mut stmt=connection.prepare("SELECT id,staged_path,external_reference,content_hash FROM review_handoffs WHERE workspace_id=?1 AND id>?2 ORDER BY id LIMIT 200")
+    let mut stmt=connection.prepare("SELECT id,staged_path,external_reference,content_hash,paper_id,revision_id FROM review_handoffs WHERE workspace_id=?1 AND id>?2 ORDER BY id LIMIT 200")
         .map_err(|e|WorkbenchError::storage("Failed to load project Review links",e))?;
     let rows = stmt
         .query_map(params![workspace_id, after.as_deref().unwrap_or("")], |r| {
@@ -305,6 +307,8 @@ pub fn project_review_links(
                 staged_path: r.get(1)?,
                 external_reference: r.get(2)?,
                 content_hash: r.get(3)?,
+                paper_id: r.get(4)?,
+                revision_id: r.get(5)?,
             })
         })
         .map_err(|e| WorkbenchError::storage("Failed to read project Review links", e))?;

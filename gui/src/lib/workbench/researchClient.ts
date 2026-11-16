@@ -3,6 +3,7 @@ import type {
   ResearchNote,
   PaperWithRevision,
   PaperReadResult,
+  DocumentVersion,
   PaperSearchHit,
 } from "./researchTypes";
 
@@ -40,10 +41,30 @@ export const researchClient = {
     paperId: string | null;
     title: string;
     role: "manuscript" | "appendix" | "other";
+    documentType?: import("../documentTypes").DocumentType;
     path: string;
     operationId: string;
   }) {
     return invoke<PaperWithRevision>("workbench_import_paper", { request });
+  },
+  updateDocument(request: {
+    workspaceId: string;
+    paperId: string;
+    expectedUpdatedAt: string;
+    title: string;
+    documentType: import("../documentTypes").DocumentType;
+    pinned: boolean;
+    archived: boolean;
+    currentRevisionId?: string | null;
+    operationId: string;
+  }) {
+    return invoke<PaperWithRevision>("workbench_update_document", { request });
+  },
+  documentVersions(workspaceId: string, paperId: string) {
+    return invoke<DocumentVersion[]>("workbench_document_versions", {
+      workspaceId,
+      paperId,
+    });
   },
   listPapers(workspaceId: string) {
     return invoke<PaperWithRevision[]>("workbench_list_papers", {

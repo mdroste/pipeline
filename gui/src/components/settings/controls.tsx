@@ -166,7 +166,7 @@ export function Toggle({
   onChange,
 }: {
   label: string;
-  description: string;
+  description?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -175,15 +175,17 @@ export function Toggle({
     <div className="settings-toggle">
       <div className="settings-row-copy">
         <span className="settings-row-label">{label}</span>
-        <p id={descriptionId} className="settings-row-description">
-          {description}
-        </p>
+        {description && (
+          <p id={descriptionId} className="settings-row-description">
+            {description}
+          </p>
+        )}
       </div>
       <button
         type="button"
         role="switch"
         aria-label={label}
-        aria-describedby={descriptionId}
+        aria-describedby={description ? descriptionId : undefined}
         aria-checked={checked}
         onClick={(event) => {
           event.stopPropagation();

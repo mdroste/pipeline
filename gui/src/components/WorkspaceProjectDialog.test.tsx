@@ -167,3 +167,18 @@ it("keeps the busy dialog open and focusable when all controls are disabled", as
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false"),
   );
 });
+it("creates a slides-only project with the selected document type", async () => {
+  const onCreated = vi.fn().mockResolvedValue(undefined);
+  mocks.open.mockResolvedValue("/research/seminar.pdf");
+  render(<WorkspaceProjectDialog onClose={vi.fn()} onCreated={onCreated} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose file…" }));
+  await screen.findByText("seminar.pdf");
+  fireEvent.change(screen.getByLabelText("Document type"), {
+    target: { value: "slides" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalled());
+  expect(mocks.importPaper).toHaveBeenCalledWith(
+    expect.objectContaining({ documentType: "slides", role: "other" }),
+  );
+});

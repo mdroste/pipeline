@@ -15,6 +15,7 @@ fn import(
             paper_id,
             title: title.into(),
             role: "manuscript".into(),
+            document_type: None,
             path: path.to_string_lossy().into_owned(),
             operation_id: operation.into(),
         },

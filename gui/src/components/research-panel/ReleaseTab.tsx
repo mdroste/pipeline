@@ -36,15 +36,15 @@ export default function ReleaseTab({
     <>
       {(releaseView === "all" || releaseView === "review") && (
         <label className="mb-4 block text-xs">
-          Paper to review
+          Document to review
           <select
-            aria-label="Paper to review"
+            aria-label="Document to review"
             className="mt-2 block w-full rounded border bg-transparent p-2"
             value={selectedPaper?.paper.id ?? ""}
             disabled={busy}
             onChange={(event) => setProjectPaperId(event.target.value)}
           >
-            <option value="">Choose a paper…</option>
+            <option value="">Choose a document…</option>
             {papers.map((item) => (
               <option key={item.paper.id} value={item.paper.id}>
                 {item.paper.title}

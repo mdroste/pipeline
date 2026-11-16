@@ -1,8 +1,9 @@
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import {
   destinationHints,
   workspaceDestinations,
 } from "../../lib/workspaceNavigation";
+import { projectClient } from "../../lib/projectClient";
 import type { OpenResearchObject } from "../../lib/deskClient";
 import type { FileLocation } from "../../lib/fileLinks";
 import RetainedWorkspaceView from "../RetainedWorkspaceView";
@@ -119,37 +120,104 @@ export default function ProjectDestination({
     submitSelection,
     openAnchors,
   } = selectionActions;
-  const studio = (view: "writing" | "responses") => (
-    <Suspense fallback={<p>Loading research tools…</p>}>
-      <ResearchStudio
-        key={view}
-        active={!object && tab === view}
-        tool={view === "writing" ? "manuscript" : view}
-        workspaceId={workspaceId}
-        data={data}
-        onRefresh={refresh}
-        onDocument={(id, passage) => {
-          setRevisionId(id);
-          setInitialSelection(
-            passage && {
-              revisionId: id,
-              revisionHash:
-                data.papers.find((p) => p.revision?.id === id)?.revision
-                  ?.contentHash ?? "",
-              start: passage.start,
-              end: passage.end,
-              page: null,
-              region: null,
-              quote: "",
-            },
-          );
-          setTab("documents");
-        }}
-        onAnchors={openAnchors}
-        onReviewHandoff={onReviewHandoff}
-      />
-    </Suspense>
+  const [historicalOwner, setHistoricalOwner] = useState<{
+    revisionId: string;
+    paperId: string;
+  } | null>(null);
+  const selectedDocument =
+    data.papers.find((p) => p.revision?.id === revisionId) ??
+    data.papers.find(
+      (p) =>
+        historicalOwner?.revisionId === revisionId &&
+        p.paper.id === historicalOwner.paperId,
+    );
+  useEffect(() => {
+    let live = true;
+    if (revisionId && !selectedDocument)
+      void projectClient
+        .read(workspaceId, revisionId)
+        .then((view) => {
+          if (live)
+            setHistoricalOwner({ revisionId, paperId: view.revision.paperId });
+        })
+        .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, revisionId, selectedDocument?.paper.id]);
+  const entrypoint = selectedDocument?.revision?.entrypoint?.replaceAll(
+    "\\",
+    "/",
   );
+  const folder = workspace?.root?.replaceAll("\\", "/").replace(/\/+$/, "");
+  const sourceFolder =
+    entrypoint &&
+    folder &&
+    selectedDocument?.revision?.inputKind === "source_tree"
+      ? entrypoint === folder
+        ? ""
+        : entrypoint.startsWith(`${folder}/`)
+          ? entrypoint.slice(folder.length + 1) + "/"
+          : null
+      : null;
+  const sourceCandidates =
+    sourceFolder !== null
+      ? (data.inventory?.body.files ?? [])
+          .map((file) => file.path)
+          .filter(
+            (path) => path.startsWith(sourceFolder) && /\.tex$/i.test(path),
+          )
+      : [];
+  const documentPath =
+    entrypoint &&
+    folder &&
+    entrypoint.startsWith(`${folder}/`) &&
+    /\.(tex|md|txt)$/i.test(entrypoint)
+      ? entrypoint.slice(folder.length + 1)
+      : (sourceCandidates.find((path) => /(^|\/)main\.tex$/i.test(path)) ??
+        (sourceCandidates.length === 1 ? sourceCandidates[0] : null));
+  const studio = (view: "writing" | "responses") =>
+    view === "writing" && revisionId && !selectedDocument ? (
+      <p className="p-4 text-sm text-ink-muted">Loading document…</p>
+    ) : (
+      <Suspense fallback={<p>Loading research tools…</p>}>
+        <ResearchStudio
+          key={
+            view === "writing"
+              ? `${view}:${selectedDocument?.paper.id ?? "project"}`
+              : view
+          }
+          documentId={
+            view === "writing" ? selectedDocument?.paper.id : undefined
+          }
+          documentPath={view === "writing" ? documentPath : undefined}
+          active={!object && tab === view}
+          tool={view === "writing" ? "manuscript" : view}
+          workspaceId={workspaceId}
+          data={data}
+          onRefresh={refresh}
+          onDocument={(id, passage) => {
+            setRevisionId(id);
+            setInitialSelection(
+              passage && {
+                revisionId: id,
+                revisionHash:
+                  data.papers.find((p) => p.revision?.id === id)?.revision
+                    ?.contentHash ?? "",
+                start: passage.start,
+                end: passage.end,
+                page: null,
+                region: null,
+                quote: "",
+              },
+            );
+            setTab("documents");
+          }}
+          onAnchors={openAnchors}
+          onReviewHandoff={onReviewHandoff}
+        />
+      </Suspense>
+    );
   return (
     <fieldset disabled={busy} className="contents">
       {object && (
@@ -224,6 +292,7 @@ export default function ProjectDestination({
         <ProjectPage view="reviews">
           {tab === "reviews" && (
             <ProjectReviews
+              documents={data.papers}
               workspaceRoot={workspace?.root ?? null}
               workspaceName={workspace?.name ?? "This project"}
               onChanged={onChanged}

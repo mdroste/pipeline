@@ -265,7 +265,6 @@ describe("SettingsPage workflow", () => {
     const llm = screen.getByRole("radio", { name: /^Selected model\b/ });
     const pdftotext = screen.getByRole("radio", { name: /^pdftotext\b/ });
 
-    expect(screen.getByText("Best to basic ↓")).toBeVisible();
     expect(screen.getByText("Best quality")).toBeVisible();
     expect(screen.getByText("High quality")).toBeVisible();
     expect(screen.getByText("Basic quality")).toBeVisible();

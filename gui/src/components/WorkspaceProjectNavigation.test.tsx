@@ -19,7 +19,7 @@ it("exposes six stable project areas and routes each to its default view", () =>
     sections
       .getAllByRole("button")
       .map((button) => button.querySelector("span")?.textContent),
-  ).toEqual(["Overview", "Paper", "Files", "Reviews", "Changes", "Notes"]);
+  ).toEqual(["Overview", "Documents", "Files", "Reviews", "Changes", "Notes"]);
   expect(sections.getByRole("button", { name: /Reviews/ })).toHaveAttribute(
     "aria-current",
     "page",

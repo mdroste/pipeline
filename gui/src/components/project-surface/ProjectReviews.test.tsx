@@ -277,3 +277,55 @@ it("lists a folderless project's handed-off papers by immutable staged path or e
   expect(screen.getByText("Review of two.pdf")).toBeInTheDocument();
   expect(screen.getAllByText("Review of manuscript.tex")).toHaveLength(1);
 });
+
+it("tracks findings separately for the paper and each slide deck", async () => {
+  const stored = new Map<string, ReturnType<typeof collection>>();
+  const runs = [
+    run("paper-run", "/review/paper.pdf"),
+    run("deck-run", "/review/deck.pdf"),
+  ];
+  mocks.invoke.mockImplementation(async (command, args) => {
+    if (command === "list_runs") return runs;
+    if (command === "list_projects")
+      return { projects: [...stored.values()], warnings: [] };
+    if (command === "workbench_project_review_links")
+      return runs.map((run, i) => ({
+        id: `handoff-${i}`,
+        externalReference: run.run_id,
+        stagedPath: run.input_path,
+        paperId: i ? "deck" : "paper",
+        revisionId: `rev-${i}`,
+        contentHash: "hash",
+      }));
+    if (command === "create_project") {
+      const item = collection(`collection-${stored.size}`, args.name, []);
+      stored.set(item.id, item);
+      return item;
+    }
+    if (command === "set_project_run") {
+      const item = stored.get(args.projectId)!;
+      const next = { ...item, run_ids: [...item.run_ids, args.runId] };
+      stored.set(item.id, next);
+      return next;
+    }
+    if (command === "sync_project_issue_ledger")
+      return {
+        schema_version: 1,
+        project_id: args.projectId,
+        updated: "now",
+        issues: [],
+        warnings: [],
+      };
+    throw new Error(command);
+  });
+  render(<ProjectReviews workspaceId="ws" workspaceRoot={null} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Track findings" }),
+  );
+  await waitFor(() =>
+    expect([...stored.values()].map((item) => item.run_ids)).toEqual([
+      ["paper-run"],
+      ["deck-run"],
+    ]),
+  );
+});

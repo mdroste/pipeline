@@ -295,9 +295,7 @@ export default function SettingsPage({
                 </span>
               ) : savePending ? (
                 "Saving…"
-              ) : (
-                "Preferences save automatically."
-              )
+              ) : null
             }
           />
           <div

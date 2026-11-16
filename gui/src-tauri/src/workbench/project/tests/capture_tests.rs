@@ -230,6 +230,7 @@ fn a_paper_in_an_unreadable_folder_is_unknown_rather_than_changed() {
             paper_id: None,
             title: "Paper".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: folder.join("main.md").to_string_lossy().into_owned(),
             operation_id: id("import").unwrap(),
         },

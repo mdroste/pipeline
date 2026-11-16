@@ -97,7 +97,7 @@ it("uses plain-language section names instead of provenance vocabulary", async (
   await mount();
   for (const label of [
     "Overview",
-    "Paper",
+    "Documents",
     "Files",
     "Reviews",
     "Changes",

@@ -107,7 +107,9 @@ describe("SettingsPage autosave", () => {
     expect(
       screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Preferences save automatically.")).toBeVisible();
+    expect(
+      screen.queryByText("Preferences save automatically."),
+    ).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Step time limit"), "1800");
 
     await waitFor(() =>

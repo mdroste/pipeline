@@ -98,6 +98,7 @@ fn file_workspace_source_tree_assets_use_retained_hashes() {
             paper_id: None,
             title: "Tree".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: f.root.to_string_lossy().into_owned(),
             operation_id: id("import").unwrap(),
         },

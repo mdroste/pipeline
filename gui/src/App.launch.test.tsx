@@ -154,6 +154,86 @@ vi.mock(
 describe("App launch", () => {
   beforeEach(reset);
 
+  it.each(["Choose test paper", "Choose two papers"])(
+    "shows system ready with ChatGPT alone but checks the review's providers for %s",
+    async (selection) => {
+      const defaultInvoke = invoke.getMockImplementation()!;
+      invoke.mockImplementation(async (command: string, args: unknown) => {
+        const result = await defaultInvoke(command, args);
+        if (command !== "get_execution_plan") return result;
+        return {
+          ...result,
+          readiness: {
+            ready: false,
+            deps: [
+              {
+                name: "Claude CLI",
+                found: true,
+                authenticated: false,
+                cli_auth_status: "signed_out",
+                required: true,
+                version: "",
+                path: "",
+                hint: "This review uses Claude.",
+              },
+              {
+                name: "ChatGPT (reviews)",
+                found: true,
+                authenticated: true,
+                required: false,
+                version: "",
+                path: "",
+                hint: "",
+              },
+            ],
+          },
+        };
+      });
+      const user = userEvent.setup();
+      render(<App />);
+      await screen.findByRole("button", { name: "System ready" });
+      expect(
+        screen.queryByRole("dialog", { name: "Dependencies" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Setup needed" }),
+      ).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "System ready" }));
+      const systemCheck = await screen.findByRole("dialog", {
+        name: "Dependencies",
+      });
+      expect(
+        within(systemCheck).getByText(
+          "One connected provider is enough to get started.",
+        ),
+      ).toBeVisible();
+      expect(
+        within(systemCheck).queryByText("This review uses Claude."),
+      ).not.toBeInTheDocument();
+      await user.click(
+        within(systemCheck).getByRole("button", { name: "Close" }),
+      );
+
+      await user.click(await screen.findByRole("button", { name: selection }));
+      await user.click(screen.getByRole("button", { name: "Preview" }));
+      const reviewCheck = await screen.findByRole("dialog", {
+        name: "Dependencies",
+      });
+      expect(
+        within(reviewCheck).getByText("This review uses Claude."),
+      ).toBeVisible();
+      expect(
+        within(reviewCheck).getByText(/Check the required model connections/),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("button", { name: "System ready" }),
+      ).toBeVisible();
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(enqueueBatch).not.toHaveBeenCalled();
+    },
+  );
+
   it("rechecks dependencies when reopening a stale setup warning", async () => {
     const defaultInvoke = invoke.getMockImplementation()!;
     let ready = false;

@@ -146,17 +146,18 @@ export function AccessModeSelector({
   subscriptionDisabledNote?: string;
 }) {
   const effectiveValue = subscriptionDisabledNote ? "api" : value;
+  const description =
+    subscriptionDisabledNote ??
+    (effectiveValue === "api"
+      ? "API usage is billed separately by your provider."
+      : undefined);
   return (
     <div className="settings-row settings-row-plain">
       <div className="settings-row-copy">
         <div className="settings-row-label">Connection mode</div>
-        <p className="settings-row-description">
-          {subscriptionDisabledNote
-            ? subscriptionDisabledNote
-            : effectiveValue === "subscription"
-              ? `Reviews use your ${provider} subscription.`
-              : "Reviews use the API key below. Your provider bills you for what you use."}
-        </p>
+        {description && (
+          <p className="settings-row-description">{description}</p>
+        )}
       </div>
       <div
         role="radiogroup"
@@ -294,9 +295,7 @@ export function ProvidersSection({
                 <WorkflowCodexConnection onStatusChange={onCodexStatusChange} />
               )}
               <details className="settings-disclosure">
-                <summary>
-                  Advanced connection settings <span>Compatibility</span>
-                </summary>
+                <summary>Advanced connection settings</summary>
                 <div className="pt-4">
                   <Field
                     label="Reviews connection"

@@ -3,6 +3,16 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.5.1 — 2026-11-16
+
+- Allow setup to complete when either ChatGPT or Claude is connected, and
+  check that the selected provider is ready before starting a review.
+- Improve settings buttons, navigation, and search contrast in dark mode,
+  and shorten settings descriptions.
+- Track multiple documents per project, including paper drafts, slide decks,
+  appendices, response letters, and other document types. Choose documents for editing,
+  building, and review.
+
 ## 1.5.0 — 2026-11-15
 
 - Improve native command isolation and manuscript TeX workflows.

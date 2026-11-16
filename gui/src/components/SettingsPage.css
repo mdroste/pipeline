@@ -1,13 +1,6 @@
 .settings-shell {
   @apply flex h-full min-h-0 min-w-0 overflow-hidden bg-sunken text-ink;
 }
-.settings-nav-item svg {
-  margin-top: 0.125rem;
-}
-.settings-nav-item.is-active {
-  @apply bg-sunken text-ink;
-  box-shadow: inset 2px 0 var(--ui-inverse);
-}
 .settings-content {
   @apply min-w-0 flex-1 overflow-y-auto;
   container: settings-content / inline-size;
@@ -18,6 +11,11 @@
 .settings-save-status {
   @apply mx-3 mt-4 max-w-full border-t border-gray-200 pt-4 text-[0.6875rem] leading-relaxed dark:border-neutral-800;
   overflow-wrap: anywhere;
+}
+.settings-save-status:empty {
+  margin-top: 0;
+  border: 0;
+  padding-top: 0;
 }
 .settings-jump-nav button {
   @apply rounded-ui-sm px-2 py-1 text-ui-label text-ink-muted hover:bg-sunken hover:text-ink;
@@ -70,18 +68,18 @@
   padding-top: 1.5rem;
 }
 .settings-nav-item {
-  @apply flex w-full items-start gap-2.5 rounded-ui-sm text-left text-ui-label text-ink-muted hover:bg-sunken hover:text-ink;
+  @apply flex w-full items-center gap-2.5 rounded-ui-sm text-left text-ui-label text-ink-muted hover:bg-sunken hover:text-ink;
   padding: var(--ui-space-2) var(--ui-space-3);
 }
-.settings-nav-detail {
-  font-size: 0.6875rem;
-  margin-top: 0.2rem;
+.settings-nav-item.is-active {
+  @apply bg-line text-ink;
 }
 .settings-sidebar-title {
   @apply mx-3 mb-4 text-ui-title font-semibold tracking-tight;
 }
 .settings-sidebar nav {
   overflow-y: auto;
+  padding-inline: var(--ui-space-2);
 }
 .settings-search-bar {
   @apply sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-surface;
@@ -90,6 +88,18 @@
 .settings-search-bar input {
   width: 100%;
   max-width: 34rem;
+}
+.dark .settings-search-bar {
+  background: var(--ui-sunken);
+}
+.dark .settings-search-bar input {
+  background: var(--ui-raised);
+  border-color: var(--ui-border);
+  color-scheme: dark;
+}
+.dark .settings-search-bar input::placeholder {
+  color: var(--ui-muted);
+  opacity: 1;
 }
 .settings-search-results h1 {
   font-size: 1.25rem;
@@ -150,25 +160,15 @@
 .settings-toggle button {
   margin-top: 0;
 }
-.settings-button,
-.settings-button-primary {
-  @apply border-inverse bg-inverse text-on-inverse;
+.settings-button {
+  @apply bg-surface;
 }
-.settings-button:hover {
-  @apply bg-sunken;
-}
-.settings-button-primary {
-  @apply border-gray-900 bg-gray-900 text-white dark:border-neutral-200 dark:bg-neutral-200 dark:text-neutral-900;
-}
-.settings-button:disabled,
-.settings-button-primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+.settings-button:hover:not(:disabled),
+.settings-button-quiet:hover:not(:disabled) {
+  @apply bg-raised;
 }
 .settings-button-quiet {
-  @apply rounded-lg text-gray-600 hover:bg-gray-100 disabled:opacity-45 dark:text-neutral-300 dark:hover:bg-neutral-800;
-  font-size: 0.8125rem;
-  padding: 0.3125rem 0.5rem;
+  @apply border-transparent text-ink-muted;
 }
 .settings-number {
   width: 7rem;
@@ -380,7 +380,6 @@
     border-bottom: 1px solid var(--ui-border);
   }
   .settings-sidebar-title,
-  .settings-nav-detail,
   .settings-sidebar [role="separator"] {
     display: none;
   }

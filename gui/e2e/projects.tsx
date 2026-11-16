@@ -7,7 +7,10 @@ import WorkspaceProjectSurface from "../src/components/WorkspaceProjectSurface";
 import NavRail from "../src/components/NavRail";
 import type { ProjectHome } from "../src/lib/projectClient";
 import type { ProjectIndexItem } from "../src/lib/projectIndex";
-import type { WorkbenchSession, Workspace } from "../src/lib/workbench/sessionTypes";
+import type {
+  WorkbenchSession,
+  Workspace,
+} from "../src/lib/workbench/sessionTypes";
 import type { WorkspaceDestination } from "../src/lib/workspaceNavigation";
 import "../src/App.css";
 import "../src/components/WorkspaceDesk.css";
@@ -193,6 +196,57 @@ const sessions = [
     archivedAt: time,
   },
 ];
+const documentPreview = new URLSearchParams(location.search).has("documents");
+const documentHistory = new Map<
+  string,
+  NonNullable<ProjectHome["papers"][number]["revision"]>[]
+>();
+if (documentPreview) {
+  home.papers = [
+    ["paper", "Main paper", "paper"],
+    ["seminar", "Seminar presentation", "slides"],
+    ["conference", "Conference presentation", "slides"],
+    ["appendix", "Online appendix", "appendix"],
+  ].map(([id, title, kind]) => {
+    const revision = {
+      id: `${id}-v2`,
+      paperId: id,
+      inputKind: "text",
+      entrypoint: `/research/${id}.md`,
+      dependencyManifest: {},
+      contentHash: `fixture-${id}`,
+      textReference: null,
+      compiledArtifactId: null,
+      extraction: { status: "complete" },
+      captureComplete: true,
+      capturedAt: "2026-11-16T12:00:00Z",
+    };
+    documentHistory.set(id, [
+      revision,
+      { ...revision, id: `${id}-v1`, capturedAt: "2026-11-01T12:00:00Z" },
+    ]);
+    return {
+      paper: {
+        id,
+        workspaceId: workspace.id,
+        title,
+        role:
+          kind === "paper"
+            ? "manuscript"
+            : kind === "appendix"
+              ? "appendix"
+              : "other",
+        documentType: kind as "paper" | "slides" | "appendix",
+        pinned: id === "seminar",
+        archived: false,
+        currentRevisionId: revision.id,
+        createdAt: time,
+        updatedAt: time,
+      },
+      revision,
+    };
+  });
+}
 Object.assign(window, {
   __TAURI_INTERNALS__: {
     transformCallback: () => 1,
@@ -204,7 +258,18 @@ Object.assign(window, {
         return {
           workspaces: projects.map((project) => ({ ...workspace, ...project })),
         };
-      if (command === "workbench_conversation_index") return {items:sessions.filter(chat=>Boolean(chat.archivedAt)===args.archived).map(session=>({session,projectName:projects.find(p=>p.id===session.workspaceId)?.name ?? null})),nextCursor:null};
+      if (command === "workbench_conversation_index")
+        return {
+          items: sessions
+            .filter((chat) => Boolean(chat.archivedAt) === args.archived)
+            .map((session) => ({
+              session,
+              projectName:
+                projects.find((p) => p.id === session.workspaceId)?.name ??
+                null,
+            })),
+          nextCursor: null,
+        };
       if (command === "workbench_list_sessions")
         return {
           sessions: sessions.filter(
@@ -224,6 +289,41 @@ Object.assign(window, {
         chat.workspaceId = args.request.workspaceId;
         chat.revision++;
         return { record: chat };
+      }
+      if (command === "workbench_document_versions")
+        return documentHistory.get(args.paperId) ?? [];
+      if (command === "workbench_document_read") {
+        const revision = [...documentHistory.values()]
+          .flat()
+          .find((revision) => revision.id === args.revisionId)!;
+        const item = home.papers.find(
+          (document) => document.paper.id === revision.paperId,
+        )!;
+        const text = `${item.paper.title}\n\nHow does input substitution change the aggregate effects of sectoral shocks?\n\n1. Motivation and research question\n2. Model and identification\n3. Main results\n4. Implications`;
+        return {
+          revision,
+          title: item.paper.title,
+          text,
+          start: 0,
+          end: text.length,
+          totalBytes: text.length,
+          pageCount: null,
+          imageUrl: null,
+          page: null,
+        };
+      }
+      if (command === "workbench_update_document") {
+        const item = home.papers.find(
+          (document) => document.paper.id === args.request.paperId,
+        )!;
+        Object.assign(item.paper, args.request, {
+          updatedAt: new Date().toISOString(),
+        });
+        if (args.request.currentRevisionId)
+          item.revision = documentHistory
+            .get(item.paper.id)!
+            .find((version) => version.id === args.request.currentRevisionId)!;
+        return item;
       }
       if (command === "workbench_project_home") return home;
       if (command === "workbench_get_workspace") return workspace;
@@ -259,10 +359,11 @@ Object.assign(window, {
 
 function Fixture() {
   const [view, setView] = useState<"index" | "project" | "conversation">(
-    "index",
+    documentPreview ? "project" : "index",
   );
-  const [destination, setDestination] =
-    useState<WorkspaceDestination>("overview");
+  const [destination, setDestination] = useState<WorkspaceDestination>(
+    documentPreview ? "documents" : "overview",
+  );
   const [width, setWidth] = useState(1400);
   const [dark, setDark] = useState(false);
   const [resumed, setResumed] = useState("");

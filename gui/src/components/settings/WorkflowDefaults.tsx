@@ -77,7 +77,7 @@ export function ModelDefaultsSection({
     <>
       <SectionHeader
         title="Model defaults"
-        description="Every review runs on your default review model. A stage below, or a step in the review designer, can use another model. New review lists any that do, and can change the model for one review."
+        description="Reviews use the default model unless a stage or workflow step overrides it."
       />
       <SettingRow label={defaultLabel} description={defaultSummary}>
         <button
@@ -147,17 +147,9 @@ export function ModelDefaultsSection({
               <summary className="cursor-pointer text-sm text-gray-800 dark:text-neutral-200">
                 <span className="font-medium">Stage exceptions</span>
                 <span className="ml-2 text-xs text-gray-500 dark:text-neutral-400">
-                  {exceptionCount === 0
-                    ? "None: every stage uses the default review model"
-                    : `${exceptionCount} set`}
+                  {exceptionCount === 0 ? "None" : `${exceptionCount} set`}
                 </span>
               </summary>
-              <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-                Give a stage its own model only when it needs one, such as a
-                faster model for document bundle preparation. New review lists
-                every stage set here and can switch it to the review model for
-                one review.
-              </p>
               <div>
                 <ModelStage
                   title="Document bundle preparation"
@@ -410,15 +402,9 @@ export function WorkflowSection({
 }) {
   return (
     <>
-      <SectionHeader
-        title="Execution"
-        description="Set how many model calls can run at once, how long they can take, and how often to retry."
-      />
+      <SectionHeader title="Execution" />
       <div>
-        <SettingRow
-          label="Model calls at once"
-          description="How many model calls a review can run at the same time."
-        >
+        <SettingRow label="Model calls at once" description="Per review.">
           <div className="flex items-center gap-3">
             <input
               aria-label="Model calls at once"
@@ -442,7 +428,7 @@ export function WorkflowSection({
 
         <SettingRow
           label="Step time limit"
-          description="Maximum time for each model call. Document bundle preparation and PDF extraction calls get half this time."
+          description="Per model call. Document bundle preparation and PDF extraction get half this time."
         >
           <select
             aria-label="Step time limit"
@@ -463,10 +449,7 @@ export function WorkflowSection({
           </select>
         </SettingRow>
 
-        <SettingRow
-          label="Step retries"
-          description="How many times to retry a failed step. Enter 0 for no retries."
-        >
+        <SettingRow label="Step retries" description="0 disables retries.">
           <div className="flex items-center gap-3">
             <input
               aria-label="Step retries"
@@ -490,7 +473,7 @@ export function WorkflowSection({
 
         <SettingRow
           label="Reviews at once"
-          description="How many reviews run at the same time. A higher number finishes the queue sooner but reaches provider limits faster."
+          description="Higher values can reach provider limits sooner."
         >
           <select
             id="max-concurrent-reviews"

@@ -1,3 +1,4 @@
+import { documentType } from "../../lib/documentTypes";
 import { useEffect, useRef, useState } from "react";
 import useDraftText from "../../hooks/useDraftText";
 import {
@@ -16,7 +17,6 @@ import {
   input,
   muted,
   notice,
-  earlierVersions,
   earlierVersionLabel,
   versionLabel,
   formatDate,
@@ -105,8 +105,14 @@ export default function ProjectSettings({
       setChecking(false);
     }
   };
-  const versions = data.papers.filter((p) => p.revision);
-  const earlier = earlierVersions(data);
+  const versions = data.papers.filter(
+    (p) => p.revision && documentType(p.paper) === "paper" && !p.paper.archived,
+  );
+  const mainVersion = data.settings.body.manuscriptRevisionId;
+  const earlier =
+    mainVersion && !data.papers.some((p) => p.revision?.id === mainVersion)
+      ? [mainVersion]
+      : [];
   const inventory = data.inventory?.body;
   const unreadable = inventory?.files.filter((f) => !f.hash) ?? [];
   return (
@@ -115,16 +121,19 @@ export default function ProjectSettings({
       <div className="workspace-overview-details-body">
         <div className="mb-4 flex flex-wrap gap-2">
           <button className={button} onClick={() => onImportPaper(false)}>
-            Import paper
+            Add document
           </button>
           <button className={button} onClick={() => onImportPaper(true)}>
             Import LaTeX folder
           </button>
         </div>
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card title="Paper">
+          <Card title="Main paper">
             {!versions.length && (
-              <p className={muted}>No paper imported yet.</p>
+              <p className={muted}>
+                No paper selected. Projects can contain only slides or other
+                documents.
+              </p>
             )}
             <label className="block text-xs">
               Current version
@@ -152,12 +161,12 @@ export default function ProjectSettings({
               </select>
             </label>
             <p className={muted}>
-              Notes, action items, and comparisons use this version. Importing a
-              newer file doesn’t change it.
+              Optional reference paper for the project. Each document keeps its
+              own versions.
             </p>
           </Card>
 
-          <Card title="About this paper">
+          <Card title="Publication details (optional)">
             <p className={muted}>
               The stage decides what the project overview shows first. Kind and
               venue appear under the project name.

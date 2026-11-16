@@ -485,6 +485,7 @@ pub fn focus_review(
             paper_id: None,
             title: "Focused re-review coverage".into(),
             role: "other".into(),
+            document_type: None,
             path: path.to_string_lossy().into_owned(),
             operation_id: id("focus_paper")?,
         },

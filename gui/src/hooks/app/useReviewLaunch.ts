@@ -60,6 +60,7 @@ export function useReviewLaunch(
     setParallelOverrides,
     setDepsReport,
     setShowDeps,
+    setDepsScope,
     setRunConfigError,
     loadRunSetup,
     pendingRun,
@@ -185,6 +186,7 @@ export function useReviewLaunch(
         });
         setDepsReport(plan.readiness);
         if (!plan.readiness.ready) {
+          setDepsScope("review");
           setShowDeps(true);
           return;
         }
@@ -219,6 +221,7 @@ export function useReviewLaunch(
       });
       setDepsReport(plan.readiness);
       if (!plan.readiness.ready) {
+        setDepsScope("review");
         setShowDeps(true);
         return;
       }
@@ -395,6 +398,12 @@ export function useReviewLaunch(
     setLaunchError(null);
     setPreparingRun(true);
     try {
+      const reviewType = handoff.metadata.documentType;
+      if (reviewType === "slides" || reviewType === "paper") {
+        await workflowProfileClient.switch({
+          id: reviewType === "slides" ? "slide-review" : "auto-paper-review",
+        });
+      }
       const setup = await loadRunSetup();
       if (!setup) return;
       const pending = {
@@ -408,6 +417,8 @@ export function useReviewLaunch(
       } else {
         await launch(pending);
       }
+    } catch (error) {
+      setRunConfigError(workbenchErrorMessage(error));
     } finally {
       setPreparingRun(false);
     }

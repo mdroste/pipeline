@@ -1,3 +1,4 @@
+import { documentType } from "../lib/documentTypes";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { releaseClient } from "../lib/workbench/releaseClient";
@@ -165,7 +166,10 @@ export default function WorkspaceReleasePanel({
       workspaceId,
       sessionId: snapshot?.session.id ?? null,
       paperId: selectedPaper.paper.id,
-      metadata: { paperTitle: selectedPaper.paper.title },
+      metadata: {
+        paperTitle: selectedPaper.paper.title,
+        documentType: documentType(selectedPaper.paper),
+      },
       operationId: operation("review-handoff"),
     });
     onReviewHandoff(handoff);

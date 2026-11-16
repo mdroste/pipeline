@@ -1,3 +1,4 @@
+import type { PaperWithRevision } from "../../lib/workbench/researchTypes";
 // The project's Reviews section: the state of this project's documents under
 // review — issue ledgers first, then the runs — so "what's outstanding on the
 // draft" lives with the project instead of a separate "collections" page.
@@ -12,6 +13,7 @@ import { router } from "../../lib/router";
 import { useOpenHistoryRun } from "../../hooks/app/historyRunOpener";
 import {
   reviewsForProject,
+  reviewDocumentId,
   type ProjectReviewLink,
 } from "../../lib/project-overview/projectPaths";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
@@ -29,7 +31,9 @@ export default function ProjectReviews({
   workspaceRoot,
   workspaceName = "This project",
   onChanged,
+  documents = [],
 }: {
+  documents?: PaperWithRevision[];
   workspaceId?: string;
   workspaceRoot: string | null;
   workspaceName?: string;
@@ -40,6 +44,7 @@ export default function ProjectReviews({
   const [links, setLinks] = useState<ProjectReviewLink[]>([]);
   const [collections, setCollections] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [documentFilter, setDocumentFilter] = useState("");
   const [tracking, setTracking] = useState(false);
   const [trackError, setTrackError] = useState<string | null>(null);
   const openHistoryRun = useOpenHistoryRun();
@@ -64,9 +69,12 @@ export default function ProjectReviews({
       stale = true;
     };
   }, [workspaceId]);
-  const projectRuns = useMemo(
+  const allProjectRuns = useMemo(
     () => reviewsForProject(runs ?? [], workspaceRoot, links),
     [runs, workspaceRoot, links],
+  );
+  const projectRuns = allProjectRuns.filter(
+    (run) => !documentFilter || reviewDocumentId(run, links) === documentFilter,
   );
   const projectRunIds = useMemo(
     () => new Set(projectRuns.map((run) => run.run_id)),
@@ -89,23 +97,38 @@ export default function ProjectReviews({
     setTracking(true);
     setTrackError(null);
     try {
-      let collection =
-        linked[0] ??
-        (await reviewCollectionClient.create({
-          name: `${workspaceName} findings`,
-          description: null,
-        }));
-      for (const run of untracked)
-        collection = await reviewCollectionClient.setRun({
-          projectId: collection.id,
-          runId: run.run_id,
-          included: true,
-        });
-      const saved = collection;
-      setCollections((current) => [
-        saved,
-        ...current.filter((item) => item.id !== saved.id),
-      ]);
+      const groups = new Map<string | null, RunSummary[]>();
+      for (const run of untracked) {
+        const documentId = reviewDocumentId(run, links);
+        groups.set(documentId, [...(groups.get(documentId) ?? []), run]);
+      }
+      for (const [documentId, group] of groups) {
+        // Never append deck findings to a collection that also contains paper reviews.
+        let collection =
+          linked.find(
+            (item) =>
+              item.run_ids.length > 0 &&
+              item.run_ids.every((id) => {
+                const run = allProjectRuns.find((run) => run.run_id === id);
+                return run && reviewDocumentId(run, links) === documentId;
+              }),
+          ) ??
+          (await reviewCollectionClient.create({
+            name: `${documents.find((item) => item.paper.id === documentId)?.paper.title ?? workspaceName} findings`,
+            description: null,
+          }));
+        for (const run of group)
+          collection = await reviewCollectionClient.setRun({
+            projectId: collection.id,
+            runId: run.run_id,
+            included: true,
+          });
+        const saved = collection;
+        setCollections((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+      }
       onChanged?.();
     } catch (caught) {
       setTrackError(workbenchErrorMessage(caught));
@@ -144,6 +167,24 @@ export default function ProjectReviews({
         </Button>
       </header>
 
+      {documents.length > 1 && (
+        <label className="block text-sm">
+          Document
+          <select
+            aria-label="Filter reviews by document"
+            className="ui-input mt-1"
+            value={documentFilter}
+            onChange={(e) => setDocumentFilter(e.target.value)}
+          >
+            <option value="">All documents</option>
+            {documents.map(({ paper }) => (
+              <option key={paper.id} value={paper.id}>
+                {paper.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {untracked.length > 0 && (
         <section aria-label="Track findings" className="space-y-2">
           <p className={muted}>

@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -15,10 +16,12 @@ import { makeProjectHome } from "../test/projectSurfaceFixtures";
 
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
+  read: vi.fn(),
   workspace: vi.fn(),
   listPapers: vi.fn(),
   listSources: vi.fn(),
   importPaper: vi.fn(),
+  documentVersions: vi.fn(),
   importSource: vi.fn(),
   prompt: vi.fn(),
   notify: vi.fn(),
@@ -27,7 +30,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../lib/projectClient", async (original) => ({
   ...(await original<typeof import("../lib/projectClient")>()),
-  projectClient: { home: mocks.home },
+  projectClient: { home: mocks.home, read: mocks.read },
 }));
 vi.mock("../lib/workbench/workspaceClient", () => ({
   workspaceClient: { getWorkspace: mocks.workspace },
@@ -37,6 +40,7 @@ vi.mock("../lib/workbench/researchClient", () => ({
     listPapers: mocks.listPapers,
     listSources: mocks.listSources,
     importPaper: mocks.importPaper,
+    documentVersions: mocks.documentVersions,
     importSource: mocks.importSource,
   },
 }));
@@ -83,12 +87,16 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
   mocks.home.mockResolvedValue(makeProjectHome());
+  mocks.read.mockResolvedValue({
+    revision: { ...imported.revision, paperId: imported.paper.id },
+  });
   mocks.workspace.mockResolvedValue({
     id: "workspace",
     root: null,
     name: "Research",
     revision: 1,
   });
+  mocks.documentVersions.mockResolvedValue([]);
   mocks.listPapers.mockResolvedValue([]);
   mocks.listSources.mockResolvedValue([]);
   vi.mocked(open).mockResolvedValue("/research/new.pdf");
@@ -100,13 +108,15 @@ afterEach(cleanup);
 it("reloads the project after Project settings imports a paper, without a folder", async () => {
   const page = render(view("project-settings"));
   const importButton = await screen.findByRole("button", {
-    name: "Import paper",
+    name: "Add document",
   });
   await waitFor(() => expect(mocks.home).toHaveBeenCalledOnce());
   mocks.home.mockResolvedValue({ ...makeProjectHome(), papers: [imported] });
   fireEvent.click(importButton);
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add document" }));
   await waitFor(() => expect(mocks.importPaper).toHaveBeenCalledOnce());
-  await waitFor(() => expect(mocks.home).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(mocks.home).toHaveBeenCalledTimes(3));
 
   page.rerender(view("documents"));
   const picker = await screen.findByRole("combobox", { name: "Document" });
@@ -116,14 +126,17 @@ it("reloads the project after Project settings imports a paper, without a folder
 it("clears the banner when a retried action succeeds", async () => {
   render(view("project-settings"));
   const importButton = await screen.findByRole("button", {
-    name: "Import paper",
+    name: "Add document",
   });
   mocks.importPaper.mockRejectedValueOnce({ message: "The file is locked" });
   fireEvent.click(importButton);
+  const dialog = await screen.findByRole("dialog");
+  const add = within(dialog).getByRole("button", { name: "Add document" });
+  fireEvent.click(add);
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "The file is locked",
   );
-  fireEvent.click(importButton);
+  fireEvent.click(add);
   await waitFor(() => expect(mocks.importPaper).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });

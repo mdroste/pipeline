@@ -138,6 +138,10 @@ const MIGRATIONS: [(&str, &str); CURRENT_SCHEMA_VERSION as usize] = [
         include_str!("../migrations/024_chat_approvals.sql"),
         "Failed to add saved chat approvals",
     ),
+    (
+        include_str!("../migrations/025_document_types.sql"),
+        "Failed to add document types",
+    ),
 ];
 
 fn apply_migrations(transaction: &Transaction<'_>, from: u32, through: u32) -> WorkbenchResult<()> {

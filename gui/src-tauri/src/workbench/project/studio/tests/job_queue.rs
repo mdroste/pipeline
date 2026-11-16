@@ -371,6 +371,7 @@ fn live_latexmk_rebuild_with_nothing_changed_is_a_finished_build() {
     )
     .unwrap();
     let config = BuildConfig {
+        document_id: None,
         name: "Paper".into(),
         checkpoint_id: None,
         directory: ".".into(),

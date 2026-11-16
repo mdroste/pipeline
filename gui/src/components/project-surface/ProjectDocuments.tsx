@@ -8,18 +8,10 @@ import {
   type ProjectRecord,
 } from "../../lib/projectClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import {
-  button,
-  earlierVersionLabel,
-  earlierVersions,
-  input,
-  linkButton,
-  muted,
-  versionLabel,
-  type SurfaceApi,
-} from "./shared";
+import { button, input, linkButton, muted, type SurfaceApi } from "./shared";
 const DocumentReader = lazy(() => import("../WorkspaceDocumentReader"));
 
+import DocumentControls from "./DocumentControls";
 import type { SelectionActionKind } from "./types";
 
 interface Props extends SurfaceApi {
@@ -84,9 +76,6 @@ export default function ProjectDocuments(props: Props) {
   } = props;
   const [mapping, setMapping] = useState("");
   const versions = data.papers.filter((p) => p.revision);
-  const earlier = [
-    ...new Set([...earlierVersions(data), ...(revisionId ? [revisionId] : [])]),
-  ].filter((id) => !data.papers.some((p) => p.revision?.id === id));
   const annotations = data.anchors.filter(
     (a) => a.body.selection.revisionId === revisionId,
   );
@@ -101,31 +90,19 @@ export default function ProjectDocuments(props: Props) {
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col p-4">
+      <DocumentControls
+        data={data}
+        workspaceId={workspaceId}
+        revisionId={revisionId}
+        run={props.run}
+        reportError={reportError}
+        onImport={onImport}
+        onSelect={(id) => {
+          setRevisionId(id);
+          setInitialSelection(undefined);
+        }}
+      />
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Document"
-          className={`${input} max-w-md`}
-          value={revisionId ?? ""}
-          onChange={(e) => {
-            setRevisionId(e.target.value || null);
-            setInitialSelection(undefined);
-          }}
-        >
-          <option value="">Choose a document</option>
-          {versions.map((p) => (
-            <option key={p.revision!.id} value={p.revision!.id}>
-              {versionLabel(p)}
-            </option>
-          ))}
-          {earlier.map((id) => (
-            <option key={id} value={id}>
-              {earlierVersionLabel(id)}
-            </option>
-          ))}
-        </select>
-        <button className={button} onClick={onImport}>
-          Import
-        </button>
         <button
           className={button}
           disabled={!revisionId}
@@ -199,7 +176,7 @@ export default function ProjectDocuments(props: Props) {
             <p className={`p-8 text-sm ${muted}`}>
               {versions.length
                 ? "Choose a document above."
-                : "Import a paper to read it here. Select any passage to ask about it, note it, or turn it into an action item."}
+                : "Add a paper, slide deck, or other document to read it here."}
             </p>
           )}
           {pinnedRevision && (

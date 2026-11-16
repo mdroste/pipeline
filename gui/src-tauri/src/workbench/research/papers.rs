@@ -10,6 +10,9 @@ pub struct Paper {
     pub workspace_id: String,
     pub title: String,
     pub role: String,
+    pub document_type: String,
+    pub pinned: bool,
+    pub archived: bool,
     pub current_revision_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -45,6 +48,8 @@ pub struct ImportPaperRequest {
     pub paper_id: Option<String>,
     pub title: String,
     pub role: String,
+    #[serde(default)]
+    pub document_type: Option<String>,
     pub path: String,
     pub operation_id: String,
 }
@@ -469,6 +474,9 @@ fn paper_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Paper> {
         current_revision_id: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        document_type: row.get(7)?,
+        pinned: row.get(8)?,
+        archived: row.get(9)?,
     })
 }
 
@@ -500,7 +508,10 @@ pub fn import_paper(
             "Paper role must be manuscript, appendix, or other",
         ));
     }
-    let title = validate_text("Paper title", &request.title, 500)?;
+    let title = validate_text("Document title", &request.title, 500)?;
+    if let Some(kind) = request.document_type.as_deref() {
+        validate_document_type(kind)?;
+    }
     let captured = capture_paper_input(store, &request.path)?;
     let text_reference = if let Some(text) = captured.text.as_ref() {
         let text_hash = hash_bytes(text.as_bytes());
@@ -543,6 +554,20 @@ pub fn import_paper(
             "Paper belongs to another workspace",
         ));
     }
+    let existing_type: Option<String> = transaction
+        .query_row(
+            "SELECT document_type FROM papers WHERE id=?1",
+            [&paper_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| WorkbenchError::storage("Failed to read document type", e))?;
+    let document_type = request
+        .document_type
+        .as_deref()
+        .or(existing_type.as_deref())
+        .unwrap_or_else(|| legacy_document_type(&request.role));
+    let role = document_role(document_type);
     let existing: Option<String> = transaction.query_row("SELECT pr.id FROM paper_revisions pr JOIN papers p ON p.id = pr.paper_id WHERE p.workspace_id = ?1 AND pr.paper_id = ?2 AND pr.content_hash = ?3", params![request.workspace_id, paper_id, captured.content_hash], |row| row.get(0)).optional().map_err(|error| WorkbenchError::storage("Failed to inspect paper revisions", error))?;
     if let Some(existing) = existing {
         let replayed: bool = transaction
@@ -560,8 +585,8 @@ pub fn import_paper(
         // role given now, and its other revisions stop being current evidence.
         transaction
             .execute(
-                "UPDATE papers SET title = ?2, role = ?3, current_revision_id = ?4, updated_at = ?5 WHERE id = ?1",
-                params![paper_id, title, request.role, existing, timestamp],
+                "UPDATE papers SET title = ?2, role = ?3, current_revision_id = ?4, updated_at = ?5, document_type = ?6 WHERE id = ?1",
+                params![paper_id, title, role, existing, timestamp, document_type],
             )
             .map_err(|error| WorkbenchError::storage("Failed to select paper revision", error))?;
         transaction.execute("UPDATE evidence_links SET freshness = 'stale', stale_reason = 'Another paper revision was selected', updated_at = ?2 WHERE workspace_id = ?1 AND target_type = 'paper_revision' AND target_id IN (SELECT id FROM paper_revisions WHERE paper_id = ?3 AND id <> ?4) AND freshness = 'current'", params![request.workspace_id, timestamp, paper_id, existing]).map_err(|error| WorkbenchError::storage("Failed to propagate paper evidence freshness", error))?;
@@ -579,7 +604,7 @@ pub fn import_paper(
             .map_err(|error| WorkbenchError::storage("Failed to commit paper import", error))?;
         return paper_with_revision(store, &request.workspace_id, &paper_id, Some(&existing));
     }
-    transaction.execute("INSERT INTO papers (id, workspace_id, title, role, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, role = excluded.role, updated_at = excluded.updated_at WHERE workspace_id = excluded.workspace_id", params![paper_id, request.workspace_id, title, request.role, timestamp]).map_err(|error| WorkbenchError::storage("Failed to create or update paper", error))?;
+    transaction.execute("INSERT INTO papers (id, workspace_id, title, role, created_at, updated_at, document_type) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6) ON CONFLICT(id) DO UPDATE SET title = excluded.title, role = excluded.role, updated_at = excluded.updated_at, document_type = excluded.document_type WHERE workspace_id = excluded.workspace_id", params![paper_id, request.workspace_id, title, role, timestamp, document_type]).map_err(|error| WorkbenchError::storage("Failed to create or update paper", error))?;
     transaction.execute("INSERT OR IGNORE INTO artifacts (id, workspace_id, content_hash, media_kind, size_bytes, origin, storage_reference, original_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'paper_import', ?6, ?7, ?8)", params![artifact_id, request.workspace_id, captured.content_hash, captured.kind, captured.size as i64, captured.storage_reference.to_string_lossy(), captured.entrypoint, timestamp]).map_err(|error| WorkbenchError::storage("Failed to register paper artifact", error))?;
     transaction.execute("INSERT INTO paper_revisions (id, paper_id, input_kind, entrypoint, dependency_manifest_json, content_hash, text_reference, extraction_json, capture_complete, captured_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)", params![revision_id, paper_id, captured.kind, captured.entrypoint, serde_json::to_string(&captured.manifest).unwrap_or_default(), captured.content_hash, text_reference, serde_json::to_string(&captured.extraction).unwrap_or_default(), captured.manifest.get("complete").and_then(Value::as_bool).unwrap_or(false), timestamp]).map_err(|error| WorkbenchError::storage("Failed to create paper revision", error))?;
     transaction
@@ -604,14 +629,14 @@ pub fn import_paper(
     paper_with_revision(store, &request.workspace_id, &paper_id, Some(&revision_id))
 }
 
-fn paper_with_revision(
+pub(super) fn paper_with_revision(
     store: &Store,
     workspace_id: &str,
     paper_id: &str,
     revision_id: Option<&str>,
 ) -> WorkbenchResult<PaperWithRevision> {
     let connection = open_connection(store)?;
-    let paper = connection.query_row("SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at FROM papers WHERE id = ?1 AND workspace_id = ?2", params![paper_id, workspace_id], paper_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read paper", error))?.ok_or_else(|| WorkbenchError::invalid("Paper was not found in this workspace"))?;
+    let paper = connection.query_row("SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at, document_type, pinned, archived FROM papers WHERE id = ?1 AND workspace_id = ?2", params![paper_id, workspace_id], paper_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read paper", error))?.ok_or_else(|| WorkbenchError::invalid("Paper was not found in this workspace"))?;
     let selected = revision_id.or(paper.current_revision_id.as_deref());
     let revision = selected.map(|id| connection.query_row("SELECT id, paper_id, input_kind, entrypoint, dependency_manifest_json, content_hash, text_reference, compiled_artifact_id, extraction_json, capture_complete, captured_at FROM paper_revisions WHERE id = ?1 AND paper_id = ?2", params![id, paper_id], revision_from_row).optional()).transpose().map_err(|error| WorkbenchError::storage("Failed to read paper revision", error))?.flatten();
     Ok(PaperWithRevision { paper, revision })
@@ -625,7 +650,7 @@ pub(crate) fn paper_by_id(
 ) -> WorkbenchResult<Option<Paper>> {
     open_connection(store)?
         .query_row(
-            "SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at FROM papers WHERE id = ?1 AND workspace_id = ?2",
+            "SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at, document_type, pinned, archived FROM papers WHERE id = ?1 AND workspace_id = ?2",
             params![id, workspace_id],
             paper_from_row,
         )
@@ -636,7 +661,7 @@ pub(crate) fn paper_by_id(
 pub fn list_papers(store: &Store, workspace_id: &str) -> WorkbenchResult<Vec<PaperWithRevision>> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
-    let mut statement = connection.prepare("SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at FROM papers WHERE workspace_id = ?1 ORDER BY updated_at DESC LIMIT 500").map_err(|error| WorkbenchError::storage("Failed to prepare paper list", error))?;
+    let mut statement = connection.prepare("SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at, document_type, pinned, archived FROM papers WHERE workspace_id = ?1 ORDER BY updated_at DESC LIMIT 500").map_err(|error| WorkbenchError::storage("Failed to prepare paper list", error))?;
     let papers = statement
         .query_map([workspace_id], paper_from_row)
         .map_err(|error| WorkbenchError::storage("Failed to list papers", error))?

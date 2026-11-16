@@ -8,11 +8,15 @@ const client = vi.hoisted(() => ({
   runSetup: vi.fn(),
   executionPlan: vi.fn(),
   pipelineConfig: vi.fn(),
+  switchProfile: vi.fn(),
   inputFiles: vi.fn(),
 }));
 vi.mock("../../lib/appClient", () => ({ appClient: client }));
 vi.mock("../../lib/workflowProfileClient", () => ({
-  workflowProfileClient: { config: client.pipelineConfig },
+  workflowProfileClient: {
+    config: client.pipelineConfig,
+    switch: client.switchProfile,
+  },
 }));
 vi.mock("../../lib/router", () => ({
   router: {
@@ -206,4 +210,32 @@ it("keeps a Workspace handoff's identity through review preview and queuing", as
       reviewHandoffId: "review_handoff_a",
     }),
   );
+});
+
+it("uses Slide Review for a slide document and Paper Review for a paper", async () => {
+  const { result } = await setupReview();
+  for (const [type, profile] of [
+    ["slides", "slide-review"],
+    ["paper", "auto-paper-review"],
+  ]) {
+    await act(async () => {
+      await result.current.launch.handleWorkspaceReviewHandoff({
+        version: 1,
+        id: "handoff",
+        workspaceId: "ws",
+        sessionId: null,
+        paperId: "doc",
+        revisionId: "rev",
+        contentHash: "hash",
+        mediaKind: "pdf",
+        stagedPath: "/deck.pdf",
+        inputInterpretation: "document",
+        metadata: { documentType: type },
+        externalReference: null,
+        createdAt: "now",
+        linkedAt: null,
+      });
+    });
+    expect(client.switchProfile).toHaveBeenLastCalledWith({ id: profile });
+  }
 });

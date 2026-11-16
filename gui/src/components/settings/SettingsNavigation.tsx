@@ -58,13 +58,8 @@ export function SettingsNavigation({
                 d={SECTION_INFO[id].icon}
               />
             </svg>
-            <span className="min-w-0">
-              <span className="block font-medium">
-                {SECTION_INFO[id].title}
-              </span>
-              <span className="settings-nav-detail">
-                {SECTION_INFO[id].detail}
-              </span>
+            <span className="min-w-0 font-medium">
+              {SECTION_INFO[id].title}
             </span>
           </button>
         ))}

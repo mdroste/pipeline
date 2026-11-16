@@ -13,6 +13,7 @@ fn bytes_paper(f: &Fixture, name: &str, bytes: &[u8]) -> research::PaperWithRevi
             paper_id: None,
             title: name.into(),
             role: "other".into(),
+            document_type: None,
             path: f.root.join(name).to_string_lossy().into_owned(),
             operation_id: id("paper").unwrap(),
         },

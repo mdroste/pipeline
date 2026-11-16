@@ -1,3 +1,4 @@
+import { currentManuscript } from "../../lib/project-overview/manuscript";
 import { saveRetainedManuscriptDrafts } from "./manuscriptDrafts";
 import { useDraftFlush } from "../../hooks/useDraftFlush";
 import type { PdfPosition } from "../file-workspace/PdfReader";
@@ -68,6 +69,8 @@ function readDraft(key: string): { file: EditorFile; draft: string } | null {
 }
 export default function Manuscript({
   workspaceId,
+  documentId,
+  documentPath,
   data,
   onRefresh,
   onDocument,
@@ -77,7 +80,10 @@ export default function Manuscript({
      on a form. Build opens a sheet, which still shows the exact command for
      approval. The side panel holds the build's PDF and its results. */
   const draftKey = `pipeline.manuscriptDraft.${workspaceId}`;
-  const [initialDraft] = useState(() => readDraft(draftKey));
+  const selectionKey = documentId
+    ? `${draftKey}.document.${documentId}`
+    : draftKey;
+  const [initialDraft] = useState(() => readDraft(selectionKey));
   const cached = useRef(initialDraft);
   const [path, setPath] = useState(cached.current?.file.path ?? "");
   const [checkpoint, setCheckpoint] = useState(
@@ -112,7 +118,7 @@ export default function Manuscript({
   const [config, setConfig] = useState(initialBuild);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
   const [configId, selectConfigId] = useState("");
-  const configKey = `pipeline.manuscriptBuild.${workspaceId}`;
+  const configKey = `pipeline.manuscriptBuild.${workspaceId}${documentId ? `.${documentId}` : ""}`;
   const setConfigId = (id: string) => {
     selectConfigId(id);
     try {
@@ -170,16 +176,26 @@ export default function Manuscript({
       stopped = true;
     };
   }, [workspaceId, data.executions, setError, reopened]);
+  const legacyDocument = currentManuscript(data).paper?.paper.id;
+  const belongsToDocument = (id?: string | null) =>
+    documentId
+      ? id === documentId || (!id && documentId === legacyDocument)
+      : !id;
   const configs = builds.filter(
     (r): r is ProjectRecord<BuildRecord> =>
-      r.body.recordType === "configuration",
+      r.body.recordType === "configuration" &&
+      belongsToDocument(r.body.config.documentId),
   );
   const receipts = builds.filter(
-    (r): r is ProjectRecord<BuildReceipt> => r.body.recordType === "receipt",
+    (r): r is ProjectRecord<BuildReceipt> =>
+      r.body.recordType === "receipt" && belongsToDocument(r.body.documentId),
   );
   const chosen = configs.find((r) => r.id === configId);
   const finished = data.executions.filter(
-    (e) => e.adapter === "latex" && !["queued", "running"].includes(e.outcome),
+    (e) =>
+      e.adapter === "latex" &&
+      !["queued", "running"].includes(e.outcome) &&
+      (!documentId || configs.some((c) => c.body.profile.id === e.profileId)),
   );
   const latestBuild = receipts.some((r) => r.id === `build_${finished[0]?.id}`)
     ? `build_${finished[0].id}`
@@ -234,10 +250,10 @@ export default function Manuscript({
       if (current.file) {
         const key = `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`;
         if (current.draft !== current.file.content) {
-          localStorage.setItem(draftKey, JSON.stringify(current));
+          localStorage.setItem(selectionKey, JSON.stringify(current));
           localStorage.setItem(key, JSON.stringify(current));
         } else {
-          localStorage.removeItem(draftKey);
+          localStorage.removeItem(selectionKey);
           localStorage.removeItem(key);
         }
       }
@@ -292,7 +308,7 @@ export default function Manuscript({
   const forgetDraft = () => {
     cached.current = null;
     try {
-      localStorage.removeItem(draftKey);
+      localStorage.removeItem(selectionKey);
       if (file)
         localStorage.removeItem(
           `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
@@ -355,6 +371,8 @@ export default function Manuscript({
   const autoOpened = useRef(false);
   useEffect(() => {
     if (autoOpened.current || !buildsLoaded) return;
+    if (documentId && !documentPath && !data.inventory && !configs.length)
+      return;
     autoOpened.current = true;
     let preferred: string | null = null;
     try {
@@ -366,7 +384,7 @@ export default function Manuscript({
     const saved = selected?.body.config;
     if (saved) {
       setConfigId(selected.id);
-      setConfig(saved);
+      setConfig(documentId ? { ...saved, documentId } : saved);
       setAdvanced(
         saved.advancedArgv ? JSON.stringify(saved.advancedArgv, null, 2) : "",
       );
@@ -379,10 +397,14 @@ export default function Manuscript({
     const target =
       path ||
       root ||
-      fileOptions.find((p) => /(^|\/)main\.tex$/i.test(p)) ||
-      fileOptions.find((p) => /\.tex$/i.test(p)) ||
-      fileOptions[0] ||
-      "main.tex";
+      documentPath ||
+      (!documentId
+        ? fileOptions.find((p) => /(^|\/)main\.tex$/i.test(p)) ||
+          fileOptions.find((p) => /\.tex$/i.test(p)) ||
+          fileOptions[0] ||
+          "main.tex"
+        : "");
+    if (!target) return;
     void run(async () => {
       try {
         await openFile(
@@ -393,7 +415,7 @@ export default function Manuscript({
         setPath(fileOptions.includes(target) ? target : "");
       }
     });
-  }, [buildsLoaded]);
+  }, [buildsLoaded, documentPath, data.inventory]);
   // A finished build's result opens by itself. inspectBuild returns the saved
   // record when one exists, so repeating it is harmless.
   const inspected = useRef(new Set<string>());
@@ -950,6 +972,7 @@ export default function Manuscript({
             workspaceId={workspaceId}
             busy={busy}
             run={run}
+            documentId={documentId}
             configs={configs}
             configId={configId}
             setConfigId={setConfigId}

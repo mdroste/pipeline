@@ -74,6 +74,7 @@ fn campaigns_keep_two_rounds_and_flag_unsubstantiated_analysis_claims() {
             paper_id: None,
             title: "Round one manuscript".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: f.root.join("report.md").to_string_lossy().into_owned(),
             operation_id: "paper".into(),
         },

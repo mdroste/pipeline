@@ -162,7 +162,7 @@ it("stays silent about sources that fail or have nothing to report", async () =>
   await waitFor(() =>
     expect(screen.queryByText("Checking the state of the draft…")).toBeNull(),
   );
-  const draft = screen.getByRole("region", { name: "The paper" });
+  const draft = screen.getByRole("region", { name: "Project activity" });
   expect(within(draft).getByText("Minimum wage draft")).toBeVisible();
   for (const name of [
     "Out of sync",
@@ -217,7 +217,7 @@ it("shows the draft's review state and what is out of sync, one action per row",
   mount(data);
 
   const draft = await screen.findByRole("region", {
-    name: "The paper",
+    name: "Project activity",
   });
   // Outstanding findings are something to do, so they lead the page.
   const next = await screen.findByRole("region", { name: "Next" });
@@ -269,7 +269,7 @@ it("keeps a conversation-only project to its conversations and loads nothing", (
     ],
   });
   expect(invoke).not.toHaveBeenCalled();
-  expect(screen.queryByRole("region", { name: "The paper" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Project activity" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
   expect(
     screen.getByText(/this page will track\s+the state of the paper/),

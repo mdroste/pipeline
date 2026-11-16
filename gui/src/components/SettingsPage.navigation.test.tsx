@@ -442,9 +442,7 @@ describe("SettingsPage navigation", () => {
         onThemeChange={() => {}}
       />,
     );
-    expect(
-      await screen.findByText(/How many model calls a review can run/),
-    ).toBeVisible();
+    expect(await screen.findByText("Per review.")).toBeVisible();
     expect(
       screen.queryByRole("button", {
         name: "More information about Model calls at once",

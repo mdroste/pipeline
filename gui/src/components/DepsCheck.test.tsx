@@ -20,6 +20,56 @@ function dep(overrides: Partial<DepStatus>): DepStatus {
 }
 
 describe("DepsCheck", () => {
+  it("treats a signed-out provider as optional in the system check", () => {
+    render(
+      <DepsCheck
+        scope="system"
+        report={{
+          ready: false,
+          deps: [
+            dep({
+              authenticated: false,
+              cli_auth_status: "signed_out",
+              hint: "Sign in to Claude.",
+            }),
+            dep({ name: "ChatGPT (reviews)", authenticated: true }),
+          ],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    const models = screen.getByRole("region", { name: "Model access" });
+    expect(within(models).getByText("Ready")).toBeVisible();
+    expect(within(models).getByText("Not signed in")).toHaveClass(
+      "text-gray-500",
+    );
+    expect(screen.queryByText("Sign in to Claude.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+  });
+
+  it("asks for one connection when no provider is signed in", () => {
+    render(
+      <DepsCheck
+        scope="system"
+        report={{
+          ready: false,
+          deps: [
+            dep({ authenticated: false }),
+            dep({ name: "ChatGPT (reviews)", authenticated: false }),
+          ],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Connect at least one provider in Settings → Connections.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
+  });
+
   it("keeps green for a ready status, off the row behind it", () => {
     render(
       <DepsCheck
@@ -511,12 +561,12 @@ describe("DepsCheck", () => {
     );
     expect(
       screen.getByText(
-        "Complete the highlighted setup before running a review.",
+        "Complete the highlighted setup before running this review.",
       ),
     ).toBeVisible();
     expect(
       screen.getByText(
-        "Each provider a review uses needs a subscription or API key.",
+        "Each provider this review uses needs a subscription or API key.",
       ),
     ).toBeVisible();
     expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();

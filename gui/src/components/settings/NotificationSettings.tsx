@@ -20,16 +20,8 @@ export default function NotificationSettings() {
       />
       {(
         [
-          [
-            "notifyCompletion",
-            "Work completed",
-            "A reply, review, batch, or automation finishes.",
-          ],
-          [
-            "notifyFailure",
-            "Failures",
-            "A conversation, review, or automation fails.",
-          ],
+          ["notifyCompletion", "Work completed"],
+          ["notifyFailure", "Failures"],
           [
             "notifyAttention",
             "Attention required",
@@ -55,7 +47,6 @@ export default function NotificationSettings() {
       <div id="notification-sound" className="settings-anchor">
         <Toggle
           label="Play a sound"
-          description="Play a short sound with each notification."
           checked={p.notificationSound}
           onChange={(value) => {
             update("notificationSound", value);

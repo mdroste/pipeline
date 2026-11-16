@@ -71,6 +71,7 @@ fn paper(f: &Fixture, name: &str, text: &str) -> research::PaperWithRevision {
             paper_id: None,
             title: name.into(),
             role: "other".into(),
+            document_type: None,
             path: f.root.join(name).to_string_lossy().into_owned(),
             operation_id: id("paper").unwrap(),
         },
@@ -196,6 +197,7 @@ fn build_config_is_inert_and_retains_declared_root() {
     fs::create_dir(f.root.join("paper")).unwrap();
     fs::write(f.root.join("paper/main.tex"), "\\documentclass{article}").unwrap();
     let config = BuildConfig {
+        document_id: None,
         name: "Paper".into(),
         checkpoint_id: None,
         directory: "paper".into(),
@@ -716,6 +718,7 @@ fn live_studio_build_and_synctex() {
     )
     .unwrap();
     let config = BuildConfig {
+        document_id: None,
         name: "Multi-file paper".into(),
         checkpoint_id: None,
         directory: ".".into(),
@@ -866,3 +869,33 @@ fn live_studio_result_exporters() {
 }
 
 mod tex_build;
+
+#[test]
+fn build_configuration_belongs_to_one_document() {
+    let f = fixture();
+    let seminar = paper(&f, "seminar.tex", "Seminar");
+    let conference = paper(&f, "conference.tex", "Conference");
+    let mut config: BuildConfig = serde_json::from_value(json!({
+        "documentId":seminar.paper.id,"name":"Seminar", "checkpointId":null,
+        "directory":".", "rootDocument":"seminar.tex", "expectedPdf":"seminar.pdf",
+        "engine":"pdflatex", "timeoutSeconds":60, "inputs":["seminar.tex"], "advancedArgv":null
+    }))
+    .unwrap();
+    let saved = save_build(&f.store, &f.ws, None, 0, config.clone()).unwrap();
+    assert_eq!(saved.body["config"]["documentId"], seminar.paper.id);
+    config.document_id = Some(conference.paper.id.clone());
+    assert!(save_build(
+        &f.store,
+        &f.ws,
+        Some(&saved.id),
+        saved.revision,
+        config.clone()
+    )
+    .is_err());
+    config.root_document = "conference.tex".into();
+    config.expected_pdf = "conference.pdf".into();
+    config.inputs = vec!["conference.tex".into()];
+    let separate = save_build(&f.store, &f.ws, None, 0, config).unwrap();
+    assert_ne!(saved.id, separate.id);
+    assert_eq!(separate.body["config"]["documentId"], conference.paper.id);
+}

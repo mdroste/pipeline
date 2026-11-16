@@ -25,6 +25,8 @@ export interface ProjectReviewLink {
   stagedPath: string;
   externalReference: string | null;
   contentHash: string;
+  paperId?: string;
+  revisionId?: string;
 }
 
 export function reviewsForProject(
@@ -64,4 +66,20 @@ export function reviewsForProject(
       name.split(".")[0] === legacy.contentHash
     );
   });
+}
+
+/** Only an explicit handoff identifies a document; a shared project folder does not. */
+export function reviewDocumentId(
+  run: RunSummary,
+  links: ProjectReviewLink[],
+): string | null {
+  return (
+    links.find(
+      (link) =>
+        link.id === run.input_identity?.review_handoff_id ||
+        link.externalReference === run.run_id ||
+        (link.stagedPath &&
+          comparablePath(link.stagedPath) === comparablePath(run.input_path)),
+    )?.paperId ?? null
+  );
 }

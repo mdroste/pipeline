@@ -13,6 +13,7 @@ import {
   type RunProfileSnapshot,
 } from "../../lib/appRunPreparation";
 import type { DepsReport } from "../../lib/settingsTypes";
+import { systemDependenciesReady } from "../../lib/dependencyReadiness";
 import type {
   PipelineConfig,
   PrimaryInputSelection,
@@ -52,6 +53,7 @@ export function useReviewSetup() {
   const parallelOverridesRef = useRef(parallelOverrides);
   parallelOverridesRef.current = parallelOverrides;
   const [showDeps, setShowDeps] = useState(false);
+  const [depsScope, setDepsScope] = useState<"system" | "review">("system");
 
   const runConfigRequest = useRef(0);
   const dependencyRequest = useRef(0);
@@ -150,6 +152,7 @@ export function useReviewSetup() {
       }
       setRunProfileConfigSnapshotId(null);
       setParallelOverrides(null);
+      setDepsScope("system");
       dependencyRequest.current += 1;
       setDepsReport(null);
       setDepsLoading(true);
@@ -200,6 +203,9 @@ export function useReviewSetup() {
     handleProfileChange,
     showDeps,
     setShowDeps,
+    depsScope,
+    setDepsScope,
+    systemReady: depsReport ? systemDependenciesReady(depsReport) : null,
   };
 }
 
@@ -238,7 +244,7 @@ export function useReviewSetupLifecycle(
 }
 
 export function useReviewDependencyWarning(setup: ReviewSetup, page: AppPage) {
-  const { depsReport, setShowDeps } = setup;
+  const { depsReport, depsScope, setShowDeps, setDepsScope } = setup;
   // Auto-show missing dependencies only in the new-review setup. `main` with a
   // run key shows a queued, running, or finished review, whose workflow this
   // report does not describe. If the user has already navigated (most
@@ -251,14 +257,16 @@ export function useReviewDependencyWarning(setup: ReviewSetup, page: AppPage) {
   const shownReport = useRef<string | null>(null);
   useEffect(() => {
     if (!depsReport) return;
-    if (depsReport.ready) {
+    if (systemDependenciesReady(depsReport)) {
       shownReport.current = null;
       return;
     }
-    if (!setupView) return;
+    // A refused launch has already opened the review-specific explanation.
+    if (!setupView || depsScope === "review") return;
     const signature = JSON.stringify(depsReport.deps);
     if (signature === shownReport.current) return;
     shownReport.current = signature;
+    setDepsScope("system");
     setShowDeps(true);
-  }, [depsReport, setupView]);
+  }, [depsReport, depsScope, setupView]);
 }

@@ -1,15 +1,13 @@
 # Projects and conversations
 
-A project keeps a paper, its folder, your notes, and the conversations about
-it together. This guide covers projects, conversations, and the **Overview**,
+A project keeps papers, slide decks, other documents, files, notes, and conversations together. This guide covers projects, conversations, and the **Overview**,
 **Files**, and **Notes** areas. [Write and review](analysis-and-writing.md)
-covers **Paper**, **Reviews**, and **Changes**.
+covers **Documents**, **Reviews**, and **Changes**.
 
 ## Create a project
 
 Open **Projects** and choose **New project**. Enter a name, and optionally
-choose the kind of paper, the folder that holds the paper and its code, and the
-paper itself. Then choose **Create project**.
+choose a folder and an initial document. When adding a document, choose its type: **Paper**, **Slides**, **Appendix**, **Response letter**, or **Other**. Then choose **Create project**.
 
 A folder lets you browse and edit files, run your own code, and see Git
 status. Without one, a project still holds conversations, notes, and imported
@@ -28,7 +26,7 @@ Inside a project, the sidebar lists its six areas and its conversations:
 | Area | What it holds |
 | --- | --- |
 | **Overview** | Where the paper stands and what to do next |
-| **Paper** | The manuscript, its builds, and saved versions |
+| **Documents** | Named papers, slide decks, and other documents, each with its own versions |
 | **Files** | Everything in the project folder |
 | **Reviews** | Reviews, their findings, and replies to referees |
 | **Changes** | Edits the assistant proposed, and version control |
@@ -200,7 +198,7 @@ as the paper moves on.
 | **Next** | Up to three things to do now, chosen by the stage |
 | **Research brief** | Pinned notes, or your accepted questions. **Draft a brief from the paper** asks the assistant to propose notes. |
 | **Where you left off** | The latest conversation, your last request, any unsent draft, and next steps |
-| **The paper** | The current version, the last build, and open or regressed review findings |
+| **Project activity** | The current version, the last build, and open or regressed review findings |
 | **Documents in this project** | Each imported document with its role, once there is more than one |
 | **Out of sync** | Files that changed since the current version was imported, and a newer import not yet marked current |
 | **Revision round** | Progress through reviewer comments |
@@ -232,10 +230,9 @@ Its **Command settings** and **Share project** tabs are covered under
 [Command settings](analysis-and-writing.md#command-settings) and
 [Project package](#project-package).
 
-- **Import paper** and **Import LaTeX folder** add the manuscript.
-- **Paper** sets the current version, which notes and comparisons refer to.
-  A newer import doesn't replace it until you choose.
-- **About this paper** sets the **Kind**, **Stage**, and **Venue**. The stage
+- **Add document** and **Import LaTeX folder** add papers, decks, and other documents.
+- **Main paper** selects an optional reference version for the project. Each document has its own current version and history in **Documents**.
+- **Publication details (optional)** sets the **Kind**, **Stage**, and **Venue**. The stage
   decides what the Overview shows first.
 - **Folder** has **Attach folder**, **Refresh file list**,
   **Check for changes every 30 seconds**, and
@@ -297,7 +294,7 @@ this**, **Add to Documents**, **Rename**, **Move**, or **Move to Trash**. A
 rename or move offers **Undo**, and open tabs and unsaved drafts follow the file.
 Items go to your computer's Trash and are never deleted permanently. On Windows,
 a network or removable drive has no Recycle Bin, so Pipeline says so and leaves
-the item in place. **Add to Documents** copies a file into [Saved versions](analysis-and-writing.md#saved-versions), where you can keep notes on it. File
+the item in place. **Add to Documents** copies a file into [Saved versions](analysis-and-writing.md#documents-and-versions), where you can keep notes on it. File
 changes wait while a response is running.
 
 Files opens these types:

@@ -44,6 +44,7 @@ export function suggestBuild(path: string): BuildConfig {
 }
 
 export default function ManuscriptBuildSheet({
+  documentId,
   workspaceId,
   busy,
   run,
@@ -61,6 +62,7 @@ export default function ManuscriptBuildSheet({
   readyToBuild,
 }: {
   readyToBuild: boolean;
+  documentId?: string | null;
   workspaceId: string;
   busy: boolean;
   run: (work: () => Promise<unknown>) => Promise<void>;
@@ -137,7 +139,8 @@ export default function ManuscriptBuildSheet({
             onChange={(id) => {
               setConfigId(id);
               const found = configs.find((c) => c.id === id);
-              setConfig(found?.body.config ?? initialBuild);
+              const selected = found?.body.config ?? initialBuild;
+              setConfig(documentId ? { ...selected, documentId } : selected);
               setAdvanced(
                 found?.body.config.advancedArgv
                   ? JSON.stringify(found.body.config.advancedArgv, null, 2)
@@ -216,6 +219,7 @@ export default function ManuscriptBuildSheet({
                 expectedRevision: chosen?.revision ?? 0,
                 config: {
                   ...config,
+                  ...(documentId ? { documentId } : {}),
                   inputs: lines(config.inputs.join("\n")),
                   advancedArgv: advanced.trim()
                     ? parseArgvText(advanced)

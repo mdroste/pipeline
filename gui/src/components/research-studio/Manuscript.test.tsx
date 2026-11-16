@@ -863,3 +863,41 @@ it("loads an inventory for a newly attached project before listing manuscript fi
   ).toBeInTheDocument();
   expect(mocks.projectMutate).toHaveBeenCalledOnce();
 });
+it("opens the selected deck source and keeps another document's builds out of view", async () => {
+  const otherBuilds = await mocks.records();
+  mocks.records.mockResolvedValue(
+    otherBuilds.map((record: { body: object }) => ({
+      ...record,
+      body: { ...record.body, documentId: "paper" },
+    })),
+  );
+  render(
+    <Manuscript
+      workspaceId="ws"
+      documentId="slides"
+      documentPath="talks/seminar.tex"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(mocks.editor).toHaveBeenCalledWith("ws", "talks/seminar.tex", null),
+  );
+  expect(
+    screen.queryByRole("button", { name: /^Last build succeeded/ }),
+  ).toBeNull();
+});
+it("does not open a paper's main.tex when a PDF-only deck has no source configured", async () => {
+  render(
+    <Manuscript
+      workspaceId="ws"
+      documentId="slides"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(mocks.records).toHaveBeenCalled());
+  expect(mocks.editor).not.toHaveBeenCalled();
+});

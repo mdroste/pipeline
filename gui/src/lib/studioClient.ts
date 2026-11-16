@@ -71,6 +71,7 @@ export interface ResearchDirection {
   dropReason: string;
 }
 export interface BuildConfig {
+  documentId?: string | null;
   name: string;
   checkpointId: string | null;
   directory: string;
@@ -90,6 +91,7 @@ export interface BuildRecord {
   localAuthorizationRequired: boolean;
 }
 export interface BuildReceipt {
+  documentId?: string | null;
   recordType: "receipt";
   executionId: string;
   outcome: string;

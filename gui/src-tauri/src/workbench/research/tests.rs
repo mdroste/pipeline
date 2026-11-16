@@ -6,6 +6,8 @@ use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest, Upda
 
 #[path = "tests/automation_identity.rs"]
 mod automation_identity;
+#[path = "tests/document_types.rs"]
+mod document_types;
 #[path = "tests/paper_imports.rs"]
 mod paper_imports;
 #[path = "tests/session_moves.rs"]
@@ -131,6 +133,7 @@ fn paper_revisions_preserve_locators_and_stale_prior_evidence() {
             paper_id: None,
             title: "Paper".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: paper_path.to_string_lossy().into_owned(),
             operation_id: "paper-one".into(),
         },
@@ -193,6 +196,7 @@ fn paper_revisions_preserve_locators_and_stale_prior_evidence() {
             paper_id: Some(first.paper.id),
             title: "Paper".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: paper_path.to_string_lossy().into_owned(),
             operation_id: "paper-two".into(),
         },
@@ -236,6 +240,7 @@ fn dynamic_tools_are_scoped_and_exactly_once() {
             paper_id: None,
             title: "Other".into(),
             role: "other".into(),
+            document_type: None,
             path: path.to_string_lossy().into_owned(),
             operation_id: "other-paper".into(),
         },
@@ -285,6 +290,7 @@ fn source_tree_identity_tracks_included_files_without_following_symlinks() {
             paper_id: None,
             title: "Tree".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: tree.to_string_lossy().into_owned(),
             operation_id: "tree-one".into(),
         },
@@ -312,6 +318,7 @@ fn source_tree_identity_tracks_included_files_without_following_symlinks() {
             paper_id: Some(first.paper.id),
             title: "Tree".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: tree.to_string_lossy().into_owned(),
             operation_id: "tree-two".into(),
         },
@@ -958,6 +965,7 @@ fn paper_search_excerpts_stay_bounded_on_single_line_documents() {
             paper_id: None,
             title: "Results".into(),
             role: "other".into(),
+            document_type: None,
             path: paper_path.to_string_lossy().into_owned(),
             operation_id: "results".into(),
         },

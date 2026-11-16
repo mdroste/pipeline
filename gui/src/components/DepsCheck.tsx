@@ -1,6 +1,12 @@
 import { useId } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DepsReport } from "../lib/settingsTypes";
+import {
+  PROVIDER_LABELS,
+  dependencyAvailable,
+  isProviderDependency,
+  systemDependenciesReady,
+} from "../lib/dependencyReadiness";
 import useModalDialog from "../hooks/useModalDialog";
 import { Button, Skeleton, Spinner } from "../ui";
 import ReportIssueLink from "./ReportIssueLink";
@@ -8,6 +14,7 @@ import ReportIssueLink from "./ReportIssueLink";
 interface Props {
   /** The latest result, kept on screen while a newer check runs. */
   report: DepsReport | null;
+  scope?: "system" | "review";
   checking?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -18,16 +25,6 @@ interface Props {
 type Dependency = DepsReport["deps"][number];
 type DependencyGroup = "models" | "pdf";
 type StatusTone = "success" | "warning" | "danger" | "neutral";
-
-// Provider rows are named for the model family, whichever access mode the
-// report checked; Settings → Connections uses the same names.
-const PROVIDER_LABELS: Record<string, string> = {
-  "Claude CLI": "Claude",
-  "Codex CLI": "ChatGPT",
-  "ChatGPT (reviews)": "ChatGPT",
-  "Google API": "Gemini",
-  "Local LLM server": "Local model",
-};
 
 const BUNDLED_PDF_DEPENDENCIES = new Set(["pdftoppm", "pdftotext"]);
 
@@ -68,19 +65,8 @@ const TONE_STYLES: Record<
   },
 };
 
-const isProviderDependency = (dep: Dependency) => dep.name in PROVIDER_LABELS;
-
 // API-mode providers report "direct API" in place of a CLI version.
 const usesApiKey = (dep: Dependency) => dep.version === "direct API";
-
-const dependencyAvailable = (dep: Dependency) => {
-  if (!dep.found) return false;
-  if (dep.authenticated !== undefined) return dep.authenticated;
-  if (dep.cli_auth_status === "signed_in") return true;
-  if (dep.cli_auth_status === "signed_out") return false;
-  if (dep.cli_auth_status === "unknown") return false;
-  return true;
-};
 
 const openSetupGuide = (
   event: React.MouseEvent<HTMLAnchorElement>,
@@ -325,6 +311,7 @@ function SectionStatus({
 
 export default function DepsCheck({
   report,
+  scope = "review",
   checking: checkRunning = false,
   error,
   onRetry,
@@ -342,19 +329,22 @@ export default function DepsCheck({
   const failed = !report && !checking;
   const deps = report?.deps ?? [];
   const providerDeps = deps.filter(isProviderDependency);
+  const system = scope === "system";
+  const modelAccessReady = system
+    ? providerDeps.some(dependencyAvailable)
+    : providerDeps.every((dep) => !dep.required || dependencyAvailable(dep));
   const pdfDeps = deps.filter((dep) => !isProviderDependency(dep));
   const visible = (dep: Dependency) =>
     !HIDDEN_DEPENDENCIES.has(dep.name) ||
     (dep.required &&
       !dependencyAvailable(dep) &&
       !BUNDLED_PDF_DEPENDENCIES.has(dep.name));
-  const visibleProviders = providerDeps.filter(visible);
+  const visibleProviders = providerDeps
+    .filter((dep) => visible(dep) || (system && dependencyAvailable(dep)))
+    .map((dep) => (system ? { ...dep, required: !modelAccessReady } : dep));
   // Unused providers that are not set up need no remedy here.
   const providerProblems = visibleProviders.filter(
     (dep) => dep.required && !dependencyAvailable(dep) && dep.hint,
-  );
-  const modelAccessReady = providerDeps.every(
-    (dep) => !dep.required || dependencyAvailable(dep),
   );
   const bundledPdfUnavailable = deps.some(
     (dep) =>
@@ -365,12 +355,16 @@ export default function DepsCheck({
   const pdfReady =
     !bundledPdfUnavailable &&
     pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
-  const hasBlockers = report ? !report.ready : false;
+  const hasBlockers = report
+    ? !(system ? systemDependenciesReady(report) : report.ready)
+    : false;
   const blockerMessage =
     !modelAccessReady && !pdfReady
       ? "Model access and PDF parsing need attention."
       : !modelAccessReady
-        ? "Check the required model connections in Settings → Connections."
+        ? system
+          ? "Connect at least one provider in Settings → Connections."
+          : "Check the required model connections in Settings → Connections."
         : bundledPdfUnavailable
           ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
           : !pdfReady
@@ -406,7 +400,11 @@ export default function DepsCheck({
           ) : failed ? (
             "Pipeline could not finish checking its dependencies."
           ) : hasBlockers ? (
-            "Complete the highlighted setup before running a review."
+            system ? (
+              "Complete the highlighted setup to get started."
+            ) : (
+              "Complete the highlighted setup before running this review."
+            )
           ) : (
             "Pipeline has the model access and parsing tools it needs."
           )}
@@ -436,7 +434,9 @@ export default function DepsCheck({
                     Model access
                   </h3>
                   <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
-                    Each provider a review uses needs a subscription or API key.
+                    {system
+                      ? "One connected provider is enough to get started."
+                      : "Each provider this review uses needs a subscription or API key."}
                   </p>
                 </div>
                 <SectionStatus ready={modelAccessReady} checking={checking} />

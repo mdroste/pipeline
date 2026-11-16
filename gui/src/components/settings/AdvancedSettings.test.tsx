@@ -174,8 +174,12 @@ describe("AdvancedSettings updates", () => {
     respond({ update_status: () => status() });
     renderSettings();
     expect(
-      await screen.findByText(/when it starts and once a day/),
-    ).toBeInTheDocument();
+      await screen.findByRole("switch", {
+        name: "Check for updates automatically",
+      }),
+    ).toHaveAccessibleDescription(
+      "Checks GitHub at startup and daily while open.",
+    );
   });
 
   it("reports an up-to-date manual check", async () => {

@@ -483,3 +483,20 @@ pub async fn workbench_project_review_links(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn workbench_update_document(
+    request: crate::workbench::research::UpdateDocumentRequest,
+) -> WorkbenchResult<crate::workbench::research::PaperWithRevision> {
+    run_store(move |store| crate::workbench::research::update_document(&store, request)).await
+}
+#[tauri::command]
+pub async fn workbench_document_versions(
+    workspace_id: String,
+    paper_id: String,
+) -> WorkbenchResult<Vec<crate::workbench::research::DocumentVersion>> {
+    run_store(move |store| {
+        crate::workbench::research::document_versions(&store, &workspace_id, &paper_id)
+    })
+    .await
+}

@@ -70,6 +70,7 @@ fn fixture() -> Fixture {
             paper_id: None,
             title: "Paper".into(),
             role: "manuscript".into(),
+            document_type: None,
             path: project.join("paper.tex").to_string_lossy().into_owned(),
             operation_id: "paper".into(),
         },

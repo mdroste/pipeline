@@ -52,7 +52,9 @@ export function AppearanceSettings({
     <>
       <select
         id={`${fieldId}-${key}`}
-        aria-describedby={`${fieldId}-${key}-help`}
+        aria-describedby={
+          key === "reportScale" ? `${fieldId}-${key}-help` : undefined
+        }
         aria-label={label}
         className={selectClass}
         value={p[key]}
@@ -108,7 +110,6 @@ export function AppearanceSettings({
         id="interface-scale"
         controlId={`${fieldId}-interfaceScale`}
         label="Interface text size"
-        description="Scales interface text and spacing across Pipeline."
       >
         {scale("interfaceScale", "Interface text size", [90, 100, 110, 125])}
       </SettingRow>
@@ -116,7 +117,7 @@ export function AppearanceSettings({
         id="report-scale"
         controlId={`${fieldId}-reportScale`}
         label="Default report text size"
-        description="New reports open at this size. You can change it while reading."
+        description="Default for new reports; adjustable while reading."
       >
         {scale(
           "reportScale",
@@ -128,11 +129,9 @@ export function AppearanceSettings({
         id="interface-density"
         controlId={`${fieldId}-density`}
         label="Spacing"
-        description="Comfortable gives controls more room; Compact fits more rows on screen."
       >
         <select
           id={`${fieldId}-density`}
-          aria-describedby={`${fieldId}-density-help`}
           aria-label="Spacing"
           className={selectClass}
           value={p.density}
@@ -154,11 +153,7 @@ export function EditorSettings() {
   return (
     <>
       <SectionHeader title="Editor" />
-      <SettingRow
-        id="editor-font"
-        label="Editor font size"
-        description="Text size in the source and manuscript editors."
-      >
+      <SettingRow id="editor-font" label="Editor font size">
         <select
           aria-label="Editor font size"
           className={selectClass}
@@ -176,7 +171,7 @@ export function EditorSettings() {
       <div id="editor-wrap" className="settings-anchor">
         <Toggle
           label="Wrap long lines"
-          description="New editors wrap lines to fit. You can change this in each editor."
+          description="Default for new editors; adjustable in each editor."
           checked={p.editorWrap}
           onChange={(value) => update("editorWrap", value)}
         />

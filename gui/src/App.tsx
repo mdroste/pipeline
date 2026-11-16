@@ -114,6 +114,9 @@ function AppShell() {
     showDeps,
     depsReport,
     setShowDeps,
+    depsScope,
+    setDepsScope,
+    systemReady,
     pendingRun,
     setPendingRun,
     depsLoading,
@@ -311,6 +314,7 @@ function AppShell() {
       {showDeps && (
         <DepsCheck
           report={depsReport}
+          scope={depsScope}
           checking={depsLoading}
           error={depsError}
           onRetry={() => void checkDependencies()}
@@ -440,7 +444,7 @@ function AppShell() {
           }
           workspaceActive={workspaceActive}
           workspaceAttention={workspaceAttention}
-          dependenciesReady={depsReport?.ready ?? null}
+          dependenciesReady={systemReady}
           dependenciesLoading={depsLoading}
           dependenciesError={depsError}
           width={navRailWidth}
@@ -454,6 +458,7 @@ function AppShell() {
           recentProjectsLoading={projectsLoading}
           onOpenProject={openWorkspaceProject}
           onDependencies={() => {
+            setDepsScope("system");
             setShowDeps(true);
             void checkDependencies();
           }}
@@ -609,6 +614,7 @@ function AppShell() {
                     void checkDependencies();
                   }}
                   onOpenDiagnostics={() => {
+                    setDepsScope("system");
                     setShowDeps(true);
                     void checkDependencies();
                   }}

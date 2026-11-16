@@ -1,7 +1,11 @@
 /* Shared chrome only. These component-layer rules permit intentional utility
    overrides. They never style report content, code, or virtualized rows. */
 @layer components {
-  .ui-button {
+  /* Settings actions use the same geometry and states as shared buttons. */
+  .ui-button,
+  .settings-button,
+  .settings-button-primary,
+  .settings-button-quiet {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -18,19 +22,26 @@
     line-height: 1.25rem;
     vertical-align: middle;
   }
-  .ui-button:hover:not(:disabled) {
+  .ui-button:hover:not(:disabled),
+  .settings-button:hover:not(:disabled),
+  .settings-button-quiet:hover:not(:disabled) {
     background: var(--ui-sunken);
   }
-  .ui-button--sm {
+  .ui-button--sm,
+  .settings-button,
+  .settings-button-primary,
+  .settings-button-quiet {
     min-height: var(--ui-control-height-sm);
     padding: 0.25rem 0.625rem;
   }
-  .ui-button--primary {
+  .ui-button--primary,
+  .settings-button-primary {
     border-color: var(--ui-inverse);
     background: var(--ui-inverse);
     color: var(--ui-on-inverse);
   }
-  .ui-button--primary:hover:not(:disabled) {
+  .ui-button--primary:hover:not(:disabled),
+  .settings-button-primary:hover:not(:disabled) {
     background: var(--ui-inverse);
     opacity: 0.9;
   }
@@ -48,6 +59,9 @@
     text-underline-offset: 3px;
   }
   .ui-button:disabled,
+  .settings-button:disabled,
+  .settings-button-primary:disabled,
+  .settings-button-quiet:disabled,
   .ui-input:disabled {
     opacity: 0.45;
     cursor: default;
@@ -269,6 +283,9 @@
 
 :where(
   .ui-button,
+  .settings-button,
+  .settings-button-primary,
+  .settings-button-quiet,
   .ui-input,
   .ui-toggle,
   .ui-segmented > button,

@@ -290,6 +290,8 @@ pub fn run() {
             workbench::commands::workbench_list_notes,
             workbench::commands::workbench_import_paper,
             workbench::commands::workbench_list_papers,
+            workbench::commands::workbench_update_document,
+            workbench::commands::workbench_document_versions,
             workbench::commands::workbench_project_home,
             workbench::commands::workbench_chat_brief,
             workbench::commands::workbench_project_tasks,

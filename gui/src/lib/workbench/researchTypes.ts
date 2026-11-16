@@ -35,11 +35,19 @@ export interface PaperRevision {
   capturedAt: string;
 }
 
+export type DocumentVersion = Pick<
+  PaperRevision,
+  "id" | "paperId" | "inputKind" | "capturedAt"
+>;
+
 export interface ResearchPaper {
   id: string;
   workspaceId: string;
   title: string;
   role: "manuscript" | "appendix" | "other";
+  documentType?: import("../documentTypes").DocumentType;
+  pinned?: boolean;
+  archived?: boolean;
   currentRevisionId: string | null;
   createdAt: string;
   updatedAt: string;

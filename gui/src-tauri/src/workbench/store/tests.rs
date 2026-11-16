@@ -1104,3 +1104,48 @@ fn folder_checks_preserve_search_progress_but_home_exclusions_reset_it() {
     .unwrap();
     assert_eq!(state(), (8, false));
 }
+
+#[test]
+fn document_type_migration_preserves_revision_ids_and_infers_legacy_types() {
+    let connection = reference_schema(24).unwrap();
+    connection
+        .execute(
+            "INSERT INTO workspaces(id,name,created_at,updated_at) VALUES('ws','Research','t','t')",
+            [],
+        )
+        .unwrap();
+    for (id, role) in [
+        ("main", "manuscript"),
+        ("appendix", "appendix"),
+        ("reference", "other"),
+    ] {
+        connection.execute("INSERT INTO papers(id,workspace_id,title,role,current_revision_id,created_at,updated_at) VALUES(?1,'ws',?1,?2,?3,'t','t')", rusqlite::params![id,role,format!("rev-{id}")]).unwrap();
+        connection.execute("INSERT INTO paper_revisions(id,paper_id,input_kind,entrypoint,dependency_manifest_json,content_hash,extraction_json,capture_complete,captured_at) VALUES(?1,?2,'text','draft.txt','{}',?2,'{}',1,'t')", rusqlite::params![format!("rev-{id}"),id]).unwrap();
+    }
+    connection
+        .execute_batch(include_str!("../migrations/025_document_types.sql"))
+        .unwrap();
+    for (id, expected) in [
+        ("main", "paper"),
+        ("appendix", "appendix"),
+        ("reference", "other"),
+    ] {
+        let (kind, revision, pinned, archived): (String, String, bool, bool) = connection
+            .query_row(
+                "SELECT document_type,current_revision_id,pinned,archived FROM papers WHERE id=?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, expected);
+        assert_eq!(revision, format!("rev-{id}"));
+        assert!(!pinned && !archived);
+    }
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM paper_revisions", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+}

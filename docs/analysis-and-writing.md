@@ -1,16 +1,16 @@
 # Write and review
 
-This guide covers the **Paper**, **Reviews**, and **Changes** areas of a
+This guide covers the **Documents**, **Reviews**, and **Changes** areas of a
 project, and the commands Pipeline runs for it. Building a manuscript and
 editing files need an attached project folder. See
 [Projects and conversations](projects.md) for creating projects and the other
 areas.
 
-## Paper
+## Documents
 
-### Manuscript
+### Editor
 
-**Manuscript** edits TeX, Markdown, BibTeX, and text files up to 2 MB. It opens
+**Editor** edits TeX, Markdown, BibTeX, and text files up to 2 MB. It opens
 your main TeX file by itself, and the file menu at the top switches files. Under
 **Edit in**, choose the **Project working copy** or an edit's copy. This menu
 appears when an edit has its own copy. Unsaved drafts are kept for each file. If
@@ -56,20 +56,38 @@ lists past builds and the chosen build's messages, with **Find between source an
 PDF**, **Compare with another build**, and **Record a page check**. The button
 at the end of the top bar hides or shows this panel.
 
-### Saved versions
+### Documents and versions
 
-**Saved versions** keeps copies of the paper and other documents as they were
-when you imported them, so a review or a note always points at the text it was
-written about.
+**Documents** holds named papers, presentations, appendices, response letters,
+and other documents. Choose **Add document**, select a file, then enter a name
+and **Document type**. Use **Import LaTeX folder** in Project settings to add a
+source folder. PDF and Beamer slides use the same reader and editor as papers.
+PowerPoint files currently use the separate Slide Review workflow; export a
+PDF to keep a deck in Documents.
 
-**Import** takes PDF, Word,
-LaTeX, Markdown, text, BibTeX, code, JSON, CSV, and TSV files.
-**Add new version** adds a revision. A saved passage always reopens the
-version it came from.
+Choose a document from the grouped menu. **Browse documents** searches names,
+filters by type, and shows **Archived** documents. **Document details** changes
+the name or type, pins a document, or archives and restores it. These actions
+preserve its versions and annotations.
+
+**Add new version** captures another version of the selected document.
+The version menu lists that document's history; **Make current version**
+selects an earlier version without deleting newer ones. Selecting another
+version for reading leaves the document's current version unchanged.
+A short conference deck and a seminar deck should be separate documents when
+they evolve independently.
+
+The **Editor** uses the selected document's source and build configuration.
+Each document keeps its own build history, and successful builds add PDF
+versions to that document. An imported PDF without an associated source or
+build configuration starts with the file chooser. Existing project build
+settings remain available with the main paper.
 
 Select a passage to **Ask**, **Add note**, **Create action item**, or
-**Propose revision**. **Compare with another** opens a second document
-beside the first.
+**Propose revision**. Saved passages reopen the exact version they came from.
+**Compare with another** keeps one version open while you choose another.
+**Add document to conversation** adds the selected version as a source.
+
 
 ## Reviews
 
@@ -168,7 +186,7 @@ automations don't use this page.
 Choices here that change your files wait while a response is running, as they do
 in [Files](projects.md#files). They also wait for a local job, which the message names. A commit
 goes ahead if it leaves out the job's files. Git uses saved files, so Pipeline asks first if a file it would
-touch has an unsaved draft in **Files** or **Manuscript**. Your commit message and a running push stay in place
+touch has an unsaved draft in **Files** or **Editor**. Your commit message and a running push stay in place
 when you leave the page and come back.
 
 A folder's own Git settings can name programs, such as filters or an SSH

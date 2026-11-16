@@ -293,23 +293,31 @@ export default function ProjectOverview(props: Props) {
               </p>
             )}
           </div>
-          <label className="project-overview-stage">
-            <span className="project-home-meta">Stage</span>
-            <select
-              aria-label="Stage of the paper"
-              value={settings.stage ?? ""}
-              onChange={(event) =>
-                void props.saveSettings({ stage: event.target.value || null })
-              }
-            >
-              <option value="">Not set</option>
-              {projectStages.map((stage) => (
-                <option key={stage.id} value={stage.id}>
-                  {stage.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {(data.papers.some(
+            (p) =>
+              (p.paper.documentType ??
+                (p.paper.role === "manuscript" ? "paper" : "other")) ===
+              "paper",
+          ) ||
+            settings.stage) && (
+            <label className="project-overview-stage">
+              <span className="project-home-meta">Stage</span>
+              <select
+                aria-label="Stage of the paper"
+                value={settings.stage ?? ""}
+                onChange={(event) =>
+                  void props.saveSettings({ stage: event.target.value || null })
+                }
+              >
+                <option value="">Not set</option>
+                {projectStages.map((stage) => (
+                  <option key={stage.id} value={stage.id}>
+                    {stage.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             type="button"
             className="project-home-link muted"
@@ -530,7 +538,7 @@ export default function ProjectOverview(props: Props) {
             className="project-home-link"
             onClick={() => props.onImportPaper(false)}
           >
-            Import paper
+            Add document
           </button>
           <button
             type="button"

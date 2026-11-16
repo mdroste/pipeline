@@ -17,6 +17,8 @@ import ReportIssueLink from "../ReportIssueLink";
 export { button, input };
 export const panel = "project-section";
 export interface StudioProps {
+  documentId?: string | null;
+  documentPath?: string | null;
   workspaceId: string;
   data: ProjectHome;
   onRefresh: () => Promise<void>;

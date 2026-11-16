@@ -88,7 +88,7 @@ export default function AdvancedSettings({
         <SectionHeader title="Diagnostics" />
         <Toggle
           label="Verbose console logging"
-          description="Show full commands, responses, and logs in the console for troubleshooting."
+          description="Include full commands and responses in console logs."
           checked={settings.verbose_logging}
           onChange={(value) =>
             setSettings({ ...settings, verbose_logging: value })
@@ -132,7 +132,7 @@ export default function AdvancedSettings({
             label="Check for updates automatically"
             description={
               updateStatus.automatic_available
-                ? "Pipeline checks GitHub for a new version when it starts and once a day while it’s open. GitHub sees your IP address and app version, but nothing about your research."
+                ? "Checks GitHub at startup and daily while open."
                 : "This copy of Pipeline was not installed from an official release, so it checks for updates only when you ask."
             }
             checked={updateStatus.automatic}

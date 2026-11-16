@@ -2,6 +2,8 @@ use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildConfig {
+    #[serde(default)]
+    pub document_id: Option<String>,
     pub name: String,
     pub checkpoint_id: Option<String>,
     pub directory: String,
@@ -145,6 +147,13 @@ pub(super) fn save_build(
     config: BuildConfig,
 ) -> WorkbenchResult<ProjectRecord> {
     bounded(&config.name, 300)?;
+    if let Some(document_id) = config.document_id.as_deref() {
+        if research::paper_by_id(store, ws, document_id)?.is_none() {
+            return Err(WorkbenchError::invalid(
+                "Build document was not found in this project",
+            ));
+        }
+    }
     editable(&config.root_document)?;
     files::relative(&config.expected_pdf)?;
     if !config.root_document.ends_with(".tex") || !config.expected_pdf.ends_with(".pdf") {
@@ -242,6 +251,14 @@ pub(super) fn save_build(
     let id = new_or_id(object_id)?;
     if object_id.is_some() {
         let old = record(store, ws, &id, "build")?;
+        if old.body["config"]["documentId"]
+            .as_str()
+            .is_some_and(|id| Some(id) != config.document_id.as_deref())
+        {
+            return Err(WorkbenchError::invalid(
+                "A saved build configuration belongs to another document",
+            ));
+        }
         if old.revision != expected {
             return Err(WorkbenchError::conflict("Build settings changed; refresh"));
         }
@@ -358,6 +375,18 @@ pub(super) fn inspect_build(store: &Store, ws: &str, execution_id: &str) -> Work
         e.stdout.as_deref().unwrap_or(""),
         e.stderr.as_deref().unwrap_or("")
     ));
+    let document_id = records(store, ws, "build")?
+        .into_iter()
+        .find(|r| {
+            r.body["recordType"] == "configuration"
+                && r.body["profile"]["id"].as_str() == e.profile_id.as_deref()
+        })
+        .and_then(|r| r.body["config"]["documentId"].as_str().map(str::to_owned));
+    let document = document_id
+        .as_deref()
+        .map(|id| research::paper_by_id(store, ws, id))
+        .transpose()?
+        .flatten();
     let mut pdf_revision = None;
     let mut mapping_artifact = None;
     if e.outcome == "completed" {
@@ -385,9 +414,16 @@ pub(super) fn inspect_build(store: &Store, ws: &str, execution_id: &str) -> Work
                     store,
                     research::ImportPaperRequest {
                         workspace_id: ws.into(),
-                        paper_id: None,
-                        title: format!("Build {} · {path}", e.id),
-                        role: "other".into(),
+                        paper_id: document.as_ref().map(|d| d.id.clone()),
+                        title: document
+                            .as_ref()
+                            .map(|d| d.title.clone())
+                            .unwrap_or_else(|| format!("Build {} · {path}", e.id)),
+                        role: document
+                            .as_ref()
+                            .map(|d| d.role.clone())
+                            .unwrap_or_else(|| "other".into()),
+                        document_type: document.as_ref().map(|d| d.document_type.clone()),
                         path: original,
                         operation_id: id("build_pdf")?,
                     },
@@ -399,7 +435,7 @@ pub(super) fn inspect_build(store: &Store, ws: &str, execution_id: &str) -> Work
             }
         }
     }
-    let value = json!({"recordType":"receipt","executionId":e.id,"outcome":e.outcome,"diagnostics":diagnostics,"pdf":pdf_revision,"mappingArtifactId":mapping_artifact,"pageInspection":"not_recorded","sourceManifest":e.input_manifest,"synchronization":if mapping_artifact.is_some(){"available_for_exact_build"}else{"source_and_page_fallback"}});
+    let value = json!({"recordType":"receipt","documentId":document_id,"executionId":e.id,"outcome":e.outcome,"diagnostics":diagnostics,"pdf":pdf_revision,"mappingArtifactId":mapping_artifact,"pageInspection":"not_recorded","sourceManifest":e.input_manifest,"synchronization":if mapping_artifact.is_some(){"available_for_exact_build"}else{"source_and_page_fallback"}});
     put(store, ws, &record_id, "build", 0, &value)?;
     Ok(value)
 }

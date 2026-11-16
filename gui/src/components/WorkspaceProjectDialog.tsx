@@ -4,6 +4,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { researchClient } from "../lib/workbench/researchClient";
 import { projectClient } from "../lib/projectClient";
+import {
+  documentTypes,
+  documentRole,
+  type DocumentType,
+} from "../lib/documentTypes";
 import { projectKinds } from "../lib/workspaceNavigation";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { Workspace } from "../lib/workbench/sessionTypes";
@@ -36,6 +41,7 @@ export default function WorkspaceProjectDialog({
   const [name, setName] = useState("");
   const [folder, setFolder] = useState<string | null>(null);
   const [paper, setPaper] = useState<string | null>(null);
+  const [documentType, setDocumentType] = useState<DocumentType>("paper");
   const [kind, setKind] = useState("");
   const kindSaved = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -62,7 +68,7 @@ export default function WorkspaceProjectDialog({
   const choosePaper = async () => {
     const selected = await open({
       multiple: false,
-      filters: [{ name: "Paper", extensions: PAPER_EXTENSIONS }],
+      filters: [{ name: "Document", extensions: PAPER_EXTENSIONS }],
     });
     if (typeof selected === "string") {
       setPaper(selected);
@@ -96,7 +102,7 @@ export default function WorkspaceProjectDialog({
         ).record;
         created.current = workspace;
       }
-      if (kind && !kindSaved.current) {
+      if (documentType === "paper" && kind && !kindSaved.current) {
         const home = await projectClient.home(workspace.id);
         await projectClient.mutate(workspace.id, {
           action: "saveHome",
@@ -110,7 +116,8 @@ export default function WorkspaceProjectDialog({
           workspaceId: workspace.id,
           paperId: null,
           title: basename(paper).replace(/\.[^.]+$/, ""),
-          role: "manuscript",
+          role: documentRole(documentType),
+          documentType,
           path: paper,
           operationId: `import-paper-${crypto.randomUUID()}`,
         });
@@ -155,8 +162,7 @@ export default function WorkspaceProjectDialog({
             id={descriptionId}
             className="mt-1 text-xs text-gray-500 dark:text-neutral-400"
           >
-            A project keeps a paper, its folder, your notes, and the
-            conversations about it together.
+            Keep papers, slides, files, and conversations together.
           </p>
         </div>
         <label className="block text-xs">
@@ -171,23 +177,25 @@ export default function WorkspaceProjectDialog({
             disabled={busy || Boolean(created.current)}
           />
         </label>
-        <label className="block text-xs">
-          Kind of paper <span className="text-gray-500">(optional)</span>
-          <select
-            aria-label="Kind of paper"
-            className={`${field} mt-1`}
-            value={kind}
-            onChange={(event) => setKind(event.target.value)}
-            disabled={busy || kindSaved.current}
-          >
-            <option value="">Not set</option>
-            {projectKinds.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {documentType === "paper" && (
+          <label className="block text-xs">
+            Kind of paper <span className="text-gray-500">(optional)</span>
+            <select
+              aria-label="Kind of paper"
+              className={`${field} mt-1`}
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+              disabled={busy || kindSaved.current}
+            >
+              <option value="">Not set</option>
+              {projectKinds.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="text-xs">
           <span className="block">
             Folder <span className="text-gray-500">(optional)</span>
@@ -209,7 +217,7 @@ export default function WorkspaceProjectDialog({
               className="min-w-0 flex-1 truncate text-gray-600 dark:text-neutral-300"
               title={folder ?? undefined}
             >
-              {folder ?? "The folder that holds the paper and its code."}
+              {folder ?? "The folder that holds your documents and code."}
             </span>
             {folder && !created.current?.root && (
               <button
@@ -225,7 +233,7 @@ export default function WorkspaceProjectDialog({
         </div>
         <div className="text-xs">
           <span className="block">
-            Paper <span className="text-gray-500">(optional)</span>
+            Document <span className="text-gray-500">(optional)</span>
           </span>
           <div className="mt-1 flex items-center gap-2">
             <button
@@ -260,6 +268,24 @@ export default function WorkspaceProjectDialog({
             )}
           </div>
         </div>
+        {paper && (
+          <label className="block text-xs">
+            Document type
+            <select
+              aria-label="Document type"
+              className={`${field} mt-1`}
+              value={documentType}
+              disabled={busy || paperImported.current}
+              onChange={(e) => setDocumentType(e.target.value as DocumentType)}
+            >
+              {documentTypes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {error && (
           <p role="alert" className="ui-notice ui-notice--error">
             {error}

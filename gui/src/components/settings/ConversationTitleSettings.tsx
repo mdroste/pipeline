@@ -5,6 +5,7 @@ import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { TitlePreferences } from "../../lib/workbench/sessionTypes";
 import type { WorkspaceModelCatalog } from "../../lib/workbench/runtimeTypes";
 import { SaveFeedback, useSettingsOperation } from "./SaveState";
+import InfoButton from "../InfoButton";
 const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh"];
 export default function ConversationTitleSettings() {
   const [titles, setTitles] = useState<TitlePreferences | null>(null);
@@ -69,12 +70,16 @@ export default function ConversationTitleSettings() {
   return (
     <div id="conversation-titles" tabIndex={-1} className="settings-anchor">
       <section className="space-y-3 text-sm">
-        <h2 className="font-semibold">Conversation titles</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="font-semibold">Conversation titles</h2>
+          <InfoButton label="Conversation titles">
+            Rename or regenerate titles from the conversation list.
+          </InfoButton>
+        </div>
         <p className="text-gray-500 dark:text-neutral-400">
-          Pipeline titles each conversation after the first reply. This uses one
-          extra model call. The settings below apply to ChatGPT conversations.
-          Claude Code conversations use the cheapest Claude model. To rename or
-          regenerate a title, use the conversation list.
+          Titles are generated after the first reply using one extra model call.
+          These settings apply to ChatGPT; Claude Code uses the cheapest Claude
+          model.
         </p>
         {titles ? (
           <>

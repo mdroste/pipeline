@@ -215,9 +215,11 @@ fn render_page_image(
     )
 }
 
+mod documents;
 mod ledger;
 mod notes;
 mod papers;
+pub use documents::*;
 mod sources;
 mod tools;
 
