@@ -95,7 +95,10 @@ async fn pptx_passes_staging_dispatch_and_batch_discovery() {
     let dir = tempfile::tempdir().unwrap();
     let path = deck(dir.path(), "slides/slide9.xml");
     let found = crate::commands::scan_input_files(dir.path().to_str().unwrap()).unwrap();
-    assert_eq!(found, vec![path.to_string_lossy().into_owned()]);
+    assert_eq!(
+        found.into_iter().map(PathBuf::from).collect::<Vec<_>>(),
+        vec![path.clone()]
+    );
     let private = tempfile::tempdir().unwrap();
     let scoped =
         crate::pipeline::extract::stage_selected_source(&path, "document", private.path()).unwrap();

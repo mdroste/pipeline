@@ -1,28 +1,24 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { DiscoveryDefinition } from "../../lib/discoveryClient";
+import {
+  discoveryClient,
+  type DiscoveryDefinition,
+  type DiscoveryBudgetPreview,
+} from "../../lib/discoveryClient";
 import { ReviewEstimate } from "../tasks/Budget";
-interface Preview {
-  screenedAtLimit: number;
-  firstAssessment: number | null;
-  shortlistMin: number;
-  portfolioMin: number;
-  conditionalHigh: number;
-  reachable: boolean;
-}
 export default function BudgetPreview({
   definition: d,
 }: {
   definition: DiscoveryDefinition;
 }) {
-  const [preview, setPreview] = useState<Preview | null>(null),
+  const [preview, setPreview] = useState<DiscoveryBudgetPreview | null>(null),
     [error, setError] = useState("");
   useEffect(() => {
     let live = true;
     setPreview(null);
     setError("");
     const timer = setTimeout(() => {
-      void invoke<Preview>("discovery_budget_preview", { definition: d })
+      void discoveryClient
+        .budgetPreview(d)
         .then((r) => {
           if (live) setPreview(r);
         })

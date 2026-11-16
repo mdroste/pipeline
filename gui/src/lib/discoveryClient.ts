@@ -3,6 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Json, TaskEvent } from "./taskTypes";
 
 export type DiscoveryMode = "supervised" | "unsupervised";
+export interface DiscoveryBudgetPreview {
+  screenedAtLimit: number;
+  firstAssessment: number | null;
+  shortlistMin: number;
+  portfolioMin: number;
+  conditionalHigh: number;
+  reachable: boolean;
+}
 export const discoveryNames: Record<DiscoveryMode, string> = {
   supervised: "Research discovery — choose projects yourself",
   unsupervised: "Research discovery — let Pipeline choose projects",
@@ -238,6 +246,8 @@ export interface DiscoveryPaper {
   }[];
 }
 export const discoveryClient = {
+  budgetPreview: (definition: DiscoveryDefinition) =>
+    invoke<DiscoveryBudgetPreview>("discovery_budget_preview", { definition }),
   start: (
     definition: DiscoveryDefinition,
     sessionId: string | null,

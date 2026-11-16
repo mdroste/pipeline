@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { UsageEstimate } from "./usageEstimate";
 import type { FileListing } from "./fileWorkspaceClient";
 import type {
   TaskSummary,
@@ -19,7 +20,21 @@ export interface DeliveredFile {
   createdAt: string;
 }
 
+export interface AutomationUsage {
+  pricedCalls: number;
+  unpricedCalls: number;
+  subscriptionUnits: number;
+  localCalls: number;
+  chargedMicroUsd: number;
+  heldMicroUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export const taskClient = {
+  reviewEstimate: (profileId: string, taskId: string | null = null) =>
+    invoke<UsageEstimate>("automation_review_estimate", { profileId, taskId }),
+  usage: (id: string) => invoke<AutomationUsage>("automation_usage", { id }),
   deliveredFiles: (sessionId: string, offset: number) =>
     invoke<{ files: DeliveredFile[]; warning: string | null }>(
       "task_delivered_files",

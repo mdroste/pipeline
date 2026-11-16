@@ -6,6 +6,7 @@ public release was not tracked as a stable release series.
 ## 1.5.0 — 2026-11-15
 
 - Improve native command isolation and manuscript TeX workflows.
+- Update HTML sanitization and bundled SQLite to address dependency advisories.
 
 ## 1.4.6 — 2026-11-11
 

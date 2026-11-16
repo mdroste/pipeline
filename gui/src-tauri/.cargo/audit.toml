@@ -26,6 +26,13 @@ ignore = [
   "RUSTSEC-2025-0081",
   "RUSTSEC-2025-0098",
   "RUSTSEC-2025-0100",
+  # Tauri 2's notification plugin requires zbus 5 on Linux. These standalone
+  # crates moved into zbus 6; even notification 2.8.1 still requires zbus 5.
+  # These are maintenance notices, not reported vulnerabilities. Remove these
+  # exceptions when the stable Tauri 2 plugin supports zbus 6.
+  "RUSTSEC-2026-0370", # zvariant
+  "RUSTSEC-2026-0371", # zbus_names
+  "RUSTSEC-2026-0372", # zvariant_derive
 ]
 informational_warnings = ["unmaintained", "unsound", "notice"]
 

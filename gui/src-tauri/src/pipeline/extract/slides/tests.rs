@@ -93,10 +93,19 @@ fn renderer_rejects_invalid_outputs_and_reports_failure_without_a_pdf() {
         quality_notes: vec![],
     };
     let output = tempfile::tempdir().unwrap();
-    let rendered = render_slide_pdf(&extraction, output.path()).unwrap();
-    assert!(rendered.pdf.is_none());
-    assert!(rendered.note.contains("Unsupported TeX engine"));
-    assert!(rendered.log.is_file());
+    let result = render_slide_pdf(&extraction, output.path());
+    #[cfg(windows)]
+    match result {
+        Err(error) => assert!(error.contains("Unsupported TeX engine")),
+        Ok(_) => panic!("Windows must reject an unsupported native TeX engine"),
+    }
+    #[cfg(not(windows))]
+    {
+        let rendered = result.unwrap();
+        assert!(rendered.pdf.is_none());
+        assert!(rendered.note.contains("Unsupported TeX engine"));
+        assert!(rendered.log.is_file());
+    }
 }
 
 #[test]

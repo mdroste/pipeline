@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { taskClient, type AutomationUsage } from "../../lib/taskClient";
 import { formatUsd, type UsageEstimate } from "../../lib/usageEstimate";
 import type { Chain, Step } from "../../lib/taskTypes";
 
@@ -50,10 +50,8 @@ export function ReviewEstimate({
     setResult(null);
     setError("");
     if (profile)
-      void invoke<UsageEstimate>("automation_review_estimate", {
-        profileId: profile,
-        taskId: taskId ?? null,
-      })
+      void taskClient
+        .reviewEstimate(profile, taskId ?? null)
         .then((r) => {
           if (live) setResult(r);
         })
@@ -92,16 +90,6 @@ export function ReviewEstimate({
   );
 }
 
-interface Usage {
-  pricedCalls: number;
-  unpricedCalls: number;
-  subscriptionUnits: number;
-  localCalls: number;
-  chargedMicroUsd: number;
-  heldMicroUsd: number;
-  inputTokens: number;
-  outputTokens: number;
-}
 export function RecordedUsage({
   id,
   revision,
@@ -110,14 +98,15 @@ export function RecordedUsage({
   revision: number;
 }) {
   const [open, setOpen] = useState(false),
-    [usage, setUsage] = useState<Usage | null>(null),
+    [usage, setUsage] = useState<AutomationUsage | null>(null),
     [error, setError] = useState("");
   useEffect(() => {
     if (!open) return;
     let live = true;
     setError("");
     setUsage(null);
-    void invoke<Usage>("automation_usage", { id })
+    void taskClient
+      .usage(id)
       .then((v) => {
         if (live) setUsage(v);
       })
