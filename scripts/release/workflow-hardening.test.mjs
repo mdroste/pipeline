@@ -10,6 +10,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const readText = (...segments) =>
   fs.readFileSync(path.join(ROOT, ...segments), "utf8").replaceAll("\r\n", "\n");
 
+test("every GitHub Actions workflow parses as YAML", () => {
+  for (const workflow of fs.readdirSync(path.join(ROOT, ".github", "workflows"))) {
+    if (!/\.ya?ml$/.test(workflow)) continue;
+    const parsed = yaml.load(readText(".github", "workflows", workflow));
+    assert.ok(parsed?.jobs, `${workflow} must define jobs`);
+    for (const job of Object.values(parsed.jobs)) {
+      for (const step of job.steps ?? []) {
+        if ("run" in step) assert.equal(typeof step.run, "string", `${workflow}: run must be a string`);
+      }
+    }
+  }
+});
+
 test("all third-party GitHub Actions are pinned to immutable commit SHAs", () => {
   for (const workflow of [
     "build.yml",

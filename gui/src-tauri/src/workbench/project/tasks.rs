@@ -5,7 +5,7 @@ mod copies;
 mod records;
 
 pub(super) use application::{accept_changes, apply, recover, undo};
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) use copies::git;
 pub(super) use copies::{
     capture_changes, checkpoint, discard_copy, git_fetch, reclaim_replaced_copy, reject,

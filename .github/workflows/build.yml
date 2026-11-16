@@ -121,7 +121,8 @@ jobs:
 
       - name: Native command isolation and proxy
         working-directory: gui/src-tauri
-        run: cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+        run: |
+          cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
 
       - name: Pinned engine downloads
         working-directory: gui/src-tauri
@@ -177,7 +178,8 @@ jobs:
       - name: Native macOS command isolation and proxy
         if: runner.os == 'macOS'
         working-directory: gui/src-tauri
-        run: cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+        run: |
+          cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
 
       - name: Native PDF export
         working-directory: gui/src-tauri
