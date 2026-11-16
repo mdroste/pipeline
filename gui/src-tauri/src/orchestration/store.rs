@@ -87,7 +87,12 @@ impl Store {
             if version == 1 {
                 let backup = root.join("tasks-before-missions-v2.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(
+                        rusqlite::MAIN_DB,
+                        &backup,
+                        None::<fn(rusqlite::backup::Progress)>,
+                    )
+                    .map_err(err)?;
                 }
             }
             c.execute_batch(include_str!("missions/schema.sql"))
@@ -97,7 +102,12 @@ impl Store {
             if version > 0 {
                 let backup = root.join("tasks-before-discovery-v3.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(
+                        rusqlite::MAIN_DB,
+                        &backup,
+                        None::<fn(rusqlite::backup::Progress)>,
+                    )
+                    .map_err(err)?;
                 }
             }
             c.execute_batch(include_str!("discovery/schema.sql"))
@@ -107,7 +117,12 @@ impl Store {
             if version > 0 {
                 let backup = root.join("tasks-before-repair-v4.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(
+                        rusqlite::MAIN_DB,
+                        &backup,
+                        None::<fn(rusqlite::backup::Progress)>,
+                    )
+                    .map_err(err)?;
                 }
             }
             c.execute_batch("BEGIN IMMEDIATE; CREATE TABLE damaged_records(kind TEXT NOT NULL,id TEXT NOT NULL,diagnostic TEXT NOT NULL,PRIMARY KEY(kind,id)); PRAGMA user_version=4; COMMIT;").map_err(err)?;
@@ -116,7 +131,12 @@ impl Store {
             if version > 0 {
                 let backup = root.join("tasks-before-usage-v5.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(
+                        rusqlite::MAIN_DB,
+                        &backup,
+                        None::<fn(rusqlite::backup::Progress)>,
+                    )
+                    .map_err(err)?;
                 }
             }
             c.execute_batch("BEGIN IMMEDIATE;
