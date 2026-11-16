@@ -20,6 +20,29 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  macos-tls-diagnostic:
+    name: macOS TLS diagnostic
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Compare curl certificate stores
+        shell: bash
+        run: |
+          command -v curl
+          curl --version
+          for bundle in /etc/ssl/cert.pem /opt/homebrew/etc/ca-certificates/cert.pem /usr/local/etc/ca-certificates/cert.pem; do
+            if [[ -f "$bundle" ]]; then
+              ls -l "$bundle"
+              curl --cacert "$bundle" --head --max-time 15 https://example.com || true
+            fi
+          done
+          for curl_bin in /usr/bin/curl /opt/homebrew/opt/curl/bin/curl; do
+            if [[ -x "$curl_bin" ]]; then
+              "$curl_bin" --version
+              "$curl_bin" --verbose --head --max-time 15 https://example.com || true
+            fi
+          done
+
   tests:
     name: Linux tests
     runs-on: ubuntu-22.04
