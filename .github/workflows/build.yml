@@ -189,6 +189,9 @@ jobs:
         run: |
           cargo build --locked --bin pipeline-gui
           if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # Git Bash prepends its own tools ahead of GITHUB_PATH entries.
+            export PATH="$PWD/resources/poppler:$PATH"
+            pdftotext -v
             export PIPELINE_TEST_PDF_EXECUTABLE="$(cygpath -w "$PWD/target/debug/pipeline-gui.exe")"
           else
             export PIPELINE_TEST_PDF_EXECUTABLE="$PWD/target/debug/pipeline-gui"

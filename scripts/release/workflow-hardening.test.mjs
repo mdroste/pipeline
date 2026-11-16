@@ -108,6 +108,8 @@ test("Windows PDF tests use the pinned Poppler tools before system executables",
   assert.match(setup, /if: runner\.os == 'Windows'/);
   assert.match(setup, /bash scripts\/release\/bundle-poppler\.sh windows/);
   assert.match(setup, /cygpath -w "\$PWD\/gui\/src-tauri\/resources\/poppler" >> "\$GITHUB_PATH"/);
+  const pdfTest = contents.split("- name: Native PDF export").at(-1);
+  assert.match(pdfTest, /export PATH="\$PWD\/resources\/poppler:\$PATH"/);
 });
 
 test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
