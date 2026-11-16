@@ -7,6 +7,7 @@ use mxc_sdk::v1::{configs::SeatbeltConfig, ContainerRequest, Containment};
 pub(super) mod process_tree;
 #[cfg(test)]
 mod tests;
+pub(super) mod tls;
 
 pub(super) fn confine(
     request: &mut ContainerRequest,

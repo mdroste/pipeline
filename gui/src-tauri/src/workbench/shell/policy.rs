@@ -86,12 +86,8 @@ pub(super) fn request(
     #[cfg(not(windows))]
     environment.push(("NO_PROXY".into(), String::new()));
     #[cfg(target_os = "macos")]
-    if Path::new("/etc/ssl/cert.pem").is_file() {
-        // Use the OS certificate bundle without requiring access to the
-        // user's keychain or the trust service from inside Seatbelt.
-        for key in ["CURL_CA_BUNDLE", "SSL_CERT_FILE"] {
-            environment.push((key.into(), "/etc/ssl/cert.pem".into()));
-        }
+    if proxy.is_some() {
+        super::macos::tls::configure(&scratch, &mut fs, &mut environment)?;
     }
     #[cfg(windows)]
     {
