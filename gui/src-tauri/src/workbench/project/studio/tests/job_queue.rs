@@ -322,7 +322,10 @@ async fn a_writer_never_finds_the_project_free_while_a_job_is_being_queued() {
     });
     let queued = job(&f, p);
     assert!(checked.load(std::sync::atomic::Ordering::SeqCst));
-    assert!(lock(&f.store, &f.ws).is_ok(), "released once listed");
+    // Other tests launch child processes concurrently; on Unix a fork can
+    // briefly inherit this file lock until exec closes the descriptor.
+    // Verify release without requiring that transient interval to be zero.
+    wait_until(|| lock(&f.store, &f.ws).is_ok()).await;
     research::jobs::launch_pending();
     wait_until(|| !research::jobs::workspace_active(&f.ws)).await;
     assert_eq!(outcome(&f, &queued.id), "completed");

@@ -110,7 +110,11 @@ jobs:
 
       - name: Rust all-target tests
         working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
+        run: |
+          cargo build --locked --bin pipeline-gui
+          export PIPELINE_NATIVE_TEST_HELPER="$PWD/target/debug/pipeline-gui"
+          echo "PIPELINE_NATIVE_TEST_HELPER=$PIPELINE_NATIVE_TEST_HELPER" >> "$GITHUB_ENV"
+          cargo test --locked --all-targets
 
       - name: Native PDF export
         working-directory: gui/src-tauri
@@ -174,14 +178,15 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: gui/src-tauri
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
-      - name: Native lifecycle and CLI tests
-        working-directory: gui/src-tauri
-        run: cargo test --locked --all-targets
       - name: Native macOS command isolation and proxy
         if: runner.os == 'macOS'
         working-directory: gui/src-tauri
         run: |
           cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+
+      - name: Native lifecycle and CLI tests
+        working-directory: gui/src-tauri
+        run: cargo test --locked --all-targets
 
       - name: Native PDF export
         working-directory: gui/src-tauri

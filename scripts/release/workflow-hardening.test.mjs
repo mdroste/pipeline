@@ -80,6 +80,14 @@ test("automatic CI gates production builds and all native targets", () => {
     assert.ok(contents.includes(required), required);
 });
 
+test("Linux native tests build and retain their command helper", () => {
+  const workflow = yaml.load(readText(".github", "workflows", "build.yml"));
+  const run = workflow.jobs.tests.steps.find((step) => step.name === "Rust all-target tests").run;
+  assert.ok(run.indexOf("cargo build --locked --bin pipeline-gui") < run.indexOf("cargo test"));
+  assert.ok(run.includes('export PIPELINE_NATIVE_TEST_HELPER="$PWD/target/debug/pipeline-gui"'));
+  assert.ok(run.includes('echo "PIPELINE_NATIVE_TEST_HELPER=$PIPELINE_NATIVE_TEST_HELPER" >> "$GITHUB_ENV"'));
+});
+
 test("clean checkouts retain a Poppler resource for native test builds", () => {
   const directory = path.join(ROOT, "gui", "src-tauri", "resources", "poppler");
   assert.ok(
