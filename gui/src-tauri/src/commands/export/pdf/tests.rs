@@ -191,9 +191,28 @@ fn native_renderer_exports_a_readable_multipage_pdf() {
         })
         .collect();
     assert!(table_pages.len() >= 2, "Expected a table spanning pages");
+    assert!(
+        table_pages.len() < 10,
+        "Table rows were spread across nearly empty pages"
+    );
     for page in table_pages {
+        let first_row = page
+            .words
+            .iter()
+            .filter(|word| word.text.starts_with("Sample-"))
+            .map(|word| word.y_min)
+            .reduce(f32::min)
+            .unwrap();
+        // Poppler can split letter-spaced headings into several word boxes.
+        // Join only the heading band immediately above this page's first row.
+        let header = page
+            .words
+            .iter()
+            .filter(|word| word.y_max <= first_row && word.y_min > first_row - 40.)
+            .map(|word| word.text.as_str())
+            .collect::<String>();
         assert!(
-            page.words.iter().any(|word| word.text == "COEFFICIENT"),
+            header.contains("COEFFICIENT"),
             "Missing repeated table header; page words: {:?}",
             page.words.iter().map(|word| &word.text).collect::<Vec<_>>()
         );

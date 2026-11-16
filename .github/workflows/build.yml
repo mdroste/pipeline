@@ -126,8 +126,8 @@ jobs:
           export PIPELINE_TEST_PDF_EXECUTABLE="$PWD/target/debug/pipeline-gui"
           xvfb-run -a dbus-run-session -- cargo test --locked --lib native_renderer_exports_a_readable_multipage_pdf -- --ignored --nocapture
 
-      - name: Retain failing Linux PDF
-        if: ${{ failure() && steps.native-pdf.outcome == 'failure' }}
+      - name: Retain Linux PDF
+        if: ${{ !cancelled() && (steps.native-pdf.outcome == 'success' || steps.native-pdf.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-pdf-linux

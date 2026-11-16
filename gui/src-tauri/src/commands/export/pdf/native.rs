@@ -64,7 +64,11 @@ pub(super) fn document(html: &str) -> String {
     html.replace(
         "</body></html>",
         &format!(
-            "{styles}<script>{}</script></body></html>",
+            // Hidden GTK windows can have a one-pixel viewport before they
+            // are mapped. Measure at the actual printable column width even
+            // then; printing still gets its dimensions from the paper setup.
+            "{styles}<style media=\"screen\">html,body{{width:{}px}}</style><script>{}</script></body></html>",
+            (WIDTH - 2. * SIDE) * 96. / 72.,
             include_str!("native/layout.js")
         ),
     )
