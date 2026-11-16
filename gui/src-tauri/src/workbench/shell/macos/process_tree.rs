@@ -79,28 +79,37 @@ impl Tree {
     }
 
     pub(in super::super) fn verify(&self, pid: u32) -> Result<(), String> {
-        let verify = || -> io::Result<bool> {
+        let verify = || -> io::Result<Option<bool>> {
             let child = identity(pid as libc::pid_t)?;
             // SAFETY: getpid has no preconditions.
             let host = identity(unsafe { libc::getpid() })?;
             let pids = list_pids()?;
-            Ok(match (child, host) {
+            let verified = match (child, host) {
                 (Some(child), Some(host)) => {
                     pids.contains(&(pid as libc::pid_t))
                         && self.contains(child)?
                         && !self.contains(host)?
                 }
                 _ => false,
-            })
+            };
+            // The SDK starts /bin/sh, which can exec the gated Bash shell
+            // while we query its sandbox. Exec changes the audit-token
+            // version: a stale token is not evidence of missing ownership.
+            // Retry only that transition, never a stable policy mismatch.
+            if identity(pid as libc::pid_t)? != child {
+                return Ok(None);
+            }
+            Ok(Some(verified))
         };
-        if verify().map_err(|e| format!("Cannot verify command cleanup: {e}"))? {
-            Ok(())
-        } else {
-            Err(
-                "macOS could not establish command process ownership; the command did not run"
-                    .into(),
-            )
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match verify().map_err(|e| format!("Cannot verify command cleanup: {e}"))? {
+                Some(true) => return Ok(()),
+                None if Instant::now() < deadline => std::thread::yield_now(),
+                _ => break,
+            }
         }
+        Err("macOS could not establish command process ownership; the command did not run".into())
     }
 
     pub(in super::super) fn terminate(&self) -> Result<(), String> {
@@ -267,6 +276,7 @@ fn list_pids() -> io::Result<Vec<libc::pid_t>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::BufRead;
 
     #[test]
     #[ignore = "requires the real macOS sandbox"]
@@ -283,15 +293,35 @@ mod tests {
         .unwrap();
         let mut marked = base.clone();
         let tree = Tree::prepare(&mut marked).unwrap();
-        let mut child = mxc_sdk::v1::spawn(marked, Default::default()).unwrap();
-        tree.verify(child.id()).unwrap();
-        let token = identity(child.id() as libc::pid_t).unwrap().unwrap();
-        assert!(tree.contains(token).unwrap());
-        let mut stale = token;
-        stale.val[7] = stale.val[7].wrapping_add(1);
-        assert!(!tree.contains(stale).unwrap());
-        child.kill().unwrap();
-        child.wait().unwrap();
+        marked.command = marked.command.replace(
+            "IFS= read -r pipeline_gate;",
+            "echo pipeline-gate-ready; IFS= read -r pipeline_gate;",
+        );
+        for _ in 0..16 {
+            let mut child = mxc_sdk::v1::spawn(marked.clone(), Default::default()).unwrap();
+            // Verify immediately, including while /bin/sh execs Bash.
+            let verified = tree.verify(child.id());
+            if let Err(error) = verified {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{error}");
+            }
+            // The token-specific assertions need the final gated shell's
+            // identity; another legitimate exec would invalidate that token.
+            let mut ready = String::new();
+            std::io::BufReader::new(child.take_stdout().unwrap())
+                .read_line(&mut ready)
+                .unwrap();
+            assert_eq!(ready.trim(), "pipeline-gate-ready");
+            let token = identity(child.id() as libc::pid_t).unwrap().unwrap();
+            assert!(tree.contains(token).unwrap());
+            let mut stale = token;
+            stale.val[7] = stale.val[7].wrapping_add(1);
+            assert!(!tree.contains(stale).unwrap());
+            child.kill().unwrap();
+            child.wait().unwrap();
+            assert!(!root.path().join("escaped").exists());
+        }
         // This child did not inherit the signature. Refuse it while the gate
         // is still closed; never infer ownership from the PID or parent alone.
         let mut unmarked = mxc_sdk::v1::spawn(base, Default::default()).unwrap();
