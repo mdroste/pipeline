@@ -194,7 +194,12 @@ fn native_renderer_exports_a_readable_multipage_pdf() {
     for page in table_pages {
         assert!(
             page.words.iter().any(|word| word.text == "COEFFICIENT"),
-            "Missing repeated table header"
+            "Missing repeated table header on page containing {:?}",
+            page.words
+                .iter()
+                .filter(|word| word.text.starts_with("Sample-"))
+                .map(|word| &word.text)
+                .collect::<Vec<_>>()
         );
     }
     for (index, page) in layout.iter().enumerate() {

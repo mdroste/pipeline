@@ -30,21 +30,26 @@ window.pipelineReportReady
       }
       const headerHeight = head.getBoundingClientRect().height;
       const rows = Array.from(body.rows, row => ({ row, height: row.getBoundingClientRect().height }));
-      let part, partBody, height;
+      let part, partBody, group, height;
       for (const entry of rows) {
         if (!part || (partBody.rows.length && height + entry.height > limit)) {
           part = table.cloneNode(false);
           part.style.tableLayout = "fixed";
-          part.style.pageBreakInside = "avoid";
-          if (height !== undefined) part.style.pageBreakBefore = "always";
+          // WebKitGTK can ignore break rules on the table itself. An ordinary
+          // block keeps each measured continuation and its header together.
+          group = document.createElement("div");
+          group.className = "pipeline-table-continuation";
+          group.style.pageBreakInside = "avoid";
+          if (height !== undefined) group.style.pageBreakBefore = "always";
           part.append(columns.cloneNode(true), head.cloneNode(true));
           partBody = document.createElement("tbody");
           part.append(partBody);
-          table.before(part);
+          group.append(part);
+          table.before(group);
           height = headerHeight;
         }
         if (headerHeight + entry.height > limit) {
-          part.style.pageBreakInside = "auto";
+          group.style.pageBreakInside = "auto";
           entry.row.style.pageBreakInside = "auto";
         }
         partBody.append(entry.row);
@@ -56,7 +61,7 @@ window.pipelineReportReady
     // paragraph (or a short table) in the same ordinary block when it fits.
     for (const heading of document.querySelectorAll(".report-body .comment-header,.report-body h1,.report-body h2,.report-body h3")) {
       const next = heading.nextElementSibling;
-      if (!next || !next.matches("p,table,.pipeline-display-equation")) continue;
+      if (!next || !next.matches("p,table,.pipeline-table-continuation,.pipeline-display-equation")) continue;
       if (next.getBoundingClientRect().bottom - heading.getBoundingClientRect().top > pageHeight - 24) continue;
       const group = document.createElement("div");
       group.style.pageBreakInside = "avoid";

@@ -108,13 +108,13 @@ jobs:
         working-directory: gui/src-tauri
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Rust all-target tests
+      - name: Build Linux native test helper
+        id: native-helper
         working-directory: gui/src-tauri
         run: |
           cargo build --locked --bin pipeline-gui
           export PIPELINE_NATIVE_TEST_HELPER="$PWD/target/debug/pipeline-gui"
           echo "PIPELINE_NATIVE_TEST_HELPER=$PIPELINE_NATIVE_TEST_HELPER" >> "$GITHUB_ENV"
-          cargo test --locked --all-targets
 
       - name: Native PDF export
         working-directory: gui/src-tauri
@@ -124,9 +124,14 @@ jobs:
           xvfb-run -a dbus-run-session -- cargo test --locked --lib native_renderer_exports_a_readable_multipage_pdf -- --ignored --nocapture
 
       - name: Native command isolation and proxy
+        if: ${{ !cancelled() && steps.native-helper.outcome == 'success' }}
         working-directory: gui/src-tauri
         run: |
           cargo test --locked --lib workbench::shell:: -- --include-ignored --skip linux_command_guard_entry --nocapture --test-threads=1
+
+      - name: Rust all-target tests
+        working-directory: gui/src-tauri
+        run: cargo test --locked --all-targets
 
       - name: Pinned engine downloads
         working-directory: gui/src-tauri
