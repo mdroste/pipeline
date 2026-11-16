@@ -176,7 +176,9 @@ it("keeps recurring schedules separate from active occurrences", async () => {
     "aria-selected",
     "true",
   );
-  expect(mocks.invoke).toHaveBeenCalledWith("task_schedules");
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_schedules"),
+  );
 });
 it("handles task errors emitted by the native coordinator", async () => {
   render(<TasksPage />);

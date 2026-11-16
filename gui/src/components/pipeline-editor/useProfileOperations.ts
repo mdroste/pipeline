@@ -46,6 +46,11 @@ export function useProfileOperations(
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [saved]);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [profileMutationPending, setProfileMutationPending] = useState(false);
   const profileMutationRequestRef = useRef(0);
@@ -371,7 +376,6 @@ export function useProfileOperations(
       onProfileChange?.(
         activeProfileRef.current === profileToSave ? configToSave : undefined,
       );
-      if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
       return isCurrentVersion;
     } catch (e) {
       notify(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);

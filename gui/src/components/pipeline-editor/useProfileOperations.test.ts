@@ -126,6 +126,34 @@ it("passes the saved workflow to the run setup so a same-mode input survives", a
   expect(changed.mock.calls[0][0]).toBe(result.current.editor.config);
 });
 
+it("clears the saved indicator timer when the editor unmounts", async () => {
+  localStorage.clear();
+  mocks.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_pipeline_config")
+      return { steps: [], merge: { enabled: false, prompt: "", agents: [] } };
+    if (command === "get_active_profile") return "saved";
+    if (command === "list_profiles") return [];
+    if (command === "save_pipeline_config") return;
+    throw new Error(command);
+  });
+  const { result, unmount } = renderHook(() => {
+    const editor = useWorkflowEditor();
+    return useProfileOperations(editor, null);
+  });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  vi.useFakeTimers();
+  try {
+    await act(async () => await result.current.handleSave());
+    expect(result.current.saved).toBe(true);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    unmount();
+    vi.useRealTimers();
+  }
+});
+
 it("gives an imported step a unique id the backend accepts", async () => {
   localStorage.clear();
   const { base, taken, id } = stepIds[2];
