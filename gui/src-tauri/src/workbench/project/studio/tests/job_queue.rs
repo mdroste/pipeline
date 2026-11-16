@@ -349,7 +349,8 @@ async fn a_job_that_fails_while_being_queued_is_never_listed_and_frees_the_proje
     };
     assert!(research::jobs::queue(&f.store, request(&p), "detached", None).is_err());
     assert!(!research::jobs::workspace_active(&f.ws));
-    assert!(lock(&f.store, &f.ws).is_ok());
+    // A concurrent Unix fork may retain the closed guard until its exec.
+    wait_until(|| lock(&f.store, &f.ws).is_ok()).await;
     connection
         .execute_batch("DROP TRIGGER refuse_job;")
         .unwrap();
