@@ -117,11 +117,22 @@ jobs:
           echo "PIPELINE_NATIVE_TEST_HELPER=$PIPELINE_NATIVE_TEST_HELPER" >> "$GITHUB_ENV"
 
       - name: Native PDF export
+        id: native-pdf
         working-directory: gui/src-tauri
+        env:
+          PIPELINE_TEST_PDF_OUTPUT: ${{ runner.temp }}/native-pdf.pdf
         run: |
           cargo build --locked --bin pipeline-gui
           export PIPELINE_TEST_PDF_EXECUTABLE="$PWD/target/debug/pipeline-gui"
           xvfb-run -a dbus-run-session -- cargo test --locked --lib native_renderer_exports_a_readable_multipage_pdf -- --ignored --nocapture
+
+      - name: Retain failing Linux PDF
+        if: ${{ failure() && steps.native-pdf.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-pdf-linux
+          path: ${{ runner.temp }}/native-pdf.pdf
+          retention-days: 7
 
       - name: Native command isolation and proxy
         if: ${{ !cancelled() && steps.native-helper.outcome == 'success' }}

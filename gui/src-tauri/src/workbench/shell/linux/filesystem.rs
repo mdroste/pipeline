@@ -23,12 +23,14 @@ use std::{
     },
     time::Duration,
 };
+mod hardlink;
 struct Node {
     paths: Vec<PathBuf>,
     refs: u64,
 }
 pub struct Filtered {
     inner: PassthroughFs,
+    root: std::fs::File,
     nodes: Mutex<HashMap<u64, Node>>,
     readonly: Vec<PathBuf>,
     denied: Vec<PathBuf>,
@@ -64,6 +66,7 @@ impl Filtered {
         )]));
         Ok(Self {
             inner,
+            root: std::fs::File::open(root)?,
             nodes,
             readonly,
             denied,
@@ -321,7 +324,24 @@ impl FileSystem for Filtered {
         self.write_inode(inode)?;
         let path = self.path(newparent, newname)?;
         self.mutable(&path, false)?;
-        let entry = self.inner.link(ctx, inode, newparent, newname)?;
+        let nodes = self.nodes.lock().unwrap();
+        let source = &nodes.get(&inode).ok_or_else(|| err(libc::ESTALE))?.paths[0];
+        let parent = &nodes
+            .get(&newparent)
+            .ok_or_else(|| err(libc::ESTALE))?
+            .paths[0];
+        let (source_stat, _) = self.inner.getattr(ctx, inode, None)?;
+        let (parent_stat, _) = self.inner.getattr(ctx, newparent, None)?;
+        hardlink::link(
+            &self.root,
+            source,
+            parent,
+            newname,
+            &source_stat,
+            &parent_stat,
+        )?;
+        drop(nodes);
+        let entry = self.inner.lookup(ctx, newparent, newname)?;
         self.entry(ctx, path, entry)
     }
     fn open(
