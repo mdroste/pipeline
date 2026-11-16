@@ -3,6 +3,10 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.5.0 — 2026-11-15
+
+- Improve native command isolation and manuscript TeX workflows.
+
 ## 1.4.6 — 2026-11-11
 
 - Simplify provider descriptions in **Get started with Pipeline** by removing
