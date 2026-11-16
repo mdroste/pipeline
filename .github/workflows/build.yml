@@ -43,6 +43,14 @@ jobs:
             fi
           done
 
+          address=$(dscacheutil -q host -a name example.com | awk '/ip_address: / { print $2; exit }')
+          for backend in default openssl; do
+            echo "Sandboxed curl TLS backend: $backend"
+            CURL_SSL_BACKEND="$backend" CURL_CA_BUNDLE=/etc/ssl/cert.pem \
+              sandbox-exec -p '(version 1)(allow default)(deny mach-lookup)' \
+              /usr/bin/curl --resolve "example.com:443:$address" --verbose --head --max-time 15 https://example.com || true
+          done
+
   tests:
     name: Linux tests
     runs-on: ubuntu-22.04
