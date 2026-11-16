@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      tls_diagnostic_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,7 +20,7 @@ env:
   CARGO_INCREMENTAL: 1
 
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
+  group: tests-${{ github.workflow }}-${{ github.ref }}-${{ inputs.tls_diagnostic_only || false }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -44,14 +48,18 @@ jobs:
           done
 
           address=$(dscacheutil -q host -a name example.com | awk '/ip_address: / { print $2; exit }')
-          for backend in default openssl; do
-            echo "Sandboxed curl TLS backend: $backend"
-            CURL_SSL_BACKEND="$backend" CURL_CA_BUNDLE=/etc/ssl/cert.pem \
-              sandbox-exec -p '(version 1)(allow default)(deny mach-lookup)' \
-              /usr/bin/curl --resolve "example.com:443:$address" --verbose --head --max-time 15 https://example.com || true
+          security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain > "$RUNNER_TEMP/system-roots.pem"
+          for bundle in /etc/ssl/cert.pem /opt/homebrew/etc/ca-certificates/cert.pem "$RUNNER_TEMP/system-roots.pem"; do
+            for backend in default openssl; do
+              echo "Sandboxed curl TLS backend: $backend; bundle: $bundle"
+              CURL_SSL_BACKEND="$backend" CURL_CA_BUNDLE="$bundle" \
+                sandbox-exec -p '(version 1)(allow default)(deny mach-lookup)' \
+                /usr/bin/curl --resolve "example.com:443:$address" --verbose --head --max-time 15 https://example.com || true
+            done
           done
 
   tests:
+    if: ${{ !inputs.tls_diagnostic_only }}
     name: Linux tests
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -160,6 +168,7 @@ jobs:
         run: cargo test --locked --lib engines::download -- --ignored
 
   platform-tests:
+    if: ${{ !inputs.tls_diagnostic_only }}
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
