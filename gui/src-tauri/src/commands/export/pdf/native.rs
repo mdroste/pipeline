@@ -142,7 +142,7 @@ fn run(input: PathBuf, output: PathBuf) -> Result<(), String> {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let window = WebviewWindowBuilder::new(app, "pdf-renderer", WebviewUrl::External(url))
                 .title("PDF export")
-                .inner_size((WIDTH - 2. * SIDE) * 96. / 72., 1056.)
+                .inner_size((WIDTH - 2. * SIDE) * 96. / 72., HEIGHT * 96. / 72.)
                 .visible(false)
                 .focused(false)
                 .incognito(true)
