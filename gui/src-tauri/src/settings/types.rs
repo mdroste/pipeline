@@ -245,7 +245,7 @@ pub struct Settings {
     #[serde(default)]
     pub verbose_logging: bool,
 
-    /// Timeout in seconds for each LLM subprocess call. Default = 1200 (20 min).
+    /// Timeout in seconds for each LLM subprocess call. Default = 2700 (45 min).
     #[serde(default = "default_timeout")]
     pub step_timeout_secs: u64,
 
@@ -417,7 +417,7 @@ fn default_workers() -> u32 {
 }
 
 fn default_timeout() -> u64 {
-    1200
+    2700
 }
 
 fn default_max_retries() -> u32 {
@@ -494,7 +494,7 @@ impl Default for Settings {
             pdf_extraction_timeout_secs: default_pdf_extraction_timeout_secs(),
             reuse_pdf_extraction_cache: default_reuse_pdf_extraction_cache(),
             verbose_logging: false,
-            step_timeout_secs: 1200,
+            step_timeout_secs: default_timeout(),
             max_retries: 1,
             max_concurrent_reviews: default_max_concurrent_reviews(),
             review_max_cost_usd: 0.0,

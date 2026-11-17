@@ -13,7 +13,10 @@ impl OutputBudget {
     }
 
     pub(super) fn reserve(&self, output: &StepOutput) -> Result<(), String> {
-        let bytes = output.raw_text.len();
+        let bytes = output
+            .raw_text
+            .len()
+            .saturating_add(output.rendered_markdown.as_ref().map_or(0, String::len));
         let result = self
             .0
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {

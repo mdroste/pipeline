@@ -201,9 +201,9 @@ function HelpContent({
           title="Connect an AI provider"
         >
           <p>
-            Add at least one connection in <Label>Settings → Connections</Label>
-            . The dot beside Help turns green when Pipeline has what it needs,
-            and the sidebar shows <Label>Setup needed</Label> when it does not.
+            Add at least one connection in <Label>Settings → Models</Label>. The
+            dot beside Help turns green when Pipeline has what it needs, and the
+            sidebar shows <Label>Setup needed</Label> when it does not.
           </p>
           <TermList
             items={[
@@ -575,7 +575,7 @@ function HelpContent({
           </li>
           <li>
             If a provider fails, choose <Label>Check connection</Label> on its
-            card in <Label>Settings → Connections</Label>.
+            card in <Label>Settings → Models</Label>.
           </li>
           <li>
             The <Label>Console</Label> below a review shows each step's log,

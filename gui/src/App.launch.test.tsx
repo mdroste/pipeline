@@ -255,7 +255,7 @@ describe("App launch", () => {
               path: "",
               hint: ready
                 ? ""
-                : "Sign in with a ChatGPT account in Settings → Connections → OpenAI.",
+                : "Sign in with a ChatGPT account in Settings → Models → OpenAI.",
               authenticated: ready,
             },
           ],

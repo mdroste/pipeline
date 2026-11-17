@@ -284,6 +284,8 @@ export default function SettingsPage({
         <div data-testid="settings-page" className="settings-shell">
           <SettingsNavigation
             section={section}
+            query={query}
+            onQueryChange={setQuery}
             selectSection={(next) => void selectSection(next)}
             showBack={showBack}
             handleClose={handleClose}
@@ -306,22 +308,6 @@ export default function SettingsPage({
               if (card?.id) lastFocusedCard.current = card.id;
             }}
           >
-            <div className="settings-search-bar">
-              <label className="sr-only" htmlFor="settings-search">
-                Search settings
-              </label>
-              <input
-                id="settings-search"
-                className="ui-input"
-                type="search"
-                value={query}
-                placeholder="Search settings…"
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setQuery("");
-                }}
-              />
-            </div>
             {query.trim() ? (
               <div className="settings-page-body settings-search-results">
                 <h1>Search results</h1>
@@ -357,6 +343,7 @@ export default function SettingsPage({
             <div hidden={Boolean(query.trim())}>
               <div className="settings-page-heading">
                 <PageHeader
+                  variant="compact"
                   title={pageInfo.title}
                   description={pageInfo.description}
                 />
@@ -453,6 +440,15 @@ export default function SettingsPage({
                       />
                       <ReviewSaveFeedback />
                     </SettingsCard>
+                    <SettingsCard id="workflow-models">
+                      <ModelDefaultsSection
+                        settings={settings}
+                        setSettings={setSettings}
+                        catalogs={catalogs}
+                        dependencies={dependencies}
+                      />
+                      <ReviewSaveFeedback />
+                    </SettingsCard>
                     <ProvidersSection
                       settings={settings}
                       setSettings={setSettings}
@@ -495,16 +491,6 @@ export default function SettingsPage({
                 )}
                 {section === "workflow" && (
                   <>
-                    <SettingsCard id="workflow-models">
-                      <ModelDefaultsSection
-                        settings={settings}
-                        setSettings={setSettings}
-                        catalogs={catalogs}
-                        onChangeDefault={() => void selectSection("providers")}
-                        dependencies={dependencies}
-                      />
-                      <ReviewSaveFeedback />
-                    </SettingsCard>
                     <SettingsCard id="workflow-execution">
                       <WorkflowSection
                         settings={settings}

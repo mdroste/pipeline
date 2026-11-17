@@ -42,7 +42,7 @@ describe("SettingsPage navigation", () => {
     openUrl.mockResolvedValue(undefined);
   });
 
-  it("consolidates workflow settings while keeping connections on Providers", async () => {
+  it("keeps all model defaults in Models and execution controls in Reviews", async () => {
     mockLoad(makeSettings());
     render(
       <SettingsPage
@@ -51,7 +51,16 @@ describe("SettingsPage navigation", () => {
         onThemeChange={() => {}}
       />,
     );
-    expect(await screen.findByText("Model defaults")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Model calls at once")).toBeVisible();
+    expect(screen.queryByText("Review models")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Default provider")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Enable usage-limit fallback"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Models" }));
+    expect(
+      screen.getByRole("heading", { name: "Review models" }),
+    ).toBeVisible();
     // Stages with their own model sit under Stage exceptions, closed by default.
     await userEvent.click(screen.getByText("Stage exceptions"));
     for (const label of [
@@ -61,17 +70,11 @@ describe("SettingsPage navigation", () => {
       "Sequential steps",
     ])
       await userEvent.click(screen.getAllByText(label)[0]);
+    expect(screen.getByLabelText("Default provider")).toBeVisible();
+    expect(screen.getByLabelText("Local API Key")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Change default model" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("combobox", { name: "Default provider" }),
+      screen.queryByLabelText("Model calls at once"),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Provider configuration"),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Model calls at once")).toBeVisible();
     expect(
       screen.getByText(
         "Steps that run at the same time use the default review model. Add another model to run a second opinion of each step.",
@@ -106,17 +109,17 @@ describe("SettingsPage navigation", () => {
     });
     expect(within(navigation).getAllByRole("button")).toHaveLength(7);
     expect(
-      within(navigation).getByRole("button", { name: "Connections" }),
+      within(navigation).getByRole("button", { name: "Models" }),
     ).toBeVisible();
     expect(
-      within(navigation).getByRole("button", { name: "Reviews" }),
+      within(navigation).getByRole("button", { name: "Models" }),
     ).toHaveAttribute("aria-current", "page");
     expect(
       screen.queryByLabelText("Maximum saved reports"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /^Selected model/ }),
-    ).toBeVisible();
+      screen.queryByRole("radio", { name: /^Selected model/ }),
+    ).not.toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
@@ -134,7 +137,11 @@ describe("SettingsPage navigation", () => {
       await screen.findByLabelText("Step time limit"),
       "1800",
     );
-    await user.click(screen.getByRole("button", { name: "Connections" }));
+    await user.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
+    );
     await user.type(screen.getByLabelText("Local API Key"), "test-token");
     await user.click(
       screen.getByRole("button", { name: "Save Local API Key" }),
@@ -152,17 +159,24 @@ describe("SettingsPage navigation", () => {
     );
   });
 
-  it("opens directly to a requested settings section", async () => {
+  it.each([
+    ["llm", undefined],
+    ["workflow", "workflow-models"],
+    ["workflow", "usage-limit-fallback"],
+  ] as const)("opens model settings from %s / %s", async (section, target) => {
     mockLoad(makeSettings());
     const view = render(
       <SettingsPage
         onClose={() => {}}
         theme="light"
         onThemeChange={() => {}}
-        initialSection="llm"
+        initialSection={section}
+        targetId={target}
       />,
     );
-    expect(await screen.findByText("Model defaults")).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Review models" }),
+    ).toBeVisible();
 
     view.rerender(
       <SettingsPage

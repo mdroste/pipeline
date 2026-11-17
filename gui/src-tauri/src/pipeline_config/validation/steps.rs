@@ -317,6 +317,15 @@ pub(in crate::pipeline_config) fn validate_profile_steps(
                 ));
             }
         }
+        if step
+            .output_schema
+            .as_ref()
+            .and_then(crate::pipeline::editorial::stage)
+            .is_some()
+            && (step.agents.len() > 1 || step.for_each.is_some())
+        {
+            return Err(format!("Editorial step '{}' uses one editor per stage; fan-out and merged agents would lose edit identities", step.id));
+        }
         if let Some(schema) = &step.output_schema {
             if schema.get("x-pipeline-contract").is_some()
                 || schema

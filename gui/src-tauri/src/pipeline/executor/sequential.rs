@@ -151,7 +151,17 @@ pub(super) async fn run_sequential_step(
     .await??;
     let effort = step.effort_for(settings, &provider);
     let model_policy = resolution.selection.label();
+    let editorial_inputs = output_schema
+        .as_ref()
+        .and_then(crate::pipeline::editorial::stage)
+        .map(|_| crate::pipeline::editorial::Inputs {
+            paper_path: artifacts.paper_text_path.clone(),
+            orientation_path: artifacts.orientation_path.clone(),
+            prior_outputs: artifacts.prior_outputs.clone(),
+            view_dir: artifacts._view.path().to_path_buf(),
+        });
     let call = execute_step_call(StepCallRequest {
+        editorial_inputs,
         author_note,
         app,
         pass_key: &step.id,

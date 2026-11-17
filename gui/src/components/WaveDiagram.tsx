@@ -105,7 +105,7 @@ export default function WaveDiagram({
 
       {model.stepCount === 0 && (
         <p className="ml-9 mt-2 rounded-ui-md border border-dashed border-line-strong px-3 py-2.5 text-ui-meta text-ink-muted">
-          No enabled review steps yet. Turn one on under Steps.
+          No enabled review steps yet.
         </p>
       )}
       <p className="mt-4 text-center text-ui-meta text-ink-muted">{hint}</p>
@@ -206,6 +206,7 @@ function StageBody({
         type="button"
         aria-label={node.label}
         title={node.caption}
+        data-review-stage={node.id}
         onClick={() => onSelect(node.id)}
         className={`flex w-full items-center gap-2 rounded-ui-md px-3 py-[11px] text-left transition-colors ${
           node.id === selectedId ? "bg-accent-soft" : "hover:bg-sunken"
@@ -293,6 +294,7 @@ function PrepareTile({
       type="button"
       aria-label={node.label}
       title={node.caption}
+      data-review-stage={node.id}
       onClick={() => onSelect(node.id)}
       className={`flex min-w-0 items-start gap-2 rounded-ui-md border px-3 py-2 text-left transition-colors ${
         selected
@@ -339,6 +341,7 @@ function StepCard({
       }
       aria-describedby={node.caption ? captionId : undefined}
       title={node.condition ?? node.label}
+      data-review-stage={node.id}
       onClick={() => onSelect(node.id)}
       className={`flex w-full items-center gap-3 rounded-ui-md border bg-surface dark:bg-sunken dark:shadow-none px-3 py-2.5 text-left shadow-ui-1 transition-[border-color,box-shadow] duration-150 ${tone} ${FOCUS}`}
     >

@@ -234,6 +234,16 @@ schema checks. A rejected response stays as evidence and never becomes context
 for a later step. Each step reads only its selected roots and writes only to
 its own folder.
 
+Declaude's editorial contract is owned by `pipeline/editorial/`. Marked step
+schemas require exact readable-text anchors, source fingerprints, candidate
+lineage, and explicit verification dispositions. The supervisor retries
+rejected records before accepting them as downstream context. Verification
+accepts or rejects consolidated replacements without rewriting them. The host
+checks overlaps, required companions, and unchanged deletion witnesses, then
+renders accepted text literally. Raw records remain in `StepOutput.raw_text`;
+its optional `rendered_markdown` field carries the host-authored display and is
+included in checkpoint receipts. Semantic fidelity remains a model judgment.
+
 ## How a conversation runs
 
 **Codex app server.** Conversations and reviews each start their own

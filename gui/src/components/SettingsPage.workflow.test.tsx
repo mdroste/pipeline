@@ -43,13 +43,14 @@ describe("SettingsPage workflow", () => {
     mockLoad(makeSettings());
     render(
       <SettingsPage
+        initialSection="providers"
         onClose={() => {}}
         theme="light"
         onThemeChange={() => {}}
       />,
     );
 
-    await screen.findByText("Model defaults");
+    await screen.findByRole("heading", { name: "Review models" });
     await user.click(screen.getAllByText("Combine results")[0]);
     const mergeProviders = screen.getByRole("group", {
       name: "Combine results providers",
@@ -82,13 +83,14 @@ describe("SettingsPage workflow", () => {
     mockLoad(settings);
     render(
       <SettingsPage
+        initialSection="providers"
         onClose={() => {}}
         theme="light"
         onThemeChange={() => {}}
       />,
     );
 
-    await screen.findByText("Model defaults");
+    await screen.findByRole("heading", { name: "Review models" });
     await user.click(screen.getAllByText("Sequential steps")[0]);
     await user.click(
       within(
@@ -113,6 +115,7 @@ describe("SettingsPage workflow", () => {
     mockLoad({ ...makeSettings(), openai_api_key: "", google_api_key: "key" });
     render(
       <SettingsPage
+        initialSection="providers"
         onClose={() => {}}
         theme="light"
         onThemeChange={() => {}}
@@ -152,6 +155,7 @@ describe("SettingsPage workflow", () => {
     mockLoad(makeSettings());
     render(
       <SettingsPage
+        initialSection="providers"
         onClose={() => {}}
         theme="light"
         onThemeChange={() => {}}
@@ -187,7 +191,7 @@ describe("SettingsPage workflow", () => {
     ).toBeVisible();
   });
 
-  it("keeps execution controls alongside model defaults", async () => {
+  it("keeps execution controls in Reviews and saves a two-hour step limit", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
     render(
@@ -198,14 +202,20 @@ describe("SettingsPage workflow", () => {
       />,
     );
 
-    await screen.findByText("Model defaults");
-    expect(screen.getByLabelText("Model calls at once")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Reviews" }));
+    await screen.findByLabelText("Model calls at once");
 
     const maxConcurrentAgents = screen.getByLabelText("Model calls at once");
     expect(maxConcurrentAgents).toHaveValue("16");
     expect(maxConcurrentAgents).toHaveAttribute("max", "20");
-    expect(screen.getByLabelText("Step time limit")).toHaveValue("1200");
+    const timeLimit = screen.getByLabelText("Step time limit");
+    expect(timeLimit).toHaveValue("2700");
+    expect(timeLimit).toHaveDisplayValue("45 minutes (default)");
+    await user.selectOptions(timeLimit, "7200");
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: { ...makeSettings(), step_timeout_secs: 7200 },
+      }),
+    );
     expect(screen.getByLabelText("Step retries")).toHaveValue("1");
   });
 

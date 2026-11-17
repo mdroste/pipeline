@@ -1,135 +1,179 @@
-/* The designer outline uses whitespace for phases, a hairline for the current
-   tab, and an inset mark for the selected row. Color is reserved for feedback. */
-.designer-nav {
-  background: var(--ui-surface);
+/* The overview and stage editor share a header. Only the schema browser uses a sidebar. */
+.designer-layout,
+.designer-canvas {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
   color: var(--ui-text);
+  background: var(--ui-surface);
 }
-.designer-header {
+.designer-page-head {
+  flex: none;
+  border-bottom: 1px solid var(--ui-border);
+  max-height: 45%;
+  overflow: auto;
+}
+.designer-title-row,
+.designer-toolbar,
+.designer-stage-nav,
+.designer-save,
+.designer-secondary,
+.designer-outline-title,
+.designer-picker {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  padding: 16px 16px 12px;
+  gap: var(--ui-space-2);
 }
-.designer-mode {
-  display: inline-flex;
-  padding: 2px;
-  margin-left: auto;
-  background: var(--ui-sunken);
-  border-radius: var(--ui-radius-sm);
-}
-.designer-tabs {
-  display: flex;
-  gap: 18px;
-}
-.designer-tabs button {
-  padding: 5px 0 8px;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  font-size: var(--ui-text-label);
-  font-weight: 500;
-  color: var(--ui-muted);
-}
-.designer-tabs button:hover,
-.designer-tabs button[aria-selected="true"] {
-  color: var(--ui-text);
-}
-.designer-tabs button[aria-selected="true"] {
-  border-color: currentColor;
-}
-.designer-add {
-  margin-left: auto;
-  padding: 4px 6px;
-  border-radius: var(--ui-radius-sm);
-  font-size: var(--ui-text-meta);
-  font-weight: 500;
-  color: var(--ui-text);
-}
-.designer-add:hover {
-  background: var(--ui-sunken);
-}
-.designer-phase {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  padding: 12px 16px 5px;
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-  font-weight: 600;
-}
-.designer-phase::after {
-  content: "";
-  flex: 1;
-  border-top: 1px solid var(--ui-border);
-}
-.designer-row {
-  margin: 1px 8px;
-  padding-inline: 10px;
-  border-radius: var(--ui-radius-sm);
-  text-align: left;
-}
-.designer-row:hover,
-.designer-row[data-selected] {
-  background: var(--ui-sunken);
-}
-.designer-row[data-selected] {
-  box-shadow: inset 2px 0 var(--ui-page-accent);
-}
-.designer-step,
-.designer-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.designer-step > button:first-child {
-  border-radius: var(--ui-radius-sm);
-  overflow-wrap: anywhere;
-}
-.designer-detail {
-  display: block;
-  margin-top: 2px;
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-  font-weight: 400;
-  line-height: 1.4;
-}
-.designer-setup,
-.designer-item {
-  width: calc(100% - 16px);
-  padding-block: 8px;
-}
-.designer-item {
+.designer-title-row,
+.designer-toolbar {
+  padding-inline: var(--ui-page-gutter);
   justify-content: space-between;
 }
-.designer-switch {
-  flex: none;
-  display: inline-grid;
-  align-items: center;
-  width: 26px;
-  height: 28px;
+.designer-title-row {
+  padding-block: var(--ui-space-4);
 }
-.designer-switch span {
+/* Give the title the remaining row width. Measure its trigger at the actual
+   title font size, with the chevron outside the text. Long names can wrap. */
+.designer-review-name {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+:root .designer-title-row .designer-profile {
+  width: max-content;
+  max-width: 100%;
+  padding: 0 var(--ui-space-1);
+  margin-left: calc(-1 * var(--ui-space-1));
+  font-size: var(--ui-text-page);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.35;
+  border-color: transparent;
+}
+.designer-profile > span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  overflow: visible;
+}
+.designer-stage-nav {
+  min-width: 0;
+  max-width: 100%;
+}
+.designer-stage-picker {
+  max-width: min(24rem, 100%);
+}
+.designer-toolbar {
+  row-gap: var(--ui-space-2);
+  padding-bottom: var(--ui-space-1);
+}
+.designer-body {
   display: flex;
-  align-items: center;
-  height: 15px;
-  padding: 2px;
-  border-radius: 99px;
-  background: var(--ui-border-strong);
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
 }
-.designer-switch span::after {
-  content: "";
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
+.designer-body[data-compact] {
+  flex-direction: column;
+}
+.designer-picker {
+  padding: var(--ui-space-2) var(--ui-page-gutter);
+  border-bottom: 1px solid var(--ui-border);
+}
+.designer-picker .ui-select-trigger {
+  max-width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+.designer-body .designer-nav {
   background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-1);
+  border-color: var(--ui-border);
+  color: var(--ui-text);
 }
-.designer-switch[aria-checked="true"] span {
-  justify-content: flex-end;
-  background: var(--ui-inverse);
+.designer-outline-title {
+  justify-content: space-between;
+  padding: var(--ui-space-3) var(--ui-space-4);
+  font-size: var(--ui-text-body);
+  font-weight: 600;
 }
-.designer-nav :is(button, select):focus-visible {
-  outline: 2px solid var(--ui-page-accent);
-  outline-offset: 1px;
+.designer-section {
+  padding: 0 var(--ui-space-2) var(--ui-space-3);
+}
+.designer-section h3 {
+  position: sticky;
+  top: 0;
+  padding: var(--ui-space-1) var(--ui-space-2);
+  color: var(--ui-muted);
+  background: var(--ui-surface);
+  font-size: var(--ui-text-meta);
+  font-weight: 550;
+}
+.designer-row {
+  display: block;
+  width: 100%;
+  padding: var(--ui-space-2);
+  border-radius: var(--ui-radius-sm);
+  overflow-wrap: anywhere;
+  text-align: left;
+  font-size: var(--ui-text-label);
+}
+.designer-row span {
+  display: block;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.designer-row:hover,
+.designer-row[aria-pressed="true"] {
+  background: var(--ui-sunken);
+}
+.designer-row[aria-pressed="true"] {
+  box-shadow: inset 2px 0 var(--ui-inverse);
+  font-weight: 550;
+}
+.designer-step-title.ui-input {
+  width: 100%;
+  color: var(--ui-text);
+  font-size: var(--ui-text-display);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  background: transparent;
+  border-color: transparent;
+  padding-inline: 0;
+}
+.designer-step-title.ui-input:hover,
+.designer-step-title.ui-input:focus {
+  border-color: var(--ui-border-strong);
+}
+.designer-canvas > div {
+  width: 100%;
+  max-width: 70rem;
+  margin-inline: auto;
+}
+.designer-prompt {
+  height: calc(100% - 5.5rem);
+  max-width: 88ch;
+  min-height: 14rem;
+}
+.designer-prompt textarea {
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  border-color: var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  font-family: inherit;
+  font-size: var(--ui-text-body);
+  line-height: 1.65;
+}
+
+.designer-advanced {
+  max-width: 88ch;
+  margin-top: var(--ui-space-4);
+  border-top: 1px solid var(--ui-border);
+  padding-top: var(--ui-space-3);
+  font-size: var(--ui-text-label);
+}
+.designer-advanced summary {
+  cursor: pointer;
+  font-weight: 550;
 }

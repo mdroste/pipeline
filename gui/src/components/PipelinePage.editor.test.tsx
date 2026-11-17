@@ -22,7 +22,6 @@ describe("PipelinePage editor", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
 
-    // Step labels appear in both the wave diagram and the step list.
     expect((await screen.findAllByText("Technical")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Consolidate Issues").length).toBeGreaterThan(0);
     expect(invoke).toHaveBeenCalledWith("get_pipeline_config");
@@ -40,30 +39,18 @@ describe("PipelinePage editor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("uses opaque dark surfaces and a header per section in the navigator", async () => {
+  it("opens on the overview with review actions in the page header", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await screen.findByRole("combobox", { name: "Active review" });
 
-    for (const [label, surface] of [
-      ["Review setup", "dark:bg-gray-800"],
-      ["Parallel", "bg-surface"],
-      ["Sequential", "bg-surface"],
-    ]) {
-      const header = screen.getByText(label).parentElement!;
-      expect(header).toHaveClass("sticky", surface);
-      expect(header.nextElementSibling).not.toBeNull();
-      // Each section releases its own header.
-      expect(header.parentElement?.children[0]).toBe(header);
-    }
-    const headers = ["Review setup", "Parallel", "Sequential"].map(
-      (label) => screen.getByText(label).parentElement!.parentElement,
-    );
-    expect(new Set(headers).size).toBe(3);
-
-    const reset = screen.getByRole("button", { name: "Reset" });
-    expect(reset).toHaveClass("dark:hover:bg-gray-800");
+    expect(
+      screen.getByRole("region", { name: "Review overview" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("navigation", { name: "Review outline" }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: /^Export/ }));
     expect(
       screen.getByRole("menu", { name: "Export review design" }),
@@ -77,7 +64,10 @@ describe("PipelinePage editor", () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
-    await user.click(await screen.findByRole("button", { name: "New review" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Review actions" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "New review" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("New review name");
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
     await user.keyboard("{Escape}");
@@ -416,8 +406,10 @@ describe("PipelinePage editor", () => {
     await screen.findAllByText("Technical");
 
     await user.click(
-      screen.getByRole("button", { name: "Move Consolidate Issues down" }),
+      screen.getByRole("button", { name: "Consolidate Issues" }),
     );
+    await user.click(screen.getByRole("button", { name: "Step actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Move down" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -430,30 +422,15 @@ describe("PipelinePage editor", () => {
     });
   });
 
-  it("shows 24px reorder controls only for sequential steps and no drag handles", async () => {
+  it("opens step actions in the editor and limits reordering to sequential steps", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
-    const { container } = render(<PipelinePage onClose={() => {}} />);
-    await screen.findAllByText("Technical");
-
-    expect(
-      screen.getByRole("combobox", { name: "Active review" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Move Technical up" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Move Technical down" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Drag to reorder")).not.toBeInTheDocument();
-    expect(container.querySelector('[draggable="true"]')).toBeNull();
-
-    const moveDown = screen.getByRole("button", {
-      name: "Move Consolidate Issues down",
-    });
-    expect(moveDown).toHaveClass("h-6", "w-6");
-
-    await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
+    render(<PipelinePage onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "Technical" }));
+    await user.click(screen.getByRole("button", { name: "Step actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Move up" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "Remove step" })).toBeVisible();
+    await user.keyboard("{Escape}");
     expect(
       screen.getByRole("textbox", { name: "Step label" }),
     ).toBeInTheDocument();
@@ -461,8 +438,9 @@ describe("PipelinePage editor", () => {
       screen.getByRole("textbox", { name: "Prompt for Technical" }),
     ).toBeInTheDocument();
 
+    await user.click(screen.getByRole("combobox", { name: "Choose a stage" }));
     await user.click(
-      screen.getByRole("button", { name: "Input & extraction" }),
+      screen.getByRole("option", { name: /Input & extraction/ }),
     );
     expect(
       screen.getByRole("combobox", { name: "Review input mode" }),
@@ -479,6 +457,7 @@ describe("PipelinePage editor", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
+    await user.click(screen.getByRole("button", { name: "Technical" }));
     const enabled = screen.getByRole("switch", { name: "Enable Technical" });
     await user.click(enabled);
     expect(confirmDialog.mock.calls[0][0]).toBe(
@@ -559,7 +538,7 @@ describe("PipelinePage editor", () => {
     await screen.findAllByText("Technical");
 
     const orientation = screen.getByRole("button", {
-      name: "Document bundle preparation",
+      name: "Identify content",
     });
     expect(orientation).not.toHaveTextContent("Required");
     await user.click(orientation);

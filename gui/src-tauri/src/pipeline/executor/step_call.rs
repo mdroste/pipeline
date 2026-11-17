@@ -75,6 +75,7 @@ pub(super) async fn ingest_report_file(
 
 pub(super) struct StepCallRequest<'a> {
     pub(super) author_note: Option<&'a str>,
+    pub(super) editorial_inputs: Option<crate::pipeline::editorial::Inputs>,
     pub(super) app: &'a crate::emit::EventBus,
     pub(super) pass_key: &'a str,
     pub(super) log_label: &'a str,
@@ -106,6 +107,7 @@ pub(super) struct StepCallRequest<'a> {
 #[derive(Default)]
 pub(super) struct StepCallResult {
     pub(super) text: String,
+    pub(super) rendered_markdown: Option<String>,
     pub(super) duration_secs: u64,
     pub(super) usage: crate::pipeline::logging::CallUsage,
     pub(super) attempt_count: u32,
@@ -206,6 +208,29 @@ async fn run_step_call_attempts(
     request: StepCallRequest<'_>,
     spent: &mut StepCallResult,
 ) -> Result<String, String> {
+    let mut request = request;
+    let editorial = if let Some(stage) = request
+        .output_schema
+        .and_then(crate::pipeline::editorial::stage)
+    {
+        let inputs = request
+            .editorial_inputs
+            .take()
+            .ok_or("Editorial contract requires captured source inputs")?;
+        Some(crate::pipeline::editorial::Context::load(stage, request.pass_key, inputs).await?)
+    } else {
+        None
+    };
+    let mut editorial_prompt = request.prompt.to_string();
+    if let Some(context) = &editorial {
+        crate::safety::push_str_limited(
+            &mut editorial_prompt,
+            &context.instruction(),
+            crate::safety::MAX_EXPANDED_PROMPT_BYTES,
+            "Editorial prompt",
+        )?;
+    }
+    request.prompt = &editorial_prompt;
     let timeout = request.settings.step_timeout_secs.max(60);
     let max_retries = request.settings.max_retries;
     let text_artifact_schema = request
@@ -488,22 +513,27 @@ async fn run_step_call_attempts(
             }
         };
         let text = if let Some(schema) = request.output_schema {
-            let checked =
-                crate::pipeline::structured::canonicalize(schema, &text).and_then(|canonical| {
-                    match request.preserved_finding_ids.as_deref() {
-                        Some(expected)
-                            if schema
-                                .get(crate::pipeline::structured::VALIDATION_LEDGER_KEY)
-                                .is_some() =>
-                        {
-                            check_finding_lineage(expected, &canonical)?;
-                            check_validation_dispositions(expected, &canonical)
-                        }
-                        Some(expected) => {
-                            check_finding_lineage(expected, &canonical).map(|()| canonical)
-                        }
-                        None => Ok(canonical),
+            let checked = crate::pipeline::structured::canonicalize(schema, &text)
+                .and_then(|canonical| match request.preserved_finding_ids.as_deref() {
+                    Some(expected)
+                        if schema
+                            .get(crate::pipeline::structured::VALIDATION_LEDGER_KEY)
+                            .is_some() =>
+                    {
+                        check_finding_lineage(expected, &canonical)?;
+                        check_validation_dispositions(expected, &canonical)
                     }
+                    Some(expected) => {
+                        check_finding_lineage(expected, &canonical).map(|()| canonical)
+                    }
+                    None => Ok(canonical),
+                })
+                .and_then(|canonical| {
+                    spent.rendered_markdown = match &editorial {
+                        Some(context) => context.check(&canonical)?,
+                        None => None,
+                    };
+                    Ok(canonical)
                 });
             match checked {
                 Ok(canonical) => canonical,

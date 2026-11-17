@@ -363,6 +363,7 @@ pub(in crate::pipeline_config) fn migrate_builtin_catalog(profiles: &Path) -> Re
         })?;
     }
 
+    super::declaude::migrate(profiles)?;
     Ok(())
 }
 
@@ -389,6 +390,7 @@ pub(in crate::pipeline_config) const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".structured-grant-review-contract-v1",
     ".structured-grant-review-contract-v2",
     RENAMED_BUILTIN_IDS_MARKER,
+    super::declaude::MARKER,
 ];
 
 pub(in crate::pipeline_config) fn record_fresh_install_markers(

@@ -328,6 +328,15 @@ pub(super) async fn run_parallel_wave(
                     continue;
                 }
             };
+            let editorial_inputs = output_schema
+                .as_ref()
+                .and_then(crate::pipeline::editorial::stage)
+                .map(|_| crate::pipeline::editorial::Inputs {
+                    paper_path: resolved.paper_text_path.clone(),
+                    orientation_path: resolved.orientation_path.clone(),
+                    prior_outputs: resolved.prior_outputs.clone(),
+                    view_dir: resolved._view.path().to_path_buf(),
+                });
             let run_artifact_dir = write_dir.map(str::to_string);
             let report_rel = "report.md".to_string();
             let task_read_dirs = resolved.read_dirs.clone();
@@ -429,6 +438,7 @@ pub(super) async fn run_parallel_wave(
                 .map_err(failed)?;
                 let model_policy = resolution.selection.label();
                 let call = execute_metered_step_call(StepCallRequest {
+                    editorial_inputs,
                     author_note: author_note.as_deref(),
                     app: &app_handle,
                     pass_key: &step_key_emit,

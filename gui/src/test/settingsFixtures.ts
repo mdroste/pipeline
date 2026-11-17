@@ -32,7 +32,7 @@ export function makeSettings(): Settings {
     pdf_extraction_timeout_secs: 1800,
     reuse_pdf_extraction_cache: true,
     verbose_logging: false,
-    step_timeout_secs: 1200,
+    step_timeout_secs: 2700,
     max_retries: 1,
     max_concurrent_reviews: 2,
     auto_revision_reconciliation: false,

@@ -9,7 +9,7 @@ import { type StarterTemplate } from "./guide";
 
 export const GET_STARTED_STEPS = [
   "Your task",
-  "Connections",
+  "Models",
   "Optional tools",
 ] as const;
 
@@ -190,7 +190,7 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
               data-autofocus
               onClick={() => onStepChange(step + 1)}
             >
-              {step === 0 ? "Check connections" : "See optional tools"}
+              {step === 0 ? "Check models" : "See optional tools"}
             </Button>
           ) : (
             <Button onClick={onClose}>Close guide</Button>

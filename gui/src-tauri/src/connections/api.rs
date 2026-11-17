@@ -134,7 +134,7 @@ impl ApiProvider {
             Self::Local => &settings.local_api_key,
         };
         if self != Self::Local && key.trim().is_empty() {
-            return Err("Add an API key in Settings → Connections.".into());
+            return Err("Add an API key in Settings → Models.".into());
         }
         Ok(key)
     }

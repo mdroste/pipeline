@@ -298,7 +298,7 @@ export default function AgentDefaultsControl({
               </div>
               {notConnected(provider) && (
                 <p className="col-span-full text-xs text-amber-700 dark:text-amber-300">
-                  Not connected. Connect it in Settings → Connections.
+                  Not connected. Connect it in Settings → Models.
                 </p>
               )}
             </div>

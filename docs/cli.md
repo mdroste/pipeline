@@ -45,7 +45,7 @@ your `PATH`. During development you can also run
 
 ## Run a review
 
-First set up a connection in the desktop app under **Settings → Connections**.
+First set up a connection in the desktop app under **Settings → Models**.
 Then check that the input, connection, and PDF parser are ready:
 
 ```bash
@@ -175,8 +175,8 @@ pipeline-cli run --input paper.pdf --model claude:claude-opus-5-5:max
 `PROVIDER` is `claude`, `chatgpt`, `gemini`, or `local`. Leave `MODEL` empty to
 let the provider choose. Every call that follows your default model uses the
 review model: orientation, parallel and sequential steps, combining results,
-LLM PDF extraction, and revision comparison. Stages that **Settings → Reviews → Model
-defaults** assigns to another model, and steps the workflow assigns to a
+LLM PDF extraction, and revision comparison. Stages that **Settings → Models → Review
+models** assigns to another model, and steps the workflow assigns to a
 model, keep their own models. Add `--model-everywhere` to use the review model
 for those too. The usage-limit backup is unchanged.
 

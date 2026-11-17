@@ -3,6 +3,27 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.5.3 — 2026-11-17
+
+- Give Declaude descriptive editing-stage names, preserve exact quoted text,
+  check overlapping and dependent edits, and build reports from individually
+  accepted replacements. Strengthen its checks for meaning and qualifications.
+
+- Open the Review designer on the execution overview. Choose any stage, including
+  disabled reviewers, in the stage picker. The header starts with the full active review name.
+
+- Tighten Settings spacing, group related controls, and align headings and fields.
+  Use text-only Settings navigation with search at the top of its sidebar.
+
+- Fold the main sidebar while Settings is open and restore its previous state
+  when you leave.
+- Set the default review step time limit to 45 minutes and offer a 120-minute option.
+- Keep default models, review-stage models, and the backup provider together
+  under **Settings → Models**.
+
+- Rename **Connections** to **Models** in Settings and setup.
+- Match the settings search header to the page's gray background in light mode.
+
 ## 1.5.2 — 2026-11-16
 
 - Allow setup to complete when either ChatGPT or Claude is connected, and

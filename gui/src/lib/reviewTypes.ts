@@ -22,6 +22,8 @@ export interface StepOutput {
   raw_text: string;
   /** Whether raw_text is a schema-validated standalone JSON artifact. */
   structured_json?: boolean;
+  /** Host-rendered view of a validated structured editorial record. */
+  rendered_markdown?: string;
   /** Wall-clock seconds the step's LLM call took (0 for pre-1.1 reports). */
   duration_secs?: number;
   input_tokens?: number;

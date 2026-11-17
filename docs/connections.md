@@ -1,7 +1,7 @@
-# Connections
+# Models
 
 Pipeline sends your prompts to an AI provider that you connect. Set up at
-least one connection under **Settings → Connections**.
+least one connection under **Settings → Models**.
 
 ## Choose a connection
 
@@ -56,7 +56,7 @@ Check the cited pages before relying on a review's claims.
 ## Connect ChatGPT
 
 1. Install version 0.165.0 or newer of the Codex command-line tool.
-2. Open **Settings → Connections → OpenAI**. Under **ChatGPT account**,
+2. Open **Settings → Models → OpenAI**. Under **ChatGPT account**,
    choose **Sign in to ChatGPT** and finish signing in in your browser.
 3. For reviews, choose **Subscription** under **Reviews** on the same card.
    For a conversation, choose **ChatGPT** in the conversation's model picker.
@@ -88,7 +88,7 @@ sign in again.
 If a ChatGPT review call is cut off, for example by a lost connection,
 Pipeline may not know whether ChatGPT finished it. It doesn't resend the call,
 and it won't start new ChatGPT reviews until you resolve it under **Settings →
-Connections → OpenAI → Reviews**:
+Models → OpenAI → Reviews**:
 
 - **Check saved result** looks up what ChatGPT recorded for that call, shows
   it, and saves a copy. The text isn't added to the interrupted review.
@@ -102,7 +102,7 @@ The interrupted call still counts against your plan.
    [Anthropic's instructions](https://code.claude.com/docs/en/setup).
 2. In a terminal, run `claude auth login` and sign in with your Claude
    subscription account.
-3. For reviews, open **Settings → Connections → Anthropic** and choose
+3. For reviews, open **Settings → Models → Anthropic** and choose
    **Subscription**.
 4. For a conversation, choose **Claude Code** in the conversation's model
    picker, then pick a model and a **Thinking** level.
@@ -324,7 +324,7 @@ Conversations**.
   estimates calls, tokens, and list-price cost. See
   [estimated use and limits](reviews.md#estimated-use-and-limits).
 - **Account limits during a review:** turn on **Continue after an account usage
-  limit** under **Settings → Reviews** to retry a call once with a backup
+  limit** under **Settings → Models** to retry a call once with a backup
   provider you choose. Otherwise the call fails when the limit is reached.
 
 ## If a connection fails

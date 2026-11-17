@@ -19,7 +19,18 @@ fn declaude_profile_is_portable_and_publishes_only_verified_markdown() {
     assert!(profile_summary(DECLAUDE_ID.into(), &profile).builtin);
     assert_eq!(profile.outputs.primary_step, REPORT);
     assert!(profile.outputs.findings_step.is_empty());
-    assert!(profile.steps.last().unwrap().output_schema.is_none());
+    assert_eq!(
+        crate::pipeline::editorial::stage(
+            profile
+                .steps
+                .last()
+                .unwrap()
+                .output_schema
+                .as_ref()
+                .unwrap()
+        ),
+        Some("verified-v1")
+    );
     assert!(profile
         .steps
         .iter()
@@ -91,30 +102,22 @@ fn declaude_orientation_enforces_one_to_three_unique_allowlisted_topics() {
 }
 
 #[test]
-fn declaude_edits_accept_clean_documents_and_require_exact_replacement_fields() {
+fn declaude_schema_accepts_clean_documents_and_requires_exact_edit_records() {
     let schema = schemas::edits_schema();
-    let mut value = json!({
-        "coverage": {"reviewed": ["Section 1"], "limitations": [], "incomplete": false},
-        "edits": [], "unresolved": []
-    });
+    let value = json!({"stage":"candidates-v1", "source_hash":"test",
+        "coverage":{"reviewed":["Section 1"],"limitations":[],"incomplete":false},
+        "edits":[], "unresolved":[]});
     structured::validate(&schema, &value).unwrap();
-    value["edits"] = json!([{
-        "location": "Section 1, second paragraph", "original": "Importantly, employment falls by 2%.",
-        "replacement": "Employment falls by 2%.", "operation": "replace", "local_form": "slide bullet",
-        "category": "signposting", "reason": "Removes prefatory emphasis.",
-        "preserved_content": "Employment falls by 2%.", "context_support": [],
-        "priority": "recommended", "confidence": "high", "referee_ids": [GENERAL_TOPIC]
-    }]);
-    structured::validate(&schema, &value).unwrap();
-    value["edits"][0]
-        .as_object_mut()
-        .unwrap()
-        .remove("replacement");
-    assert!(structured::validate(&schema, &value).is_err());
-    value["edits"] = json!([]);
-    value["coverage"]["incomplete"] = json!(true);
-    value["coverage"]["limitations"] = json!(["Selected second referee unavailable"]);
-    structured::validate(&schema, &value).unwrap();
+    let mut invalid = value.clone();
+    invalid.as_object_mut().unwrap().remove("source_hash");
+    assert!(structured::validate(&schema, &invalid).is_err());
+    for schema in [
+        schemas::edits_schema(),
+        schemas::consolidated_schema(),
+        schemas::verification_schema(),
+    ] {
+        structured::provider_schema(&schema).unwrap();
+    }
 }
 
 #[test]
@@ -168,7 +171,7 @@ fn declaude_markdown_is_primary_and_failed_verification_never_publishes_candidat
         "orientation": brief(), "products": {"primary_step_id": profile.outputs.primary_step},
         "step_outputs": [
             {"step_id": EDITOR, "step_label": "Candidates", "phase": "sequential", "raw_text": "unverified candidates", "structured_json": true},
-            {"step_id": REPORT, "step_label": "Report", "phase": "sequential", "raw_text": markdown}
+            {"step_id": REPORT, "step_label": "Report", "phase": "sequential", "raw_text": "{\"stage\":\"verified-v1\"}", "structured_json": true, "rendered_markdown": markdown}
         ]
     })).unwrap();
     report.products = crate::findings::build_run_products(&profile.into(), &report.step_outputs);
@@ -196,4 +199,30 @@ fn declaude_markdown_is_primary_and_failed_verification_never_publishes_candidat
         &crate::settings::Settings::default(),
     );
     assert!(rendered.contains("Final report unavailable"));
+}
+
+#[test]
+fn declaude_designer_labels_describe_the_editing_work() {
+    let labels: Vec<_> = declaude_profile()
+        .steps
+        .into_iter()
+        .map(|step| step.label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Edit Document Prose",
+            "Edit Second Subject (Optional)",
+            "Edit Third Subject (Optional)",
+            "Reconcile Proposed Edits",
+            "Verify Meaning and Edit Interactions"
+        ]
+    );
+}
+
+#[test]
+fn declaude_prevents_unvalidated_multi_agent_merges_and_fanout() {
+    let mut profile = declaude_profile();
+    profile.steps[0].agents = vec!["claude".into(), "codex".into()];
+    assert!(validate_profile_data(&profile).is_err());
 }

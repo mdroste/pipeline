@@ -56,41 +56,13 @@ pub(super) fn orientation_schema() -> Value {
 }
 
 pub(super) fn edits_schema() -> Value {
-    json!({
-        "type": "object", "title": "Declaude proposed prose edits",
-        "required": ["coverage", "edits", "unresolved"],
-        "properties": {
-            "coverage": {
-                "type": "object",
-                "required": ["reviewed", "limitations", "incomplete"],
-                "properties": {
-                    "reviewed": texts(200), "limitations": texts(100),
-                    "incomplete": {"type": "boolean"}
-                }
-            },
-            "edits": {
-                "type": "array", "maxItems": 60,
-                "description": "Useful edits in document order. Sixty is a ceiling, never a target; disclose omitted coverage.",
-                "items": {
-                    "type": "object",
-                    "required": ["location", "original", "replacement", "operation", "local_form", "category", "reason", "preserved_content", "context_support", "priority", "confidence", "referee_ids"],
-                    "properties": {
-                        "location": text(), "original": text(),
-                        "replacement": {"type": "string", "description": "Paste-ready text; empty only for deletion."},
-                        "operation": {"type": "string", "enum": ["replace", "delete"]},
-                        "local_form": text(),
-                        "category": {"type": "string", "enum": ["stock_language", "staged_contrast", "defensive_framing", "misplaced_jargon", "promotional_framing", "signposting", "repetition", "paragraph_structure", "vague_reference", "other"]},
-                        "reason": text(), "preserved_content": text(),
-                        "context_support": texts(20),
-                        "priority": {"type": "string", "enum": ["recommended", "optional"]},
-                        "confidence": {"type": "string", "enum": ["high", "medium"], "description": "Confidence in the edit's fidelity and benefit, never AI authorship."},
-                        "referee_ids": {"type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": text()}
-                    }
-                }
-            },
-            "unresolved": {"type": "array", "maxItems": 60,
-                "items": {"type": "object", "required": ["location", "original", "issue"],
-                    "properties": {"location": text(), "original": text(), "issue": text()}}}
-        }
-    })
+    crate::pipeline::editorial::schemas::candidates(false)
+}
+
+pub(super) fn consolidated_schema() -> Value {
+    crate::pipeline::editorial::schemas::candidates(true)
+}
+
+pub(super) fn verification_schema() -> Value {
+    crate::pipeline::editorial::schemas::verification()
 }

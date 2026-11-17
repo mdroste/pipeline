@@ -503,7 +503,7 @@ function AppShell() {
               onOpenSettings={() =>
                 void router.navigate({
                   page: "settings",
-                  section: "workflow",
+                  section: "providers",
                   targetId: "usage-limit-fallback",
                 })
               }

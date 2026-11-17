@@ -11,53 +11,48 @@ export type SettingsSection =
   Section | "workspace" | "llm" | "api-keys" | "extraction";
 
 export function resolveSection(section: SettingsSection): Section {
-  if (section === "workspace" || section === "api-keys") return "providers";
-  if (section === "llm" || section === "extraction") return "workflow";
+  if (section === "workspace" || section === "api-keys" || section === "llm")
+    return "providers";
+  if (section === "extraction") return "workflow";
   return section;
 }
 
 export const SECTION_INFO: Record<
   Section,
-  { title: string; description?: string; icon: string }
+  { title: string; description?: string }
 > = {
   general: {
     title: "General",
-    icon: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5",
   },
   providers: {
-    title: "Connections",
+    title: "Models",
     description:
-      "Connect Pipeline to Claude, ChatGPT, Gemini, or a local server.",
-    icon: "M8 3v4m8-4v4M6 7h12v3a6 6 0 0 1-12 0V7Zm6 9v5",
+      "Choose default models and connect Claude, ChatGPT, Gemini, or a local server.",
   },
   workflow: {
     title: "Reviews",
     description:
-      "Default models, limits, and PDF extraction for reviews. A workflow can override these.",
-    icon: "M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12-12v4m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0 6v8M6 9h9",
+      "Execution limits and PDF extraction for reviews. A workflow can override these.",
   },
   conversations: {
     title: "Conversations",
-    icon: "M4 4h16v12H8l-4 4V4Z",
   },
   storage: {
     title: "Data & Storage",
     description: "Where your research is saved, plus backups and cleanup.",
-    icon: "M3 7h7l2 2h9v11H3V7Zm0 0V4h7l2 3",
   },
   notifications: {
     title: "Notifications",
-    icon: "M18 8a6 6 0 0 0-12 0v6l-2 3h16l-2-3V8ZM10 21h4",
   },
   advanced: {
     title: "Advanced & About",
     description: "Logging, installed tools, and app updates.",
-    icon: "M12 8v4m0 4h.01M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0Z",
   },
 };
 
 export const PROVIDER_LINKS = [
   { id: "default-model", label: "Default model" },
+  { id: "workflow-models", label: "Review models" },
   { id: "anthropic-provider", label: "Anthropic" },
   { id: "openai-provider", label: "OpenAI" },
   { id: "google-provider", label: "Google" },
@@ -65,19 +60,25 @@ export const PROVIDER_LINKS = [
 ];
 
 export const WORKFLOW_LINKS = [
-  { id: "workflow-models", label: "Models" },
   { id: "workflow-execution", label: "Execution" },
   { id: "workflow-extraction", label: "PDF extraction" },
   { id: "workflow-history", label: "Reports & history" },
 ];
 
-// Every navigable target now lives in the section its caller declares (the
-// search index and jump links name their sections explicitly), so resolving
-// a destination needs no per-target exception table.
+// Preserve links made before review model preferences moved to Models.
 export function sectionForTarget(
   section: SettingsSection,
-  _target?: string,
+  target?: string,
 ): Section {
+  if (
+    target === "workflow-models" ||
+    target === "usage-limit-fallback" ||
+    target === "Document bundle preparation providers" ||
+    target === "Parallel steps providers" ||
+    target === "Combine results providers" ||
+    target === "Sequential steps providers"
+  )
+    return "providers";
   return resolveSection(section);
 }
 

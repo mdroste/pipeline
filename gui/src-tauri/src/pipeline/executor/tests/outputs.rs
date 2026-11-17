@@ -128,6 +128,7 @@ fn fallback_records_partition_usage_without_changing_effective_provenance() {
         "reviewer",
         StepCallResult {
             text: "report".into(),
+            rendered_markdown: None,
             duration_secs: 30,
             usage,
             attempt_count: 2,

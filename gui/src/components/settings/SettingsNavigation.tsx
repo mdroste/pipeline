@@ -1,15 +1,20 @@
 import type { ReactNode } from "react";
+import { Icon } from "../../ui/icons";
 import ResizeHandle from "../ResizeHandle";
 import usePersistentPanelWidth from "../../hooks/usePersistentPanelWidth";
 import { type Section, SECTION_INFO } from "./navigation";
 export function SettingsNavigation({
   section,
+  query,
+  onQueryChange,
   selectSection,
   showBack,
   handleClose,
   status,
 }: {
   section: Section;
+  query: string;
+  onQueryChange: (query: string) => void;
   selectSection: (section: Section) => void;
   showBack: boolean;
   handleClose: () => void;
@@ -24,7 +29,26 @@ export function SettingsNavigation({
   return (
     <div style={{ width: navWidth }} className="settings-sidebar">
       <h2 className="settings-sidebar-title">Settings</h2>
-      <nav aria-label="Settings categories" className="space-y-1 flex-1">
+      <div className="settings-search-bar">
+        <div className="settings-search-field">
+          <Icon name="search" className="settings-search-icon" />
+          <label className="sr-only" htmlFor="settings-search">
+            Search settings
+          </label>
+          <input
+            id="settings-search"
+            className="ui-input"
+            type="search"
+            value={query}
+            placeholder="Search settings…"
+            onChange={(e) => onQueryChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onQueryChange("");
+            }}
+          />
+        </div>
+      </div>
+      <nav aria-label="Settings categories">
         {(
           [
             "general",
@@ -44,20 +68,6 @@ export function SettingsNavigation({
             aria-label={SECTION_INFO[id].title}
             className={`settings-nav-item ${section === id ? "is-active" : ""}`}
           >
-            <svg
-              aria-hidden="true"
-              className="h-4 w-4 shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d={SECTION_INFO[id].icon}
-              />
-            </svg>
             <span className="min-w-0 font-medium">
               {SECTION_INFO[id].title}
             </span>

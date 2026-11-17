@@ -66,7 +66,7 @@ export function useAppController() {
     NAV_RAIL_WIDTH.min,
     NAV_RAIL_WIDTH.max,
   );
-  const navRail = useNavRailCollapse();
+  const navRail = useNavRailCollapse(page === "settings");
   // Release smoke tests set a private environment variable and wait for this
   // IPC round trip. Normal app launches take the no-op path in Rust.
   useEffect(() => {

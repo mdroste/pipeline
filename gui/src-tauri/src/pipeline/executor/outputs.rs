@@ -108,6 +108,7 @@ pub(super) fn step_output(
         provider: effective_provider.to_string(),
         agent: effective_agent.to_string(),
         raw_text: call.text,
+        rendered_markdown: call.rendered_markdown,
         structured_json,
         duration_secs: call.duration_secs,
         input_tokens: call.usage.input_tokens,

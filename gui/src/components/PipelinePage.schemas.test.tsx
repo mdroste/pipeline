@@ -31,9 +31,7 @@ describe("PipelinePage schemas", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(
-      screen.getByRole("button", { name: "Document bundle preparation" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Identify content" }));
     await user.click(
       screen.getByRole("button", { name: "Insert generic survey" }),
     );
@@ -56,7 +54,6 @@ describe("PipelinePage schemas", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    // No selection: the right pane shows the overview, never an instruction.
     expect(screen.getByText("Review overview")).toBeInTheDocument();
     expect(screen.queryByText("Select a step to edit")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
@@ -66,8 +63,7 @@ describe("PipelinePage schemas", () => {
     expect(await screen.findByLabelText("Step label")).toHaveValue("Technical");
     expect(screen.queryByText("Review overview")).not.toBeInTheDocument();
 
-    // The navigator's own Overview tab still works.
-    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
     expect(screen.getByText("Review overview")).toBeInTheDocument();
   });
 
@@ -78,11 +74,10 @@ describe("PipelinePage schemas", () => {
     await screen.findAllByText("Technical");
     await useAdvancedEditor(user);
 
-    await user.click(screen.getByRole("tab", { name: "Schemas" }));
-    expect(screen.getByRole("tab", { name: "Schemas" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await user.click(screen.getByRole("button", { name: "Schemas" }));
+    expect(
+      screen.getByRole("navigation", { name: "Schema stages" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Document overview schema" }),
     ).toBeInTheDocument();
@@ -162,7 +157,7 @@ describe("PipelinePage schemas", () => {
     await screen.findAllByText("Technical");
     await useAdvancedEditor(user);
 
-    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(screen.getByRole("button", { name: "Schemas" }));
     await user.click(
       screen.getByRole("button", { name: "Technical output schema" }),
     );
@@ -191,13 +186,13 @@ describe("PipelinePage schemas", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Invalid schema");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
 
-    await user.click(screen.getByRole("tab", { name: "Steps" }));
+    await user.click(screen.getByRole("button", { name: "Edit stage" }));
     await user.click(screen.getByRole("tab", { name: "When it runs" }));
     expect(
       screen.queryByRole("textbox", { name: "Output JSON schema" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Define result formats in the Schemas tab/),
+      screen.getByText(/Define result formats in Schemas/),
     ).toBeInTheDocument();
   });
 
@@ -213,7 +208,7 @@ describe("PipelinePage schemas", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
     await useAdvancedEditor(user);
-    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(screen.getByRole("button", { name: "Schemas" }));
     await user.click(
       screen.getByRole("button", { name: "Technical output schema" }),
     );
@@ -236,7 +231,7 @@ describe("PipelinePage schemas", () => {
     expect(editor.value).toContain('"score"');
     await user.click(screen.getByRole("button", { name: "Undo" }));
     // Undo leaves nothing to save; make an unrelated edit to enable Save.
-    await user.click(screen.getByRole("tab", { name: "Steps" }));
+    await user.click(screen.getByRole("button", { name: "Edit stage" }));
     await user.type(screen.getByLabelText("Step label"), " proofs");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
@@ -263,7 +258,7 @@ describe("PipelinePage schemas", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
     await useAdvancedEditor(user);
-    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(screen.getByRole("button", { name: "Schemas" }));
     await user.click(
       screen.getByRole("button", { name: "Technical output schema" }),
     );

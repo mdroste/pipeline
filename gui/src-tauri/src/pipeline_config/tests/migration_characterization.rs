@@ -55,6 +55,7 @@ fn fresh_catalog_markers_preserve_complete_directory_bytes_and_are_idempotent() 
         ".structured-grant-review-contract-v1",
         ".structured-grant-review-contract-v2",
         ".paper-review-ids-v1",
+        ".declaude-editorial-contract-v1",
     ] {
         expected.insert(marker.to_string(), b"fresh-install\n".to_vec());
     }

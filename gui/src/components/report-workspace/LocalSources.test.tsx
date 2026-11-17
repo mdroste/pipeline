@@ -21,6 +21,42 @@ const report = {
 const reader = (container: HTMLElement) =>
   container.querySelector(".report-reader .overflow-y-auto") as HTMLElement;
 
+it("shows host-rendered accepted edits while retaining the structured record", async () => {
+  const editorial = {
+    ...report,
+    step_outputs: [
+      {
+        ...report.step_outputs[0],
+        step_label: "Verify Meaning and Edit Interactions",
+        raw_text:
+          '{"decisions":[{"candidate_id":"edit:1","decision":"accept"}]}',
+        structured_json: true,
+        rendered_markdown:
+          "## Recommended edits\n\n```text\nWages may rise by \\(x\\).\n```",
+      },
+    ],
+  };
+  render(
+    <LocalSources
+      ReportViewer={ReportViewer}
+      extractedText="# Paper"
+      report={editorial}
+    />,
+  );
+  await userEvent.setup().click(
+    screen.getByRole("button", {
+      name: "Verify Meaning and Edit Interactions",
+    }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Recommended edits" }),
+  ).toBeVisible();
+  expect(screen.getByText("Wages may rise by \\(x\\).")).toBeVisible();
+  expect(editorial.step_outputs[0].raw_text).toContain(
+    '"candidate_id":"edit:1"',
+  );
+});
+
 it("opens each source at the top", async () => {
   const { container } = render(
     <LocalSources

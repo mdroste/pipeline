@@ -10,6 +10,21 @@ use super::*;
 use std::fs;
 
 #[test]
+fn step_timeout_defaults_to_forty_five_minutes_and_preserves_saved_limits() {
+    assert_eq!(Settings::default().step_timeout_secs, 2700);
+    let missing: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(missing.step_timeout_secs, 2700);
+    for seconds in [1200, 7200] {
+        let saved: Settings = serde_json::from_value(serde_json::json!({
+            "step_timeout_secs": seconds,
+        }))
+        .unwrap();
+        assert_eq!(saved.step_timeout_secs, seconds);
+        assert!(saved.validate().is_ok());
+    }
+}
+
+#[test]
 fn validation_preserves_first_failure_order() {
     let mut settings = Settings {
         codex_backend: "unknown".into(),

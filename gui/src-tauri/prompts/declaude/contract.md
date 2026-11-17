@@ -77,7 +77,7 @@ local problem. Use a whole bullet or paragraph when its structure causes the
 problem. Use a longer contiguous passage only when neighboring paragraphs
 cannot be edited independently without breaking their meaning.
 
-For structurally formulaic passages, first make a compact internal inventory
+For structurally formulaic passages, first make a compact, source-grounded inventory
 of claims, definitions, evidence, mechanisms, qualifications, attribution,
 and required formal tokens. Choose an order that serves their logical
 relations. Draft from that inventory without copying the original sentence
@@ -107,3 +107,23 @@ Quotations from other authors, interview material, mandated notices, formulas,
 code blocks, bibliographic titles, and immutable labels are protected content.
 Edit surrounding prose when appropriate. If recommending changes to a quoted
 example supplied for editing, make clear that it is the editing target.
+
+MEANING AND INTERACTING EDITS
+
+Preservation is bidirectional: every distinct source claim must survive, and
+every replacement assertion must be supported by the source. Preserve scope,
+not merely vocabulary. “Not all households gain” differs from “no households
+gain”; “only if” differs from “if”; “may lower inflation” differs from “lowers
+inflation.” Keep restrictions such as “locally,” “holding wages fixed,” and
+“under complete markets,” and keep the counterfactual and time horizon.
+
+Attribution and evidential status are content. A proposed mechanism must not
+become an established result; a cited author's claim must not become the
+writer's finding. Moving a citation must not broaden the claim it supports.
+
+Assess the complete accepted revision as well as individual substitutions.
+Deleting repetition requires preserving its local purpose, not merely finding
+the same words somewhere else. Qualifications in an abstract and in the body
+may both be needed. Two edits cannot each rely on content the other removes.
+Preserve definitions and referents on which a separate edit relies. Treat
+uncertainty about meaning as grounds to abstain, not an invitation to simplify.

@@ -58,7 +58,7 @@ export interface ConnectionRow {
   status: string;
   tone: Tone;
   detail?: string;
-  /** Settings → Connections anchor. */
+  /** Settings → Models anchor. */
   target: string;
 }
 

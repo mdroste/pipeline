@@ -97,11 +97,13 @@ describe("PipelinePage persistence", () => {
     const selector = await screen.findByRole("combobox", {
       name: "Active review",
     });
-    await user.selectOptions(selector, "quick");
+    await user.click(selector);
+    await user.click(screen.getByRole("option", { name: "Quick Review" }));
 
     expect(selector).toBeDisabled();
-    expect(selector).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(selector.parentElement).toHaveAttribute("aria-busy", "true");
+    await user.click(screen.getByRole("button", { name: "Review actions" }));
+    expect(screen.getByRole("menuitem", { name: "Reset" })).toBeDisabled();
     expect(
       invoke.mock.calls.filter((call) => call[0] === "switch_profile"),
     ).toHaveLength(1);
@@ -112,7 +114,7 @@ describe("PipelinePage persistence", () => {
 
     await waitFor(() => {
       expect(selector).toBeEnabled();
-      expect(selector).toHaveValue("quick");
+      expect(selector).toHaveAttribute("data-value", "quick");
       expect(screen.getAllByText("Quick Technical").length).toBeGreaterThan(0);
     });
   });
@@ -139,7 +141,8 @@ describe("PipelinePage persistence", () => {
     );
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await user.click(screen.getByRole("button", { name: "Review actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Reset" }));
     unmount();
     await act(async () => finishReset(makeConfig()));
 
@@ -184,18 +187,18 @@ describe("PipelinePage persistence", () => {
     const selector = await screen.findByRole("combobox", {
       name: "Active review",
     });
-    expect(selector).toHaveValue("custom");
+    expect(selector).toHaveAttribute("data-value", "custom");
     await user.click(
       await screen.findByRole("button", { name: "Review actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     expect(selector).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Review actions" }));
+    expect(screen.getByRole("menuitem", { name: "New review" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Duplicate" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Reset" })).toBeDisabled();
     expect(
       invoke.mock.calls.some(([command]) => command === "switch_profile"),
     ).toBe(false);
@@ -203,7 +206,7 @@ describe("PipelinePage persistence", () => {
     await act(async () => finishDelete());
     await waitFor(() => {
       expect(selector).toBeEnabled();
-      expect(selector).toHaveValue("auto-paper-review");
+      expect(selector).toHaveAttribute("data-value", "auto-paper-review");
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
     expect(invoke).toHaveBeenCalledWith("switch_profile", {
@@ -310,8 +313,9 @@ describe("PipelinePage persistence", () => {
     });
 
     notify.mockClear();
+    await user.click(screen.getByRole("combobox", { name: "Choose a stage" }));
     await user.click(
-      screen.getByRole("button", { name: "Document bundle preparation" }),
+      screen.getByRole("option", { name: /Document bundle preparation/ }),
     );
     await user.click(
       screen.getByRole("button", { name: "Insert generic survey" }),

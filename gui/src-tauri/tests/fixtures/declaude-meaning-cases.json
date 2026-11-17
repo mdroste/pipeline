@@ -1,0 +1,53 @@
+{
+  "purpose": "Human-labelled cases for model evaluation and deterministic publication regression. Host tests use supplied decisions; they do not establish that a model will make these judgments.",
+  "cases": [
+    {
+      "concern": "statistical uncertainty",
+      "source": "Importantly, employment did not increase significantly.",
+      "acceptable": "Employment did not increase significantly.",
+      "unsafe": "Employment did not increase."
+    },
+    {
+      "concern": "quantifier scope",
+      "source": "Notably, not all households gain.",
+      "acceptable": "Not all households gain.",
+      "unsafe": "No households gain."
+    },
+    {
+      "concern": "modal strength",
+      "source": "Importantly, the policy may lower inflation.",
+      "acceptable": "The policy may lower inflation.",
+      "unsafe": "The policy lowers inflation."
+    },
+    {
+      "concern": "necessity",
+      "source": "It is important to note that stability holds only if the condition is satisfied.",
+      "acceptable": "Stability holds only if the condition is satisfied.",
+      "unsafe": "Stability holds if the condition is satisfied."
+    },
+    {
+      "concern": "conditions and horizon",
+      "source": "Importantly, under complete markets and holding wages fixed, welfare rises locally in the short run.",
+      "acceptable": "Under complete markets and holding wages fixed, welfare rises locally in the short run.",
+      "unsafe": "Welfare rises."
+    },
+    {
+      "concern": "counterfactual baseline",
+      "source": "Importantly, output falls relative to the no-policy equilibrium.",
+      "acceptable": "Output falls relative to the no-policy equilibrium.",
+      "unsafe": "Output falls."
+    },
+    {
+      "concern": "attribution and citation",
+      "source": "It is important to note that Smith conjectures this mechanism \\cite{smith}.",
+      "acceptable": "Smith conjectures this mechanism \\cite{smith}.",
+      "unsafe": "We establish this mechanism \\cite{smith}."
+    },
+    {
+      "concern": "formal content",
+      "source": "Importantly, \\(\\alpha\\) may fall by 2 percentage points when \\(x<0\\).",
+      "acceptable": "\\(\\alpha\\) may fall by 2 percentage points when \\(x<0\\).",
+      "unsafe": "\\(\\alpha\\) falls by 2% when \\(x>0\\)."
+    }
+  ]
+}

@@ -1,40 +1,6 @@
-import { adaptiveAgentCountLabel } from "../../lib/autoReview";
 import type { AdaptiveAgentRange } from "../../lib/autoReview";
 
 type AdaptiveSlotKind = "subject" | "method";
-
-export function AdaptiveAgentsRow({
-  count,
-  range,
-  selected,
-  onSelect,
-}: {
-  count: number | null;
-  range: AdaptiveAgentRange;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const countLabel = adaptiveAgentCountLabel(count, range);
-  return (
-    <button
-      type="button"
-      aria-label={`Adaptive agents — ${count === null ? `Automatic, ${countLabel} agents` : `${count} agents`}`}
-      onClick={onSelect}
-      aria-pressed={selected}
-      className="designer-item designer-row"
-      data-selected={selected || undefined}
-    >
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-          Adaptive agents
-        </span>
-        <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
-          {countLabel} agents
-        </span>
-      </span>
-    </button>
-  );
-}
 
 export function AdaptiveAgentsEditorPanel({
   count,

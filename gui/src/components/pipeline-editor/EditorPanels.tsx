@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { WorkflowLintWarning } from "../../lib/pipelineHelpers";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import type {
   MergeConfig,
   PipelineConfig,
@@ -23,6 +23,7 @@ const providerNames = (agents: string[]) =>
   agents
     .map((agent) => PROVIDER_LABELS[agent as Provider] ?? agent)
     .join(" + ");
+import Button from "../../ui/Button";
 import PromptEditor from "../PromptEditor";
 import AdvancedStepOptions from "./AdvancedStepOptions";
 import AnalyzerStepPanel from "./AnalyzerStepPanel";
@@ -223,6 +224,8 @@ export function PipelineSettingsEditorPanel({
 }
 
 export const StepEditorPanel = memo(function StepEditorPanel({
+  onOpenAdvanced,
+  controls,
   warningTarget,
   step,
   config,
@@ -234,6 +237,8 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   onPhaseChange,
   onOutputRoleChange,
 }: {
+  controls: ReactNode;
+  onOpenAdvanced: (destination: "model" | "schema") => void;
   warningTarget?: (WorkflowLintWarning & { request: number }) | null;
   step: StepConfig;
   config: PipelineConfig;
@@ -325,6 +330,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   if (step.kind === "analyzer") {
     return (
       <div ref={panel} className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex justify-end px-5 pt-4">{controls}</div>
         <AnalyzerStepPanel
           step={step}
           config={config}
@@ -349,41 +355,24 @@ export const StepEditorPanel = memo(function StepEditorPanel({
 
   return (
     <div ref={panel} className="flex-1 flex flex-col min-h-0">
-      <div className="px-5 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2.5">
-        <div className="flex items-end gap-3">
-          <div className="min-w-0 flex-1">
-            <label className="block text-xs font-medium text-gray-500 mb-1">
-              Step name
-            </label>
-            <input
-              type="text"
-              aria-label="Step label"
-              maxLength={MAX_STEP_LABEL_CHARS}
-              value={step.label}
-              onChange={(event) =>
-                onUpdate(step.id, { label: event.target.value })
-              }
-              className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 transition-colors"
-            />
-          </div>
-          <span
-            className={`mb-0.5 rounded-full px-2.5 py-1 text-[0.6875rem] font-medium ${
-              step.enabled
-                ? step.phase === "parallel"
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
-                  : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300"
-                : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
-            }`}
-          >
-            {step.enabled
-              ? step.phase === "parallel"
-                ? "Parallel"
-                : "Sequential"
-              : "Disabled"}
-          </span>
+      <div className="px-6 pt-5 pb-3">
+        <div className="text-ui-meta text-ink-muted">
+          {step.phase === "parallel" ? "Parallel step" : "Sequential step"}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <input
+            aria-label="Step label"
+            maxLength={MAX_STEP_LABEL_CHARS}
+            value={step.label}
+            onChange={(event) =>
+              onUpdate(step.id, { label: event.target.value })
+            }
+            className="designer-step-title ui-input min-w-0 flex-[1_1_14rem]"
+          />
+          {controls}
         </div>
         <p
-          className="text-xs leading-relaxed text-gray-600 dark:text-gray-400"
+          className="mt-1 text-ui-label text-ink-muted"
           data-testid="step-summary"
         >
           {summary.sentence}
@@ -393,7 +382,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
       <div
         role="tablist"
         aria-label="Step settings"
-        className="flex gap-1 overflow-x-auto border-b border-gray-200 px-4 pt-2 dark:border-gray-700"
+        className="ui-tabs mx-6 shrink-0 flex-wrap"
       >
         {tabs.map(([id, label]) => (
           <button
@@ -406,11 +395,6 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             tabIndex={activeTab === id ? 0 : -1}
             onClick={() => setActiveTab(id)}
             onKeyDown={(event) => handleTabKeyDown(event, id)}
-            className={`shrink-0 rounded-t-lg border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
-              activeTab === id
-                ? "border-gray-900 text-gray-900 dark:border-gray-100 dark:text-gray-100"
-                : "border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-            }`}
           >
             {label}
           </button>
@@ -422,23 +406,45 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         role="tabpanel"
         aria-labelledby="step-tab-prompt"
         hidden={activeTab !== "prompt"}
-        className="flex-1 min-h-0 p-4"
+        className="flex-1 min-h-0 overflow-auto p-6"
       >
-        <PromptEditor
-          value={step.prompt}
-          onChange={(prompt) => onUpdate(step.id, { prompt })}
-          ariaLabel={`Prompt for ${step.label}`}
-          context={
-            step.phase === "sequential"
-              ? {
-                  kind: "sequential",
-                  otherStepIds: config.steps
-                    .filter((candidate) => candidate.id !== step.id)
-                    .map((candidate) => candidate.id),
-                }
-              : { kind: "parallel" }
-          }
-        />
+        <h3 className="mb-2 text-ui-label font-semibold">
+          Reviewer instructions
+        </h3>
+        <div className="designer-prompt">
+          <PromptEditor
+            value={step.prompt}
+            onChange={(prompt) => onUpdate(step.id, { prompt })}
+            ariaLabel={`Prompt for ${step.label}`}
+            context={
+              step.phase === "sequential"
+                ? {
+                    kind: "sequential",
+                    otherStepIds: config.steps
+                      .filter((candidate) => candidate.id !== step.id)
+                      .map((candidate) => candidate.id),
+                  }
+                : { kind: "parallel" }
+            }
+          />
+        </div>
+        <details key={step.id} className="designer-advanced">
+          <summary>Advanced settings</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                onOpenAdvanced("model");
+                setActiveTab("model");
+              }}
+            >
+              Model &amp; agents
+            </Button>
+            <Button size="sm" onClick={() => onOpenAdvanced("schema")}>
+              Output format
+            </Button>
+          </div>
+        </details>
       </section>
 
       <section
@@ -484,7 +490,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
           </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Set timing, conditions, saved results, and steps to repeat for each
-            file. Define result formats in the Schemas tab.
+            file. Define result formats in Schemas.
           </p>
         </div>
         <div className="mb-5">
@@ -560,7 +566,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               Track findings in the project ledger
               <span className="block text-[0.625rem] text-gray-500 dark:text-gray-400">
                 Track this step’s findings across reviews of the document.
-                Pipeline adds the required findings format in the Schemas tab.
+                Pipeline adds the required findings format in Schemas.
               </span>
             </span>
           </label>

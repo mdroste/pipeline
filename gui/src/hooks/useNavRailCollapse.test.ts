@@ -71,6 +71,36 @@ it("treats a sidebar hidden by an older version as folded", () => {
   expect(result.current.collapsed).toBe(true);
 });
 
+it.each(["auto", "expanded", "collapsed"])(
+  "temporarily folds Settings without changing the %s preference",
+  (mode) => {
+    localStorage.setItem("pipeline.ui.navRailMode", mode);
+    const { result, rerender } = renderHook(
+      ({ settingsOpen }) => useNavRailCollapse(settingsOpen),
+      { initialProps: { settingsOpen: false } },
+    );
+    const before = result.current.collapsed;
+    rerender({ settingsOpen: true });
+    expect(result.current.collapsed).toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("set_sidebar_menu_collapsed", {
+      collapsed: true,
+    });
+
+    // Manual expansion works for this visit, including the native View menu.
+    chooseMenuItem();
+    expect(result.current.collapsed).toBe(false);
+    rerender({ settingsOpen: true });
+    expect(result.current.collapsed).toBe(false);
+    expect(localStorage.getItem("pipeline.ui.navRailMode")).toBe(mode);
+
+    rerender({ settingsOpen: false });
+    expect(result.current.collapsed).toBe(before);
+    expect(localStorage.getItem("pipeline.ui.navRailMode")).toBe(mode);
+    rerender({ settingsOpen: true });
+    expect(result.current.collapsed).toBe(true);
+  },
+);
+
 it("flips from the View menu like the button and keeps its title true", () => {
   const { result } = renderHook(() => useNavRailCollapse());
   const menuTitle = () => invoke.mock.lastCall?.at(1);

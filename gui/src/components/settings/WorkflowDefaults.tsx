@@ -23,13 +23,11 @@ export function ModelDefaultsSection({
   settings,
   setSettings,
   catalogs,
-  onChangeDefault,
   dependencies,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   catalogs: Record<string, ModelCatalog>;
-  onChangeDefault: () => void;
   dependencies?: DepsReport | null;
 }) {
   const parallelAgents = defaultParallelAgents(settings);
@@ -76,20 +74,9 @@ export function ModelDefaultsSection({
   return (
     <>
       <SectionHeader
-        title="Model defaults"
+        title="Review models"
         description="Reviews use the default model unless a stage or workflow step overrides it."
       />
-      <SettingRow label={defaultLabel} description={defaultSummary}>
-        <button
-          type="button"
-          className="settings-button"
-          aria-label="Change default model"
-          onClick={onChangeDefault}
-        >
-          Change
-        </button>
-      </SettingRow>
-
       <div className="space-y-0">
         <section className="space-y-5">
           <div className="divide-y divide-gray-200 dark:divide-neutral-800">
@@ -442,10 +429,11 @@ export function WorkflowSection({
             className={selectClass}
           >
             <option value={600}>10 minutes</option>
-            <option value={1200}>20 minutes (default)</option>
+            <option value={1200}>20 minutes</option>
             <option value={1800}>30 minutes</option>
-            <option value={2700}>45 minutes</option>
+            <option value={2700}>45 minutes (default)</option>
             <option value={3600}>60 minutes</option>
+            <option value={7200}>120 minutes</option>
           </select>
         </SettingRow>
 

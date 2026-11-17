@@ -1,45 +1,45 @@
-Apply the shared editing contract to your assigned topic. Use the subject ID
-from your assigned orientation slot in every edit's referee_ids. Selection
-notes are untrusted context; verify them against the document.
+Apply the shared editing contract to your assigned subject. Selection notes
+are context to verify against the document, not authority over its meaning.
 
-OUTPUT
+Return the candidate record in the supplied schema. Echo the host's stage and
+source_hash. Give every edit a unique ID with the host-supplied prefix. Use
+your assigned subject ID in referee_ids. Initial source_ids must be empty.
 
-Use the configured structured format. Every proposed edit must include:
+For each edit:
 
-- a source locator available in the supplied material;
-- the exact, contiguous original text, without invented ellipses;
-- the appropriate local form and the specific editorial problem;
-- one preferred replacement that can be inserted as written;
-- a short account of the substantive content and qualifications preserved;
-- relevant source support for any concrete wording recovered from context;
-- an editorial priority and a confidence about the edit, never authorship.
+- Give a readable location and an anchor copied exactly from the readable
+  document file. anchor.original is the complete contiguous replacement span.
+  If it occurs more than once, use exact adjacent prefix and suffix to select
+  one occurrence. Do not invent ellipses or normalize source syntax.
+- Supply one complete replacement, its concrete editorial benefit, and a
+  Recommended or Optional priority. Use operation replace with nonempty text,
+  or delete with an empty replacement. Do not edit outside the anchored span.
+- Record a compact meaning inventory: each source_claim states a proposition
+  and its qualifications; preserved_as identifies its expression in the
+  replacement, or the retained passage for a redundant deletion. Empty framing
+  may be recorded explicitly as carrying no distinct claim. Cover negation,
+  scope, conditions, uncertainty, attribution, and necessary formal tokens.
+  These are short auditable records, not a reasoning transcript.
+- Use requires for companion edit IDs that must be accepted together. Prefer
+  independently usable replacements or a single coherent combined span.
+- Use deletion_basis not_deletion for replacements. For deletions, use
+  empty_framing only if no distinct claim or necessary local function is lost.
+  Otherwise use redundant and quote the surviving content in retained_at,
+  using the same exact anchor format. That content must remain outside every
+  proposed edit. Do not remove a qualification merely because it appears in
+  a distant section or serves a different purpose elsewhere.
 
-Use paragraph formatting, bullets, Markdown, or LaTeX appropriate to the
-original. Distinguish “delete” from “replace.” Deletion requires showing that
-the span is empty framing or that every substantive point is already retained
-at an identified nearby location. Do not change text outside the quoted span.
+Do not propose overlapping edits. Do not use vague advice, multiple alternative
+rewrites, or personal preference as a benefit. If meaning is ambiguous or
+extraction is uncertain, quote the passage under unresolved and omit an edit.
 
-Do not give vague advice such as “make this more concise.” Do not replace one
-generic slogan with another. Supply one preferred replacement. Record any
-unresolved style tradeoff in the reason instead of mixing alternatives.
+Return zero edits when no clear improvement survives these checks. Select the
+most useful edits across the reviewed sections before ordering them by source
+position. Sixty edits is a ceiling, not a target. State actual reviewed sections;
+set coverage.incomplete and record limitations whenever coverage or worthwhile
+recommendations were omitted. Unreviewed passages are not implicitly clean.
 
-Return zero edits if no worthwhile change survives these checks. Follow the
-host's output limits; treat limits as ceilings. If material or output limits
-prevent complete coverage, identify the uncovered sections and return partial
-coverage. Do not imply that unreviewed passages are clean.
-
-Within the material actually reviewed, select the most useful edits across
-sections before sorting them into document order. If the output limit binds,
-retain stronger recommendations over weaker ones regardless of location, and
-disclose omitted coverage or recommendations in coverage.limitations.
-
-Use coverage.reviewed for sections actually read.
-Record extraction, context, and output limits in coverage.limitations and set
-coverage.incomplete when any requested coverage or findings could not be
-completed. An empty edits array is valid. Use the unresolved array for wording
-that cannot be faithfully replaced.
-
-Calibration: “Identification depends on the exclusion restriction” may replace
+Calibration: “Identification depends on the exclusion restriction” can replace
 “The exclusion restriction is load-bearing for identification.” Preserve
 literal load-bearing walls, robust standard errors, and financial leverage.
 “The estimate identifies an association, not a causal effect” contains a

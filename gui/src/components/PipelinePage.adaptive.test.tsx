@@ -181,7 +181,7 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
     await useAdvancedEditor(user);
 
-    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(screen.getByRole("button", { name: "Schemas" }));
     expect(screen.getByText("Catalog-backed")).toBeInTheDocument();
     expect(await screen.findByText("Live specialist catalog")).toBeVisible();
     expect(screen.getByText("1 subject roles")).toBeVisible();
@@ -245,7 +245,7 @@ describe("PipelinePage", () => {
 
     await user.click(
       await screen.findByRole("button", {
-        name: "Document bundle preparation",
+        name: "Choose reviewers",
       }),
     );
     await user.click(
@@ -303,15 +303,15 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const orientation = await screen.findByRole("button", {
-      name: "Document bundle preparation",
+      name: "Choose reviewers",
     });
     expect(
       screen.getByRole("button", {
-        name: "Adaptive agents — Automatic, 2–6 agents",
+        name: "Adaptive agents (2–6)",
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getAllByText("Selected for this document").length,
+      screen.getAllByText(/selected for this document/i).length,
     ).toBeGreaterThan(0);
 
     await user.click(orientation);
@@ -336,10 +336,9 @@ describe("PipelinePage", () => {
       ),
     ).toBeInTheDocument();
 
+    await user.click(screen.getByRole("combobox", { name: "Choose a stage" }));
     await user.click(
-      screen.getByRole("button", {
-        name: "Adaptive agents — Automatic, 2–6 agents",
-      }),
+      screen.getByRole("option", { name: /Adaptive agents.*2–6/ }),
     );
     expect(
       screen.getByRole("heading", { name: "Adaptive agents" }),
@@ -355,8 +354,8 @@ describe("PipelinePage", () => {
       "4",
     );
     expect(
-      screen.getByRole("button", { name: "Adaptive agents — 4 agents" }),
-    ).toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Number of agents" }),
+    ).toHaveValue("4");
     await user.click(
       screen.getByRole("button", { name: "Browse method catalog" }),
     );
@@ -371,7 +370,7 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "Close specialist catalog" }),
     );
 
-    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
     expect(
       screen.getByRole("button", { name: "Choose reviewers" }),
     ).toBeInTheDocument();
@@ -379,7 +378,6 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "Adaptive agents (4)" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Steps" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => {
       const saveCall = invoke.mock.calls.find(
@@ -427,7 +425,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const adaptive = await screen.findByRole("button", {
-      name: "Adaptive agents — Automatic, 2–4 agents",
+      name: "Adaptive agents (2–4)",
     });
     await user.click(adaptive);
 
@@ -450,7 +448,7 @@ describe("PipelinePage", () => {
 
     await user.selectOptions(count, "4");
     expect(
-      screen.getByRole("button", { name: "Adaptive agents — 4 agents" }),
-    ).toBeInTheDocument();
+      screen.getByRole("combobox", { name: "Number of agents" }),
+    ).toHaveValue("4");
   });
 });

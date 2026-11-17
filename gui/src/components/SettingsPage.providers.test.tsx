@@ -175,7 +175,7 @@ describe("SettingsPage providers", () => {
         initialSection="providers"
       />,
     );
-    await screen.findByRole("heading", { name: "Connections" });
+    await screen.findByRole("heading", { name: "Models" });
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("chatgpt_account_status"),
     );
@@ -203,7 +203,7 @@ describe("SettingsPage providers", () => {
       />,
     );
     expect(
-      await screen.findByRole("heading", { name: "Connections" }),
+      await screen.findByRole("heading", { name: "Models" }),
     ).toBeVisible();
     await waitFor(() =>
       expect(document.getElementById("workspace-provider")).toBeVisible(),
@@ -211,10 +211,11 @@ describe("SettingsPage providers", () => {
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("chatgpt_account_status"),
     );
-    expect(screen.getByRole("button", { name: "Connections" })).toHaveAttribute(
-      "aria-current",
-      "page",
-    );
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
+    ).toHaveAttribute("aria-current", "page");
   });
 
   it("groups provider credentials, access modes, and local endpoints together", async () => {
@@ -229,9 +230,11 @@ describe("SettingsPage providers", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: "Connections" }),
+      within(
+        await screen.findByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
     );
-    expect(screen.getByRole("heading", { name: "Connections" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Models" })).toBeVisible();
     expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("OpenAI API Key")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Gemini API Key")).toBeVisible();
@@ -267,7 +270,9 @@ describe("SettingsPage providers", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: "Connections" }),
+      within(
+        await screen.findByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
     );
     const modes = screen.getByRole("radiogroup", {
       name: "Gemini connection mode",
@@ -333,7 +338,10 @@ describe("SettingsPage providers", () => {
       />,
     );
 
-    await screen.findByText("Model defaults");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Models" }),
+    );
+    await screen.findByRole("heading", { name: "Review models" });
     for (const label of [
       "Document bundle preparation",
       "Parallel steps",
@@ -343,7 +351,7 @@ describe("SettingsPage providers", () => {
       await userEvent.click(screen.getAllByText(label)[0]);
     expect(
       await screen.findAllByRole("option", { name: "Claude Live" }),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(screen.getAllByRole("group", { name: "Exact model" })).toHaveLength(
       4,
     );
@@ -368,7 +376,9 @@ describe("SettingsPage providers", () => {
 
     const user = userEvent.setup();
     await user.click(
-      await screen.findByRole("button", { name: "Connections" }),
+      within(
+        await screen.findByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
     );
     await user.click(
       await screen.findByRole("button", {
@@ -412,7 +422,11 @@ describe("SettingsPage providers", () => {
     await waitFor(() => expect(claudeRequests).toBe(1));
     invoke.mockClear();
 
-    await user.click(screen.getByRole("button", { name: "Connections" }));
+    await user.click(
+      within(
+        screen.getByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
+    );
     await user.type(screen.getByLabelText("Local API Key"), "s");
     expect(
       invoke.mock.calls.some(([command]) => command === "save_settings"),
@@ -487,7 +501,9 @@ describe("SettingsPage providers", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: "Connections" }),
+      within(
+        await screen.findByRole("navigation", { name: "Settings categories" }),
+      ).getByRole("button", { name: "Models" }),
     );
     const claudeModes = screen.getByRole("radiogroup", {
       name: "Claude connection mode",

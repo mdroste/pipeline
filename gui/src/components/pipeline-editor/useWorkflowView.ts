@@ -6,9 +6,9 @@ export function useWorkflowView() {
   const [warningTarget, setWarningTarget] = useState<
     (WorkflowLintWarning & { request: number }) | null
   >(null);
-  const [navigatorView, setNavigatorView] = useState<
-    "steps" | "overview" | "schemas"
-  >("steps");
+  const [navigatorView, setNavigatorView] = useState<"stage" | "schemas">(
+    "stage",
+  );
   const [editorMode, setEditorMode] = useState<"basic" | "advanced">("basic");
   const [catalogTab, setCatalogTab] = useState<"subjects" | "methods" | null>(
     null,

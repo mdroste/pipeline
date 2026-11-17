@@ -146,6 +146,37 @@ describe("App shell", () => {
     platform.isWindows = false;
   });
 
+  it.each(["expanded", "collapsed"])(
+    "restores the %s sidebar after leaving Settings",
+    async (mode) => {
+      localStorage.setItem("pipeline.ui.navRailMode", mode);
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Settings" }));
+      await screen.findByText("Settings workspace");
+      expect(
+        screen.getByRole("button", { name: "Expand sidebar" }),
+      ).toHaveAttribute("aria-expanded", "false");
+      expect(
+        screen.getByRole("navigation", { name: "Primary" }).closest("aside"),
+      ).toHaveStyle({ width: "56px" });
+
+      await act(async () => {
+        await router.navigate({ page: "settings", section: "providers" });
+      });
+      expect(
+        screen.getByRole("button", { name: "Expand sidebar" }),
+      ).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Home" }));
+      expect(
+        screen.getByRole("button", {
+          name: mode === "expanded" ? "Collapse sidebar" : "Expand sidebar",
+        }),
+      ).toBeVisible();
+      expect(localStorage.getItem("pipeline.ui.navRailMode")).toBe(mode);
+    },
+  );
+
   it.each([
     { name: "macOS", isMac: true, isWindows: false, height: "h-7" },
     { name: "Windows", isMac: false, isWindows: true, height: "h-8" },

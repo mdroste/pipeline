@@ -76,7 +76,7 @@ export default function ConnectionsStep({
           tabIndex={-1}
           className="text-ui-body font-semibold outline-none"
         >
-          Connections
+          Models
         </h3>
         <p className="mt-1 text-ui-label text-ink-muted">
           Pipeline uses your own model accounts. Connect ChatGPT, Claude Code,
@@ -128,7 +128,7 @@ export default function ConnectionsStep({
           {dependenciesLoading ? "Checking…" : "Check again"}
         </Button>
         <Button variant="link" onClick={() => onOpenConnections()}>
-          Open Settings → Connections
+          Open Settings → Models
         </Button>
       </div>
     </section>

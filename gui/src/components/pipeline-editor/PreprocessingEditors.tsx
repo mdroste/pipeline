@@ -268,7 +268,7 @@ function OrientationEditor({
             Runs before every review
           </span>
           <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[0.625rem] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
-            {schema ? "Schema configured" : "Object-only schema"} · Schemas tab
+            {schema ? "Schema configured" : "Object-only schema"} · Schemas
           </span>
         </div>
       </div>

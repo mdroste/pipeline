@@ -48,16 +48,27 @@ function subscribeNarrow(notify: () => void) {
  * current width goes back to following it. The persistent title bar owns the
  * toggle; `toggleRef` keeps focus there after a click. The Mac View menu flips
  * the same state and leaves focus where the researcher was working.
+ * Settings folds the rail temporarily. Toggles there affect only that visit,
+ * leaving the saved preference intact for the rest of the app.
  */
-export default function useNavRailCollapse() {
+export default function useNavRailCollapse(settingsOpen = false) {
   const [mode, setMode] = useState<NavRailMode>(readMode);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(true);
   const narrow = useSyncExternalStore(
     subscribeNarrow,
     () => narrowQuery()?.matches ?? false,
   );
-  const collapsed = mode === "auto" ? narrow : mode === "collapsed";
+  const collapsed = settingsOpen
+    ? settingsCollapsed
+    : mode === "auto"
+      ? narrow
+      : mode === "collapsed";
   const toggleRef = useRef<HTMLButtonElement>(null);
   const toggled = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!settingsOpen) setSettingsCollapsed(true);
+  }, [settingsOpen]);
 
   useLayoutEffect(() => {
     if (!toggled.current) return;
@@ -67,6 +78,10 @@ export default function useNavRailCollapse() {
 
   const flip = useCallback(() => {
     const next = !collapsed;
+    if (settingsOpen) {
+      setSettingsCollapsed(next);
+      return;
+    }
     const nextMode: NavRailMode =
       next === narrow ? "auto" : next ? "collapsed" : "expanded";
     setMode(nextMode);
@@ -75,7 +90,7 @@ export default function useNavRailCollapse() {
     } catch {
       /* Optional view preference. */
     }
-  }, [collapsed, narrow]);
+  }, [collapsed, narrow, settingsOpen]);
 
   const toggle = useCallback(() => {
     toggled.current = true;

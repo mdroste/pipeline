@@ -1,15 +1,18 @@
 # Settings
 
 Open **Settings** to change connections, model defaults, appearance, storage,
-and notifications. Type in the search box to jump to a setting by name or
-purpose.
+and notifications. Search at the top of the Settings sidebar to find a setting
+by name or purpose.
+
+Opening Settings folds the main sidebar to icons. Leaving Settings restores
+your previous sidebar preference.
 
 | Section | What you can change |
 | --- | --- |
 | General | Theme, text size, spacing, editor font and wrapping, startup page, and guided setup |
-| Connections | Your default model, ChatGPT sign-in, Claude, API keys, and local model servers. See [Connections](connections.md) |
+| Models | Your default model, review-stage models, backup provider, ChatGPT sign-in, Claude, API keys, and local model servers. See [Models](connections.md) |
 | Conversations | Send shortcut and automatic conversation titles |
-| Reviews | Models for each review stage, parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
+| Reviews | Parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
 | Data & Storage | Research data folder, disk use, retention, cleanup, backups, and Trash |
 | Notifications | Completion, failure, and attention notices, desktop notifications, and sound |
 | Advanced & About | Logging, research tools, diagnostics, app version, and updates |
@@ -31,10 +34,10 @@ file access, including command setup. See
 
 ## Default model
 
-**Settings → Connections → Default model** sets one provider, model, and
+**Settings → Models → Default model** sets one provider, model, and
 thinking level for reviews and new conversations.
 
-- Reviews use it unless a stage in **Settings → Reviews** or a saved workflow
+- Reviews use it unless a stage in **Settings → Models → Review models** or a saved workflow
   chooses another model. It also reads PDFs when you use model extraction.
 - A new conversation copies it when it starts. Changing the default leaves
   existing conversations as they are, and you can change any conversation in
@@ -44,6 +47,9 @@ thinking level for reviews and new conversations.
 Until you choose a default, reviews use Claude and new conversations start on
 ChatGPT. To set a thinking level, choose a model first. The provider list marks
 any connection that isn't ready as **(not connected)**.
+
+**Settings → Reviews → Step time limit** defaults to 45 minutes per model
+call. Choose a limit from 10 to 120 minutes.
 
 ## Appearance and keyboard
 

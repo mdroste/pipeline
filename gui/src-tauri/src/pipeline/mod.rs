@@ -11,6 +11,7 @@ pub mod codex;
 pub mod codex_server;
 pub mod conditions;
 pub mod context_cache;
+pub(crate) mod editorial;
 pub mod executor;
 pub mod extract;
 pub mod glob;

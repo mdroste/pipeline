@@ -96,10 +96,17 @@ It checks stock phrases, unnecessary contrasts, defensive framing, misplaced
 jargon, repetition, and formulaic paragraphs. A final reviewer checks that
 each replacement preserves the source's claims and qualifications.
 
-The Markdown report lists each original passage, its location, a suggested
-replacement, and the reason for the edit. It identifies incomplete coverage
-and wording that needs your judgment. Declaude assesses writing style; it
-does not determine whether AI wrote the document. Your source stays unchanged.
+The report lists each original passage, its location, a suggested replacement,
+and the reason for the edit. Pipeline checks quotations against the captured
+readable text and checks for overlapping edits or missing companion edits.
+Accept edits marked **Accept together** as a group. The report preserves
+source syntax in text blocks and identifies incomplete coverage and unresolved
+wording. Check extraction uncertainties against your original document.
+
+A final editor assesses meaning and the combined effect of the proposed edits.
+Review the suggestions before applying them; this assessment is an AI judgment.
+Declaude assesses writing style, not whether AI wrote the document. Your source
+stays unchanged.
 
 Use the supported document inputs above. Export website pages to PDF; the CLI
 also accepts text and Markdown snapshots.
@@ -223,12 +230,12 @@ Reviews start with your [default model](settings.md#default-model). Use
 **Models for this review** on the setup screen to choose a provider, model,
 and thinking level for this review. This leaves your saved defaults unchanged.
 
-Stages assigned another model under **Settings → Reviews → Model defaults**,
+Stages assigned another model under **Settings → Models → Review models**,
 and steps pinned in the review designer, keep their choices. Use the control
 to apply the review model everywhere when you want to replace those exceptions
 too. Check the model list in the launch preview before starting.
 
-Different steps can use different providers. See [Connections](connections.md)
+Different steps can use different providers. See [Models](connections.md)
 for the options. Change the defaults in Settings only when you want future
 reviews to use the new choice.
 
@@ -275,7 +282,7 @@ comparison. If a limit stops document preparation, the partial report explains
 what is incomplete. Start a new review with a higher limit to finish it.
 
 If you reach your account's usage or credit limit,
-**Settings → Reviews → Continue after an account usage limit** retries the call
+**Settings → Models → Continue after an account usage limit** retries the call
 with a backup provider. A review doesn't need the backup to start. If the backup
 isn't connected, the run preview says so, and reaching a limit stops the review.
 
@@ -418,6 +425,15 @@ effort, turn on tools, and choose what each step can read. A saved review can
 include conditional steps, structured responses, and steps that repeat over a
 set of files.
 
+The active review name at the top of the designer opens the review picker.
+The designer opens on **Review overview**. Select a stage to edit it, or use
+**Choose a stage** to switch stages or find a disabled reviewer. **Back to
+overview** returns to the graph. **Review settings** applies to the whole review.
+
+Use **Step actions** to move a sequential step or remove a step. Choose
+**Advanced** for model settings and output schemas. Choose **Save** to keep
+your changes.
+
 In **Designer**, open **Review actions** to duplicate, rename, delete, or
 import a review, or to open the gallery. Use **Export** to share a step or
 review as JSON. A saved **workflow** contains steps and settings, never API
@@ -431,7 +447,7 @@ For batches, workflow files, and scripting, see the
 
 | Problem | What to do |
 | --- | --- |
-| The provider is unavailable | Open **Settings → Connections** and check the account or API key |
+| The provider is unavailable | Open **Settings → Models** and check the account or API key |
 | PDF extraction fails | Read the error. In **Settings → Reviews**, choose **Repair** or **Install** for the parser, choose another method, or use LaTeX source |
 | The document is too long for the model | Use a shorter document, or give the step less context |
 | Calls are queued or rate-limited | Check your provider's limits and run fewer reviews at once |

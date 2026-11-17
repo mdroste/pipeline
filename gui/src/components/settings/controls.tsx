@@ -33,11 +33,9 @@ export function ProviderHeader({
   return (
     <header className="settings-provider-header">
       <div className="min-w-0 flex-1">
-        <h2 className="text-base font-semibold">{name}</h2>
+        <h2 className="settings-section-title">{name}</h2>
         {description && (
-          <p className="text-xs leading-5 text-gray-500 dark:text-neutral-400">
-            {description}
-          </p>
+          <p className="settings-section-description">{description}</p>
         )}
       </div>
       {children}
@@ -97,17 +95,13 @@ export function SectionHeader({
   help?: React.ReactNode;
 }) {
   return (
-    <div className="mb-3">
+    <div className="settings-section-header">
       <div className="flex items-center gap-1.5">
-        <h2 className="text-base font-semibold text-gray-900 dark:text-neutral-100">
-          {title}
-        </h2>
+        <h2 className="settings-section-title">{title}</h2>
         {help && <InfoButton label={title}>{help}</InfoButton>}
       </div>
       {description && (
-        <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1">
-          {description}
-        </p>
+        <p className="settings-section-description">{description}</p>
       )}
     </div>
   );

@@ -17,6 +17,7 @@ const SUPPORTED_TYPES: &[&str] = &[
     "object", "array", "string", "number", "integer", "boolean", "null",
 ];
 const SUPPORTED_KEYWORDS: &[&str] = &[
+    crate::pipeline::editorial::STAGE_KEY,
     "type",
     "enum",
     "minItems",
@@ -500,6 +501,17 @@ fn validate_schema_at(schema: &serde_json::Value, path: &str, depth: usize) -> R
     ] {
         if object.get(keyword).is_some_and(|value| !value.is_string()) {
             return Err(format!("{path}.{keyword}: expected a string"));
+        }
+    }
+    if let Some(stage) = object.get(crate::pipeline::editorial::STAGE_KEY) {
+        if depth != 0
+            || !stage
+                .as_str()
+                .is_some_and(|stage| crate::pipeline::editorial::STAGES.contains(&stage))
+        {
+            return Err(format!(
+                "{path}: unsupported or nested editorial contract stage"
+            ));
         }
     }
     if depth > 0 {

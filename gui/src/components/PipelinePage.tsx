@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
+import StepControls from "./pipeline-editor/StepControls";
 import PromptDialog from "./pipeline-editor/PromptDialog";
 import AddStepDialog from "./pipeline-editor/AddStepDialog";
 import {
@@ -70,7 +71,7 @@ export default function PipelinePage({
   } = view;
   const actions = useStepActions(editor, () => {
     setAddStepOpen(false);
-    setNavigatorView("steps");
+    setNavigatorView("stage");
   });
   useWorkflowShortcuts(editor, operations);
   const {
@@ -116,9 +117,10 @@ export default function PipelinePage({
     ];
     if (known.includes(initialStageId)) {
       setEditing(initialStageId);
+      setNavigatorView("stage");
       selectedEntry.current = initialStageId;
     }
-  }, [loading, config, initialStageId, setEditing]);
+  }, [loading, config, initialStageId, setEditing, setNavigatorView]);
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400">
@@ -167,12 +169,9 @@ export default function PipelinePage({
   };
 
   return (
-    <div className="flex h-full relative">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-col">
       {editor.recoveryWarning && (
-        <div
-          role="alert"
-          className="absolute z-20 top-0 inset-x-0 bg-amber-100 p-3 text-amber-950"
-        >
+        <div role="alert" className="ui-notice ui-notice--warning">
           {editor.recoveryWarning}
         </div>
       )}
@@ -201,20 +200,35 @@ export default function PipelinePage({
         />
       )}
 
-      {/* Left panel — list */}
       <WorkflowNavigator
         editor={editor}
         operations={operations}
-        actions={actions}
         view={view}
         onClose={onClose}
         onOpenGallery={onOpenGallery}
         showBack={showBack}
         leaveGuardedByShell={leaveGuardedByShell}
-      />
-      {/* Right panel — independently memoizable editors */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {navigatorView === "schemas" ? (
+      >
+        {!editing ? (
+          <div className="h-full overflow-y-auto px-8 py-6">
+            <div className="mx-auto w-full">
+              <WaveDiagram
+                steps={config.steps}
+                merge={config.merge}
+                inputMode={config.extraction?.input_mode}
+                adaptiveReview={autoReview}
+                adaptiveAgentCount={adaptiveAgentCount}
+                adaptiveAgentRange={adaptiveAgentRange}
+                selectedId={editing}
+                onSelect={(id) => {
+                  setEditing(id);
+                  setNavigatorView("stage");
+                }}
+                hint="Select any stage to edit its prompt, inputs, conditions, and models."
+              />
+            </div>
+          </div>
+        ) : navigatorView === "schemas" ? (
           <SchemaEditorPanel
             scopeKey={`${activeProfile}:${schemaEditorEpoch}`}
             target={
@@ -321,36 +335,31 @@ export default function PipelinePage({
           />
         ) : editingStep ? (
           <StepEditorPanel
+            controls={
+              <StepControls
+                key={editingStep.id}
+                step={editingStep}
+                steps={config.steps}
+                actions={actions}
+              />
+            }
             step={editingStep}
             config={config}
             settings={settings}
             catalogs={catalogs}
             conditionStepIds={conditionStepIds}
             advanced={editorMode === "advanced"}
+            onOpenAdvanced={(destination) => {
+              view.setEditorMode("advanced");
+              if (destination === "schema") setNavigatorView("schemas");
+            }}
             warningTarget={view.warningTarget}
             onUpdate={updateStep}
             onPhaseChange={updateStepPhase}
             onOutputRoleChange={updateOutputRole}
           />
-        ) : (
-          // Nothing selected: show the workflow itself, not an instruction.
-          <div className="h-full overflow-y-auto px-8 py-6">
-            <div className="mx-auto w-full max-w-2xl">
-              <WaveDiagram
-                steps={config.steps}
-                merge={config.merge}
-                inputMode={config.extraction?.input_mode}
-                adaptiveReview={autoReview}
-                adaptiveAgentCount={adaptiveAgentCount}
-                adaptiveAgentRange={adaptiveAgentRange}
-                selectedId={editing}
-                onSelect={(id) => setEditing(id)}
-                hint="Select any stage to edit its prompt, inputs, conditions, and models."
-              />
-            </div>
-          </div>
-        )}
-      </div>
+        ) : null}
+      </WorkflowNavigator>
     </div>
   );
 }

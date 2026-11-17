@@ -118,7 +118,7 @@ describe("Get started sheet", () => {
     expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
-        within(dialog).getByRole("button", { name: "Check connections" }),
+        within(dialog).getByRole("button", { name: "Check models" }),
       ).toHaveFocus(),
     );
     await user.keyboard("{Escape}");
@@ -232,7 +232,7 @@ describe("Get started sheet", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Return to setup" }));
     expect(
-      within(await sheet()).getByRole("heading", { name: "Connections" }),
+      within(await sheet()).getByRole("heading", { name: "Models" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(props.onNewProject).toHaveBeenCalledOnce();

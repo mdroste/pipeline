@@ -188,7 +188,7 @@ export default function ReviewRunView({
               </Button>
             )}
             {onConnections && (
-              <Button onClick={onConnections}>Check connections</Button>
+              <Button onClick={onConnections}>Model settings</Button>
             )}
           </div>
           {run.runId && (

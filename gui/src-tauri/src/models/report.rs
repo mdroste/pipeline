@@ -178,7 +178,12 @@ impl PipelineReport {
                         && !output.raw_text.trim().is_empty()
                         && output.step_id.split('/').next().unwrap_or(&output.step_id)
                             == self.products.primary_step_id;
-                    matches.then_some(output.raw_text.as_str())
+                    matches.then_some(
+                        output
+                            .rendered_markdown
+                            .as_deref()
+                            .unwrap_or(&output.raw_text),
+                    )
                 });
             }
             if let Some(output) =
@@ -186,7 +191,12 @@ impl PipelineReport {
                     s.phase == "sequential" && !s.skipped && !s.raw_text.trim().is_empty()
                 })
             {
-                return Some(output.raw_text.as_str());
+                return Some(
+                    output
+                        .rendered_markdown
+                        .as_deref()
+                        .unwrap_or(&output.raw_text),
+                );
             }
             if self
                 .failed_steps
@@ -200,7 +210,7 @@ impl PipelineReport {
                 .iter()
                 .rev()
                 .find(|s| !s.skipped && !s.raw_text.trim().is_empty())
-                .map(|s| s.raw_text.as_str());
+                .map(|s| s.rendered_markdown.as_deref().unwrap_or(&s.raw_text));
         }
         // Legacy
         self.editor

@@ -37,9 +37,9 @@ fn declaude_prompts_distinguish_missing_selected_reports_from_skipped_slots() {
             "",
         )
         .unwrap();
-        assert!(prompt.contains("TOPIC REFEREE 1\nSource quotes {step:declaude_referee_2}"));
-        assert!(prompt.contains("TOPIC REFEREE 3\n_(skipped: run_if condition not met)_"));
-        assert!(!prompt.contains("TOPIC REFEREE 2\n{step:"));
+        assert!(prompt.contains("SUBJECT EDITOR 1\nSource quotes {step:declaude_referee_2}"));
+        assert!(prompt.contains("SUBJECT EDITOR 3\n_(skipped: run_if condition not met)_"));
+        assert!(!prompt.contains("SUBJECT EDITOR 2\n{step:"));
         assert!(prompt.contains("no output"));
         assert!(prompt.contains("/orientation.json"));
     }

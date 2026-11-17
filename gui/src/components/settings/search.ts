@@ -181,9 +181,9 @@ export function settingsSearchEntries(
       s.codex_backend || "app_server",
     );
   add(
-    "workflow",
+    "providers",
     "workflow-models",
-    "Model defaults",
+    "Review models",
     "Default review model, second opinion, stage exceptions, document bundle preparation orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
     "",
   );
@@ -221,7 +221,7 @@ export function settingsSearchEntries(
       .map((agent) => stageModelSummary(s, agent, models, efforts, {}))
       .join("; ");
     add(
-      "workflow",
+      "providers",
       target,
       label,
       "Review stage provider, model, and thinking level",
@@ -229,7 +229,7 @@ export function settingsSearchEntries(
     );
   }
   add(
-    "workflow",
+    "providers",
     "usage-limit-fallback",
     "Continue after an account usage limit",
     "Backup provider, fallback, subscription window, API quota, credits",

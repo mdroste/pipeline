@@ -63,9 +63,7 @@ describe("DepsCheck", () => {
       />,
     );
     expect(
-      screen.getByText(
-        "Connect at least one provider in Settings → Connections.",
-      ),
+      screen.getByText("Connect at least one provider in Settings → Models."),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
   });

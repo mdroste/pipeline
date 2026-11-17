@@ -1,140 +1,104 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.5.2](https://img.shields.io/badge/version-1.5.2-blue)](CHANGELOG.md)
+[![Version 1.5.3](https://img.shields.io/badge/version-1.5.3-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
 [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#install)
 
-Pipeline is a desktop app for academic research. Use it to review a paper,
-work on a research project with an AI assistant, or automate a sequence of
-writing and review tasks.
+Pipeline is a desktop app for academic research with AI assistants. It supports
+paper reviews, work on manuscripts and code, and repeated tasks such as review
+and revision. You can use a ChatGPT or Claude subscription, an API key, or a
+local model.
 
-[Download](https://github.com/mdroste/pipeline/releases/latest) ·
-[User guides](docs/README.md) · [Changelog](CHANGELOG.md) ·
-[Privacy](PRIVACY.md) · [Contributing](.github/CONTRIBUTING.md)
+[Download](https://github.com/mdroste/pipeline/releases/latest) · [User
+guides](docs/README.md) · [Changelog](CHANGELOG.md) ·
+[Contributing](.github/CONTRIBUTING.md)
+
+## Paper reviews
+
+Pipeline reads your paper and automatically selects AI reviewers to fit its
+subject and methods. The reviewers work in parallel, each assessing the paper
+from their assigned perspective. Pipeline then combines their comments and
+checks each one against the text. The report includes the individual responses
+and sources, so you can examine the reasoning behind a finding and assess it
+yourself.
+
+Choose **New review** from Home, select your paper, and choose **Paper Review**.
+Check the model and extraction settings, then choose **Start review** to inspect
+the plan. Choose **Start review** again to run it.
+
+You can review papers or slides in PDF, Microsoft Word, or LaTeX source format.
+Pipeline can use your selected AI model to read PDFs, or (optionally) you can
+install a really good PDF parser (PaddleOCR) from **Settings → Reviews** that
+typically does a better job extracting equations and tables from PDFs than
+Claude, ChatGPT, or Gemini do.
+
+**Paper Review (Fast)** uses fewer reviewers. **Slide Review** and **Grant
+Proposal Review** cover presentations and proposals.
+
+You can annotate findings, compare reviews, and track comments across drafts.
+See the [review guide](docs/reviews.md).
+
+## Research projects
+
+A project keeps related conversations and research material together. Create one
+from **Projects** and attach a folder containing your manuscripts and code, or
+begin by collecting sources and notes.
+
+In each conversation, you choose the material and tools available to the
+assistant. You can give it instructions and run LaTeX, Stata, R, or Python
+commands. Edit conversations work on a separate copy of the project; **Review
+edits** lets you inspect and accept changes.
+
+Automations connect these activities. For example, **Review and revise** links a
+review to a conversation that works on revisions. Open **Automations** to choose
+the task, timing, and limits. Tasks run while Pipeline is open and the computer
+is awake.
+
+See [Projects and conversations](docs/projects.md), [Write and
+review](docs/analysis-and-writing.md), and [Automations](docs/automations.md).
 
 ## Install
 
-Download the installer for your computer from
-[Releases](https://github.com/mdroste/pipeline/releases/latest).
+Download the macOS, Windows, or Linux installer from
+[Releases](https://github.com/mdroste/pipeline/releases/latest). The **Get
+started** guide checks your connections and finds research tools installed on
+your computer.
 
-See [Support](.github/SUPPORT.md) for system requirements.
+Open **Settings → Models** to connect a model provider:
 
-On first launch, a short **Get started** guide shows which connections are
-ready and finds research tools on your computer, such as Stata, R, and
-Python. You can reopen it from Home.
-
-## Connect a provider
-
-Open **Settings → Connections** and set up at least one connection.
-
-| Connection | What you need |
+| Connection | Setup |
 | --- | --- |
-| ChatGPT subscription | Install [Codex](https://github.com/openai/codex), then choose **Sign in to ChatGPT** in Pipeline |
-| Claude subscription | Install [Claude Code](https://code.claude.com/docs/en/setup) and run `claude auth login` with your subscription account |
-| OpenAI, Anthropic, or Google API | An API key |
-| Local or custom model server | An OpenAI-compatible server URL and model |
+| ChatGPT subscription | Install [Codex](https://github.com/openai/codex), then choose **Sign in to ChatGPT** |
+| Claude subscription | Install [Claude Code](https://code.claude.com/docs/en/setup), then run `claude auth login` |
+| OpenAI, Anthropic, or Google API | Enter an API key |
+| Local or custom model | Enter an OpenAI-compatible server URL and model |
 
-Choose the connection in the conversation’s **Model and thinking** picker.
-Reviews and conversations list the thinking levels available for each model.
-API and local connections can use project and research tools, web search,
-and public page reading. See [conversation setup](docs/connections.md#api-conversations)
-for model requirements and the optional command engine.
-
-Reviews support **Web search** with every connection. Enable it on individual
-steps in the **Review designer**. OpenAI API and local/custom servers use
-Pipeline’s search and page-reading tools with a model that supports tool calls.
-See [review search](docs/connections.md#web-search-in-reviews).
-
-Subscription use counts against your plan. If you're signed out, Pipeline
-asks you to sign in again instead of switching to an API key. See
-[Connections](docs/connections.md) for details.
-
-## Run your first review
-
-1. Choose **New review** from Home.
-2. Select a PDF, a Word `.docx` file, a `.tex` file, or a LaTeX project
-   folder. LaTeX source keeps equations and structure intact.
-3. Choose **Paper Review**, or **Paper Review (Fast)** for fewer reviewers.
-   For a slide deck exported as PDF, choose **Slide Review**. For a proposal,
-   choose **Grant Proposal Review**.
-4. Check the provider, model, and PDF extraction settings, then choose
-   **Start review** to see the plan.
-5. Check the plan, then choose **Start review** again, or **Add to queue** if
-   other reviews are running.
-
-When the review finishes, read the report and open **Sources** to see the
-document and the evidence behind each comment. Paper Review picks subject and
-method specialists for your paper, combines their comments, and checks each
-one against the text. Before you rely on a comment, check its claims,
-calculations, and citations.
-
-Pipeline saves every report with the individual responses and sources. You
-can annotate findings, compare runs, and track comments across drafts. See
-the [review guide](docs/reviews.md).
-
-## Work on a project
-
-Create a project from **Projects**. Attach a folder to work with existing
-manuscripts and code, or start without one to collect sources and notes.
-
-Conversations use the project material and tools you choose. You can set
-assistant instructions and run your own LaTeX, Stata, R, or Python commands.
-See [Projects and conversations](docs/projects.md) and
-[Write and review](docs/analysis-and-writing.md).
-
-## Automate repeated work
-
-Open **Automations**, or choose **Run an automation** from the **+** menu
-below a conversation's message box. Start from **Review and revise**, **Follow up**, or **Wait for input**,
-choose the conversation, review, timing, and limits, and check the plan before
-you start.
-
-Automations run only while Pipeline is open and the computer is awake.
-**Keep running when the window closes** keeps Pipeline going in the
-background. See [Automations](docs/automations.md).
+Choose a model in the conversation’s **Model and thinking** picker. Subscription
+use counts against your plan. Tool and command support depends on the connection
+and operating system; see [Models](docs/connections.md) for setup and
+[Support](.github/SUPPORT.md) for system requirements.
 
 ## Data and privacy
 
-Pipeline has no telemetry and needs no Pipeline account. AI providers receive
-the prompts and material for the calls you run. Enabled web tools send queries
-and page requests to search services and websites, including with local models.
+Research data is saved on your computer, by default in `~/.pipeline/`. AI
+providers receive the prompts and material used in your requests. Enabled web
+tools send queries and page requests to search services and websites, including
+when you use a local model.
 
-Your research is stored in `~/.pipeline/` unless you choose another
-[research data folder](docs/settings.md#research-data-folder). Pipeline
-encrypts saved API keys, but not reports, documents, conversations, or logs.
-Uninstalling the app leaves your research data in place. See
-[Privacy](PRIVACY.md).
+Saved API keys are encrypted. Reports, documents, conversations, and logs remain
+readable on disk. Your research data stays in place when you uninstall the app.
+See [Privacy](PRIVACY.md).
 
-## Current limitations
+## Command line and development
 
-- PDF extraction can lose equations, table structure, or reading order. Check
-  **Sources** when these matter, or see the
-  [extraction options](docs/reviews.md#pdf-extraction).
-- In Edit conversations, Pipeline prepares a separate copy of your project.
-  Use **Review edits** to accept or discard changes; accepted changes can be undone.
-  Large projects may need a smaller selection of files or **Direct edits**.
-- Searching the web and giving commands internet access are separate choices in
-  **Assistant settings → Manage agent profiles… → Access & inheritance**. Pipeline
-  downloads command software when needed. Web search needs no additional software.
-- API and local models can run general commands on macOS, or Linux with
-  `bubblewrap` and `socat`. On Windows, these models can run research commands you
-  configure, but cannot run general commands. Claude Code needs Windows
-  Subsystem for Linux (WSL2) to run general commands on Windows.
+The bundled `pipeline-cli` runs reviews from the terminal and shares the app’s
+settings and saved runs. See the [command-line guide](docs/cli.md) for its
+location and usage.
 
-See [conversation access](docs/connections.md#conversation-access) for setup,
-and [Review edits](docs/analysis-and-writing.md#review-edits) for working with copies.
-
-## Command line and source builds
-
-`pipeline-cli` runs reviews without the desktop app, using the same settings
-and saved runs. The installer puts it beside the app but doesn't add it to
-your `PATH`. The [command-line guide](docs/cli.md) gives its location on each
-system.
-
-To run the app from source, install Node.js 24.18.0 and Rust 1.97.1, then:
+To run from source, install Node.js 24.18.0 and Rust 1.97.1, then:
 
 ```bash
 git clone https://github.com/mdroste/pipeline.git
@@ -143,10 +107,8 @@ npm ci
 npm run tauri dev
 ```
 
-`npm run tauri build` creates an installer. See [Contributing](.github/CONTRIBUTING.md)
-for platform dependencies and tests.
+`npm run tauri build` creates an installer. See
+[Contributing](.github/CONTRIBUTING.md) for platform dependencies and tests.
 
-## License
-
-Pipeline uses the [MIT License](LICENSE). The bundled Poppler tools use the
-GPL. See [third-party licenses](THIRD_PARTY_LICENSES.md).
+Pipeline uses the [MIT License](LICENSE). The bundled Poppler tools use the GPL;
+see [third-party licenses](THIRD_PARTY_LICENSES.md).

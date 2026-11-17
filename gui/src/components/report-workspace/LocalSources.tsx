@@ -42,6 +42,7 @@ export default function LocalSources({
       // form; other structured artifacts get a generic schema-aware view.
       // The raw JSON stays inspectable in the artifact explorer.
       markdown: `# ${step.step_label}\n\n**Phase:** ${step.phase} · **Agent:** ${step.agent || "default"}\n\n---\n\n${
+        step.rendered_markdown ??
         renderSpecialistMarkdown(step.raw_text) ??
         (step.structured_json
           ? renderStructuredMarkdown(step.raw_text)

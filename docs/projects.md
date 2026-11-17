@@ -38,7 +38,7 @@ Command/Ctrl+K, or choose **Search** in the sidebar, to find any project,
 conversation, review, automation, or view by name. The layout menu switches
 between **Project only**, **Conversation only**, and
 **Project + conversation**. Project areas work without a model connection.
-Conversations and reviews need one. See [Connections](connections.md).
+Conversations and reviews need one. See [Models](connections.md).
 
 ## Work in a conversation
 
@@ -109,7 +109,7 @@ default. API and local connections also accept a name under **Model ID**.
 
 The conversation remembers your choice. Switching providers keeps recent
 history available to the next provider. For ChatGPT, the picker also shows
-the signed-in account and remaining usage. See [Connections](connections.md)
+the signed-in account and remaining usage. See [Models](connections.md)
 for sign-in, keys, local servers, and command setup.
 
 For **ChatGPT** and **Claude Code**, open **Tool approvals** in the same

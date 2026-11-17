@@ -363,8 +363,8 @@ export default function DepsCheck({
       ? "Model access and PDF parsing need attention."
       : !modelAccessReady
         ? system
-          ? "Connect at least one provider in Settings → Connections."
-          : "Check the required model connections in Settings → Connections."
+          ? "Connect at least one provider in Settings → Models."
+          : "Check the required model connections in Settings → Models."
         : bundledPdfUnavailable
           ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
           : !pdfReady

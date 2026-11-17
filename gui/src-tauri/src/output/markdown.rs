@@ -29,9 +29,9 @@ fn between_report_markers(trimmed: &str) -> Option<String> {
     const START: &str = "<!-- REPORT START -->";
     const END: &str = "<!-- REPORT END -->";
 
-    let start_pos = trimmed.find(START)?;
+    let start_pos = outside_fences(trimmed, START)?;
     let content_start = start_pos + START.len();
-    if let Some(end_pos) = trimmed[content_start..].find(END) {
+    if let Some(end_pos) = outside_fences(&trimmed[content_start..], END) {
         return Some(
             trimmed[content_start..content_start + end_pos]
                 .trim()
@@ -40,6 +40,28 @@ fn between_report_markers(trimmed: &str) -> Option<String> {
     }
     // START found but no END — take everything after START
     Some(trimmed[content_start..].trim().to_string())
+}
+
+/// Report markers quoted in literal evidence are content, not delimiters.
+/// In particular a generated editorial report must preserve those exact bytes.
+fn outside_fences(text: &str, needle: &str) -> Option<usize> {
+    let mut fence = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if let Some((marker, count)) = fence_marker(line) {
+            match fence {
+                Some((open, length)) if marker == open && count >= length => fence = None,
+                None => fence = Some((marker, count)),
+                _ => {}
+            }
+        } else if fence.is_none() {
+            if let Some(found) = line.find(needle) {
+                return Some(offset + found);
+            }
+        }
+        offset += line.len();
+    }
+    None
 }
 
 pub(crate) fn fence_marker(line: &str) -> Option<(u8, usize)> {
@@ -155,8 +177,9 @@ fn normalize_display_environment(line: &str) -> Option<String> {
 /// Remove UI-only run telemetry from a report before public export.
 pub fn clean_export_markdown(markdown: &str) -> String {
     let mut clean = markdown.to_string();
-    while let Some(start) = clean.find(RUN_DETAILS_START) {
-        let Some(relative_end) = clean[start + RUN_DETAILS_START.len()..].find(RUN_DETAILS_END)
+    while let Some(start) = outside_fences(&clean, RUN_DETAILS_START) {
+        let Some(relative_end) =
+            outside_fences(&clean[start + RUN_DETAILS_START.len()..], RUN_DETAILS_END)
         else {
             break;
         };

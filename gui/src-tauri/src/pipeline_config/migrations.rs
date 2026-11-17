@@ -10,6 +10,7 @@ use std::fs;
 use std::path::Path;
 
 mod catalog;
+mod declaude;
 mod prompts;
 mod retirement;
 mod suites;

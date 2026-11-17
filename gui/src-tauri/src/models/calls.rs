@@ -143,6 +143,10 @@ pub struct StepOutput {
     /// This controls persistence/export and schema-aware rerun reuse.
     #[serde(default)]
     pub structured_json: bool,
+    /// Host-rendered view of a validated structured editorial record. Raw JSON
+    /// remains the durable evidence; models never author this display field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_markdown: Option<String>,
     /// Wall-clock time the step's LLM call took, in seconds. 0 for old reports.
     #[serde(default)]
     pub duration_secs: u64,

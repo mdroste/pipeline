@@ -2,12 +2,14 @@
 //! from the curated catalog into each saved profile; they grant no tools or
 //! scientific-review instructions. Three fixed slots read an ordered, unique
 //! list from orientation, so ordinary survey guards own selection and resume.
-//! Structured candidates remain inspectable while the final independent check
-//! publishes Markdown. Explicit slot references expose missing reports, allowing
-//! the editor to distinguish an unselected slot from incomplete selected coverage.
+//! Structured candidates and dispositions remain inspectable; the host renders
+//! accepted exact replacements without a model-authored publication pass. Slot
+//! references distinguish unselected editors from incomplete selected coverage.
 
 use super::*;
 
+#[cfg(test)]
+mod dispatch_tests;
 mod schemas;
 #[cfg(test)]
 mod tests;
@@ -82,10 +84,15 @@ fn add_reports(step: &mut StepConfig, producers: &[&str]) {
 
 pub(super) fn declaude_profile() -> ProfileData {
     let mut steps = Vec::new();
+    let labels = [
+        "Edit Document Prose",
+        "Edit Second Subject (Optional)",
+        "Edit Third Subject (Optional)",
+    ];
     for (index, id) in REFEREES.iter().enumerate() {
         let mut step = editorial_step(
             id,
-            &format!("Topic Referee {}", index + 1),
+            labels[index],
             Phase::Parallel,
             format!(
                 "Your assigned topic is the subject ID at /referees/{index} in the orientation map. \
@@ -110,24 +117,25 @@ pub(super) fn declaude_profile() -> ProfileData {
     }
     let mut editor = editorial_step(
         EDITOR,
-        "Consolidate Prose Edits",
+        "Reconcile Proposed Edits",
         Phase::Sequential,
         CONSOLIDATE.into(),
     );
     add_reports(&mut editor, &REFEREES);
     editor.dependency_policy.required = vec![REFEREES[0].into()];
-    editor.output_schema = Some(schemas::edits_schema());
+    editor.output_schema = Some(schemas::consolidated_schema());
     steps.push(editor);
 
     let mut report = editorial_step(
         REPORT,
-        "Verify Replacements & Write Report",
+        "Verify Meaning and Edit Interactions",
         Phase::Sequential,
         VERIFY.into(),
     );
     add_reports(&mut report, &REFEREES);
     add_reports(&mut report, &[EDITOR]);
     report.dependency_policy.required = vec![REFEREES[0].into(), EDITOR.into()];
+    report.output_schema = Some(schemas::verification_schema());
     steps.push(report);
 
     let mut profile = ProfileData::new(

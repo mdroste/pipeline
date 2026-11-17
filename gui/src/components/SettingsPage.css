@@ -1,5 +1,9 @@
 .settings-shell {
   @apply flex h-full min-h-0 min-w-0 overflow-hidden bg-sunken text-ink;
+  --ui-control-height: 2rem;
+  --ui-control-height-sm: 1.875rem;
+  --settings-row-padding: 0.5rem;
+  --settings-card-padding: 1rem;
 }
 .settings-content {
   @apply min-w-0 flex-1 overflow-y-auto;
@@ -18,7 +22,7 @@
   padding-top: 0;
 }
 .settings-jump-nav button {
-  @apply rounded-ui-sm px-2 py-1 text-ui-label text-ink-muted hover:bg-sunken hover:text-ink;
+  @apply rounded-ui-sm px-2 py-1 text-ui-label text-ink-muted hover:bg-surface hover:text-ink;
   min-height: var(--ui-control-height-sm);
 }
 .settings-anchor:focus {
@@ -56,41 +60,70 @@
 /* Settings has an independent category rail and one scrolling content pane. */
 .settings-page-body {
   @apply mx-auto flex max-w-[980px] flex-col;
-  gap: var(--ui-section-gap);
-  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-8);
+  gap: var(--ui-space-3);
+  padding: var(--ui-space-3) var(--ui-page-gutter) var(--ui-space-6);
 }
 .settings-card {
-  padding: 1.25rem;
-  border-radius: 0.875rem;
+  padding: var(--settings-card-padding);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
   box-shadow: none;
 }
 .settings-sidebar {
-  padding-top: 1.5rem;
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--ui-space-4) var(--ui-space-2) var(--ui-space-2);
+  border-right: 1px solid var(--ui-border);
+  background: var(--ui-sunken);
 }
 .settings-nav-item {
   @apply flex w-full items-center gap-2.5 rounded-ui-sm text-left text-ui-label text-ink-muted hover:bg-sunken hover:text-ink;
-  padding: var(--ui-space-2) var(--ui-space-3);
+  min-height: 2.125rem;
+  padding: 0.375rem var(--ui-space-2);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
 }
 .settings-nav-item.is-active {
-  @apply bg-line text-ink;
+  @apply bg-surface text-ink;
+  box-shadow: var(--ui-shadow-1);
 }
 .settings-sidebar-title {
-  @apply mx-3 mb-4 text-ui-title font-semibold tracking-tight;
+  @apply mx-2 mb-3 text-ui-title font-semibold tracking-tight;
 }
 .settings-sidebar nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
   overflow-y: auto;
-  padding-inline: var(--ui-space-2);
 }
 .settings-search-bar {
-  @apply sticky top-0 z-20 flex items-center gap-3 border-b border-line bg-surface;
-  padding: var(--ui-space-3) var(--ui-page-gutter);
+  flex-shrink: 0;
+  margin-bottom: var(--ui-space-3);
+}
+.settings-search-field {
+  position: relative;
+  width: 100%;
+}
+.settings-search-icon {
+  position: absolute;
+  left: 0.625rem;
+  top: 50%;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  color: var(--ui-muted);
+  pointer-events: none;
 }
 .settings-search-bar input {
   width: 100%;
-  max-width: 34rem;
-}
-.dark .settings-search-bar {
-  background: var(--ui-sunken);
+  padding-left: 2rem;
+  font-size: var(--ui-text-label);
 }
 .dark .settings-search-bar input {
   background: var(--ui-raised);
@@ -118,7 +151,7 @@
 .settings-row,
 .settings-toggle {
   @apply flex items-center justify-between gap-4 border-b border-line;
-  padding-block: var(--ui-row-padding);
+  padding-block: var(--settings-row-padding);
 }
 .settings-row:last-child,
 .settings-toggle:last-child,
@@ -134,7 +167,8 @@
 }
 .settings-row-label {
   display: block;
-  font-size: 0.875rem;
+  font-size: var(--ui-text-label);
+  line-height: 1.4;
   font-weight: 500;
 }
 .settings-row-description,
@@ -148,14 +182,14 @@
   margin-bottom: 0.35rem;
 }
 .settings-row-control {
-  width: 15rem;
+  width: 14rem;
   max-width: 48%;
   flex-shrink: 0;
 }
 .settings-field input,
 .settings-field select,
 .settings-row-control select {
-  font-size: 0.875rem;
+  font-size: var(--ui-text-label);
 }
 .settings-toggle button {
   margin-top: 0;
@@ -191,13 +225,14 @@
   margin-top: 0.5rem;
 }
 .settings-segmented {
-  @apply flex rounded-lg border border-gray-300 bg-gray-50 p-1 dark:border-neutral-700 dark:bg-neutral-950;
+  @apply flex rounded-ui-sm bg-sunken p-0.5;
 }
 .settings-segmented label {
   flex: 1;
   position: relative;
   text-align: center;
-  padding: 0.4rem 0.5rem;
+  padding: 0.25rem 0.5rem;
+  min-height: 1.75rem;
   font-size: 0.8125rem;
   cursor: pointer;
   border-radius: 0.3rem;
@@ -215,15 +250,15 @@
 }
 .settings-reading-preview {
   @apply rounded-lg bg-gray-50 text-gray-600 dark:bg-neutral-950 dark:text-neutral-300;
-  padding: 1rem;
-  margin-top: 1rem;
+  padding: 0.625rem 0.75rem;
+  margin-top: 0.625rem;
   font-size: 0.875rem;
   line-height: 1.6;
 }
 .settings-provider-scope {
   @apply border-t border-line;
-  padding-top: 0.875rem;
-  margin-top: 0.875rem;
+  padding-top: 0.625rem;
+  margin-top: 0.625rem;
 }
 .settings-provider-header + .settings-provider-scope {
   border-top: 0;
@@ -306,12 +341,12 @@
 }
 .settings-stage-body {
   @apply rounded-lg bg-sunken;
-  margin-top: 1rem;
-  padding: 1rem;
+  margin-top: 0.625rem;
+  padding: 0.75rem;
 }
 .settings-jump-nav {
-  @apply flex flex-wrap gap-1 border-b border-line;
-  padding: var(--ui-space-1) var(--ui-page-gutter);
+  @apply mx-auto flex max-w-[980px] flex-wrap gap-1;
+  padding: var(--ui-space-2) var(--ui-page-gutter) 0;
 }
 .settings-anchor {
   scroll-margin-top: 6rem;
@@ -332,8 +367,9 @@
 .settings-load-warning {
   margin: var(--ui-space-4) var(--ui-page-gutter) 0;
 }
-[data-density="compact"] .settings-card {
-  padding: 0.875rem 1.125rem;
+[data-density="compact"] .settings-shell {
+  --settings-row-padding: 0.375rem;
+  --settings-card-padding: 0.75rem 1rem;
 }
 [data-density="compact"] .settings-nav-item {
   padding-top: 0.4rem;
@@ -385,6 +421,8 @@
   }
   .settings-sidebar nav {
     display: flex;
+    flex-direction: row;
+    flex: none;
     flex-wrap: wrap;
     gap: var(--ui-space-1);
   }
@@ -398,7 +436,6 @@
   }
 }
 @container settings-content (max-width: 32rem) {
-  .settings-search-bar,
   .settings-page-body,
   .settings-page-heading,
   .settings-jump-nav {
@@ -415,5 +452,36 @@
 .settings-page-heading {
   max-width: 980px;
   margin-inline: auto;
-  padding: var(--ui-space-6) var(--ui-page-gutter) 0;
+  padding: var(--ui-space-4) var(--ui-page-gutter) 0;
+}
+
+.settings-page-heading .ui-page-header {
+  margin-bottom: 0;
+}
+.settings-page-heading .ui-page-header h1 {
+  font-size: var(--ui-text-display);
+  letter-spacing: -0.025em;
+}
+.settings-page-heading .ui-page-description {
+  margin-top: 0.25rem;
+  line-height: 1.45;
+}
+.settings-section-header {
+  margin-bottom: 0.5rem;
+}
+.settings-section-title {
+  color: var(--ui-text);
+  font-size: var(--ui-text-body);
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.settings-section-description {
+  margin-top: 0.1875rem;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  line-height: 1.45;
+}
+:root .settings-shell select:not([multiple]):is(:not([size]), [size="1"]) {
+  padding-block: 0.3125rem;
 }
