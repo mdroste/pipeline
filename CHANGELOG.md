@@ -3,7 +3,7 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
-## 1.5.1 — 2026-11-16
+## 1.5.2 — 2026-11-16
 
 - Allow setup to complete when either ChatGPT or Claude is connected, and
   check that the selected provider is ready before starting a review.
@@ -12,6 +12,7 @@ public release was not tracked as a stable release series.
 - Track multiple documents per project, including paper drafts, slide decks,
   appendices, response letters, and other document types. Choose documents for editing,
   building, and review.
+- Add a standalone Windows network harness for command-isolation experiments.
 
 ## 1.5.0 — 2026-11-15
 
