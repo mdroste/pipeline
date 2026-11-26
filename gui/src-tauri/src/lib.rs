@@ -4,6 +4,8 @@ pub mod agent_runtime;
 mod app_close;
 mod app_menu;
 pub mod auto_review;
+pub mod cli;
+pub mod cli_tools;
 pub mod commands;
 pub mod connections;
 pub mod deps;
@@ -14,6 +16,7 @@ pub mod env;
 pub mod file_stream;
 pub mod file_viewer;
 pub mod findings;
+mod main_window;
 pub mod model_catalog;
 pub mod models;
 pub mod orchestration;
@@ -112,12 +115,15 @@ pub fn run() {
             },
         )
         .setup(|app| {
+            main_window::create(app)?;
             // Pin storage before any recovery or background work opens a store.
             // Settings remains accessible if a configured drive is unavailable.
             let _ = storage::data_root();
             env::initialize_resources(app.path().resource_dir().ok());
             commands::cleanup_stale_print_exports();
             engines::schedule_stale_managed_engine_cleanup();
+            std::thread::spawn(cli_tools::refresh_installed);
+            engines::schedule_default_gpu_setup(crate::emit::from_app(app.handle().clone()));
             // Recovery scales with run history, so it must not hold the window
             // blank. The coordinator still starts after it.
             let handle = app.handle().clone();
@@ -299,6 +305,16 @@ pub fn run() {
             workbench::commands::workbench_repository_status,
             workbench::commands::workbench_repository_fetch,
             workbench::commands::workbench_version_control_state,
+            workbench::commands::workbench_github_inspect,
+            workbench::commands::workbench_citations,
+            workbench::commands::workbench_check_policy,
+            workbench::commands::workbench_check_run,
+            workbench::commands::workbench_submission_capture,
+            workbench::commands::workbench_submission_export,
+            workbench::commands::workbench_zotero_preview,
+            workbench::commands::workbench_zotero_import,
+            workbench::commands::workbench_github_draft,
+            workbench::commands::workbench_github_comment,
             workbench::commands::workbench_version_control_diff,
             workbench::commands::workbench_version_control_history,
             workbench::commands::workbench_version_control_commit,
@@ -465,14 +481,15 @@ pub fn run() {
             commands::maintenance::set_storage_directory,
             // Managed local engines
             commands::maintenance::list_engines,
+            commands::maintenance::cli_tools_status,
+            commands::maintenance::install_cli_tools,
+            commands::maintenance::uninstall_cli_tools,
             commands::maintenance::install_engine,
             commands::maintenance::uninstall_engine,
             commands::maintenance::cancel_engine_install,
             pipeline::codex_server::connection::workflow_codex_status,
             pipeline::codex_server::connection::workflow_codex_acknowledge_attempt,
             pipeline::codex_server::connection::workflow_codex_reconcile_attempt,
-            pipeline::codex_server::connection::workflow_codex_login_start,
-            pipeline::codex_server::connection::workflow_codex_login_cancel,
             agent_runtime::codex::chatgpt::chatgpt_account_status,
             agent_runtime::codex::chatgpt::chatgpt_login_start,
             agent_runtime::codex::chatgpt::chatgpt_login_cancel,
@@ -508,7 +525,7 @@ fn stop_runtimes() {
     tauri::async_runtime::block_on(workbench::api::shutdown());
     tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
     tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
-    tauri::async_runtime::block_on(workbench::commands::stop_codex_runtime());
+    tauri::async_runtime::block_on(workbench::runtime::stop_codex_runtime());
     tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
 }
 
@@ -543,3 +560,6 @@ mod smoke_tests {
         assert!(stops.find("cancel_install()").unwrap() < coordinator);
     }
 }
+
+pub mod cancellation;
+pub mod process_tree;

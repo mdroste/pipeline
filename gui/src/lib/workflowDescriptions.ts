@@ -6,30 +6,27 @@ const BUILTINS: Record<
 > = {
   "auto-paper-review": {
     category: "Papers",
-    outcome:
-      "A detailed review of claims, methods, and evidence, with specialists chosen for your paper.",
+    outcome: "A detailed review of an academic research paper.",
     inputs: "Paper or LaTeX source",
   },
   "auto-paper-review-fast": {
     category: "Papers",
-    outcome:
-      "A focused first pass with fewer specialists. Use it to identify the main issues before a deeper review.",
+    outcome: "A quick review of an academic research paper.",
     inputs: "Paper or LaTeX source",
   },
   "slide-review": {
     category: "Presentations",
-    outcome: "Feedback on the argument, evidence, and clarity of a slide deck.",
+    outcome: "A review of a presentation slide deck.",
     inputs: "PDF, PowerPoint (.pptx), or Beamer (.tex) slides",
   },
   "grant-review": {
     category: "Proposals",
-    outcome:
-      "A review of the proposal's aims, methods, feasibility, and case for support.",
+    outcome: "A review of a grant proposal.",
     inputs: "Grant proposal",
   },
   declaude: {
     category: "Writing",
-    outcome: "Suggested edits to make writing clearer and more natural.",
+    outcome: "Edits for clearer, more natural writing.",
     inputs: "Draft document",
   },
 };

@@ -1,12 +1,22 @@
 # Command line
 
-`pipeline-cli` runs reviews and other saved workflows without the desktop
-app. It uses the same settings, connections, workflows, and run history.
+`pipeline-cli` runs reviews and other saved workflows without opening a desktop
+window. It uses the same settings, connections, workflows, and run history.
 
 ## Find or build the command
 
-The installer puts `pipeline-cli` beside the app. It doesn't add it to your
-`PATH`. On macOS it's inside the app bundle:
+Open **Settings → Advanced & About → Command-line tools** and choose **Install
+command**. This installs a small launcher in `~/.pipeline/bin`, using the engine
+and PDF tools in the installed app. No extra download is needed. Settings shows
+commands to try it and add its folder to your terminal's `PATH`. For future
+terminals, add that folder to your user `PATH`.
+
+The command follows app updates. After moving the app or replacing the command,
+open the app and choose **Repair command** if needed. **Uninstall command**
+removes the user launcher, leaving your data, models, and app intact.
+
+Existing bundled command paths still work. The installer keeps a small
+compatibility launcher beside the app, so scripts need no changes. On macOS:
 
 ```bash
 "/Applications/Pipeline.app/Contents/MacOS/pipeline-cli" --help
@@ -19,15 +29,17 @@ you chose another:
 & "$env:LOCALAPPDATA\Pipeline\pipeline-cli.exe" --help
 ```
 
-The Linux AppImage has no installer, so `pipeline-cli` stays inside the image.
-Extract the image to reach it, or build it from source as shown below:
+On Linux, installing the command in Settings points it to the AppImage file.
+Keep that file in a stable location. You can also extract the image to reach
+its bundled command, or build from source:
 
 ```bash
 ./Pipeline-*-Linux.AppImage --appimage-extract
 ./squashfs-root/usr/bin/pipeline-cli --help
 ```
 
-To build it from a source checkout:
+To build the standalone CLI from a source checkout (no desktop installation
+required):
 
 ```bash
 cd gui

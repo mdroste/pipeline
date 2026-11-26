@@ -41,24 +41,26 @@ async fn run(
     let bus: crate::emit::EventBus = recorder.clone();
     let empty = std::collections::HashMap::new();
     let preloaded = std::collections::HashMap::new();
-    let result = execute_steps(
-        &bus,
+    let result = execute_steps(crate::pipeline::executor::ExecutionRequest {
+        app: &bus,
         config,
-        "",
-        &serde_json::Value::Null,
-        paper_text_path,
-        "",
-        source_path,
-        "",
-        "",
-        &empty,
-        &empty,
-        &empty,
-        &preloaded,
-        None,
-        &crate::settings::Settings::default(),
-        None,
-    )
+        variables: &empty,
+        extra_inputs: &empty,
+        extra_input_sources: &empty,
+        preloaded: &preloaded,
+        write_dir: None,
+        settings: &crate::settings::Settings::default(),
+        author_note: None,
+        sources: crate::pipeline::executor::ExecutionSources {
+            orientation_path: "",
+            orientation_value: &serde_json::Value::Null,
+            paper_text_path,
+            document_bundle_path: "",
+            source_path,
+            paper_type: "",
+            survey_hint: "",
+        },
+    })
     .await
     .unwrap();
     let events = recorder.0.lock().unwrap().clone();

@@ -308,3 +308,81 @@ fn pipelines_other_folders_stay_out_of_reach_of_the_page() {
     assert!(checked_path(".git/config").is_err());
     assert!(checked_path(".pipeline-workbench/generated/a/figure.svg").is_ok());
 }
+
+#[test]
+fn a_destination_chosen_on_main_never_receives_another_branch() {
+    let c = clones();
+    act(
+        &c.mine,
+        Action::SelectRemote {
+            name: "origin".into(),
+            branch: "main".into(),
+        },
+    )
+    .unwrap();
+    let main = sh(&c.mine, &["rev-parse", "origin/main"]);
+    act(
+        &c.mine,
+        Action::CreateBranch {
+            name: "referee-round-2".into(),
+        },
+    )
+    .unwrap();
+    fs::write(c.mine.join("reply.md"), "Dear editor\n").unwrap();
+    act(&c.mine, commit_paths(&["reply.md"], "Reply to the referee")).unwrap();
+    // The new branch has no destination of its own, so it is published as itself.
+    assert_eq!(ready(&c.mine).status.upstream, None);
+    act(&c.mine, Action::Push).unwrap();
+    sh(&c.mine, &["fetch", "origin"]);
+    assert_eq!(sh(&c.mine, &["rev-parse", "origin/main"]), main);
+    assert_eq!(
+        ready(&c.mine).status.upstream.as_deref(),
+        Some("origin/referee-round-2")
+    );
+    act(
+        &c.mine,
+        Action::SwitchBranch {
+            name: "main".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        ready(&c.mine).status.upstream.as_deref(),
+        Some("origin/main")
+    );
+}
+
+#[test]
+fn a_branch_tracking_another_name_is_not_published_onto_it() {
+    let c = clones();
+    sh(
+        &c.mine,
+        &["switch", "-c", "draft", "--track", "origin/main"],
+    );
+    fs::write(c.mine.join("draft.md"), "draft\n").unwrap();
+    act(&c.mine, commit_paths(&["draft.md"], "Draft")).unwrap();
+    let main = sh(&c.mine, &["rev-parse", "origin/main"]);
+    let error = act(&c.mine, Action::Push).err().unwrap();
+    assert!(
+        error.message.contains("different name"),
+        "{}",
+        error.message
+    );
+    sh(&c.mine, &["fetch", "origin"]);
+    assert_eq!(sh(&c.mine, &["rev-parse", "origin/main"]), main);
+    // Choosing that destination for this branch makes publishing there explicit.
+    act(
+        &c.mine,
+        Action::SelectRemote {
+            name: "origin".into(),
+            branch: "main".into(),
+        },
+    )
+    .unwrap();
+    act(&c.mine, Action::Push).unwrap();
+    sh(&c.mine, &["fetch", "origin"]);
+    assert_eq!(
+        sh(&c.mine, &["rev-parse", "origin/main"]),
+        sh(&c.mine, &["rev-parse", "HEAD"])
+    );
+}

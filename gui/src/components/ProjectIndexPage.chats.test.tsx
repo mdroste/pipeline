@@ -137,7 +137,9 @@ it("lists conversations across projects, newest first", async () => {
   const user = userEvent.setup();
   const onOpen = vi.fn().mockResolvedValue(true);
   renderPage(onOpen);
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
 
   const newest = await screen.findByRole("button", { name: "Bartik shares" });
   const older = screen.getByRole("button", { name: "Elasticity priors" });
@@ -154,7 +156,9 @@ it("lists conversations across projects, newest first", async () => {
 it("filters to unfiled and archived conversations and by search", async () => {
   const user = userEvent.setup();
   renderPage();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   await screen.findByRole("button", { name: "Bartik shares" });
 
   await user.click(screen.getByRole("button", { name: "No project" }));
@@ -168,19 +172,23 @@ it("filters to unfiled and archived conversations and by search", async () => {
   ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Bartik shares" })).toBeNull();
 
-  await user.click(screen.getByRole("button", { name: "All chats" }));
+  await user.click(screen.getByRole("button", { name: "All conversations" }));
   await user.type(
-    screen.getByRole("searchbox", { name: "Search chats" }),
+    screen.getByRole("searchbox", { name: "Search conversations" }),
     "nothing like this",
   );
-  await waitFor(() => expect(screen.getByText(/No chats match/)).toBeVisible());
+  await waitFor(() =>
+    expect(screen.getByText(/No conversations match/)).toBeVisible(),
+  );
 });
 
 it("reports a list that cannot load", async () => {
   const user = userEvent.setup();
   mocks.listWorkspaces.mockRejectedValue(new Error("store offline"));
   renderPage();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   expect(await screen.findByRole("alert")).toHaveTextContent("store offline");
   expect(screen.getByRole("button", { name: "Trade paper" })).toBeVisible();
 });
@@ -190,8 +198,10 @@ it("starts an independent chat and links a chat to its project", async () => {
   const onNew = vi.fn();
   const onOpenProject = vi.fn().mockResolvedValue(undefined);
   renderPage(vi.fn(), onNew, onOpenProject);
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
-  await user.click(screen.getByRole("button", { name: "+ New chat" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
+  await user.click(screen.getByRole("button", { name: "+ New conversation" }));
   expect(onNew).toHaveBeenCalledOnce();
   expect(onOpenProject).not.toHaveBeenCalled();
   await user.click(
@@ -199,7 +209,7 @@ it("starts an independent chat and links a chat to its project", async () => {
   );
   expect(onOpenProject).toHaveBeenCalledWith("trade");
   await user.type(
-    screen.getByRole("searchbox", { name: "Search chats" }),
+    screen.getByRole("searchbox", { name: "Search conversations" }),
     "Trade paper",
   );
   expect(screen.getByRole("button", { name: "Trade paper" })).toBeVisible();
@@ -224,7 +234,9 @@ it("moves an unfiled chat into a project and refreshes its membership", async ()
     );
   });
   renderPage();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   await user.click(
     await screen.findByRole("button", {
       name: "Move Bartik shares to project",
@@ -241,7 +253,9 @@ it("moves an unfiled chat into a project and refreshes its membership", async ()
     operationId: expect.any(String),
   });
   await user.click(screen.getByRole("button", { name: "No project" }));
-  expect(await screen.findByText(/No chats without a project/)).toBeVisible();
+  expect(
+    await screen.findByText(/No conversations without a project/),
+  ).toBeVisible();
 });
 
 it("keeps a failed move retryable and can remove a chat's project", async () => {
@@ -249,7 +263,9 @@ it("keeps a failed move retryable and can remove a chat's project", async () => 
   mocks.sessionSnapshot.mockResolvedValue({ session: { revision: 9 } });
   mocks.moveSession.mockRejectedValueOnce(new Error("Chat is busy"));
   renderPage();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   await user.click(
     await screen.findByRole("button", {
       name: "Move Elasticity priors to project",
@@ -270,21 +286,24 @@ it("keeps a failed move retryable and can remove a chat's project", async () => 
   });
 });
 
-it("loads conversations only after expanding Browse chats", async () => {
+it("loads conversations only after expanding Browse conversations", async () => {
   const user = userEvent.setup();
   renderPage();
-  expect(screen.getByRole("button", { name: "Browse chats" })).toHaveAttribute(
-    "aria-expanded",
-    "false",
-  );
+  expect(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  ).toHaveAttribute("aria-expanded", "false");
   expect(mocks.listWorkspaces).not.toHaveBeenCalled();
   expect(mocks.listSessions).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   expect(
     await screen.findByRole("button", { name: "Bartik shares" }),
   ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Browse chats" }));
+  await user.click(
+    screen.getByRole("button", { name: "Browse conversations" }),
+  );
   expect(
-    screen.queryByRole("region", { name: "Chats" }),
+    screen.queryByRole("region", { name: "Conversations" }),
   ).not.toBeInTheDocument();
 });

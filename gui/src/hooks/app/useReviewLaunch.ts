@@ -7,6 +7,12 @@ import {
 } from "../../lib/authorNote";
 import { router } from "../../lib/router";
 import { appClient } from "../../lib/appClient";
+import { settingsClient } from "../../lib/settingsClient";
+import {
+  needsReviewTeam,
+  primaryReview,
+  withoutCombiningOverride,
+} from "../../lib/reviewTeam";
 import {
   configForRunPreview,
   type PendingRun,
@@ -161,6 +167,14 @@ export function useReviewLaunch(
       // the expected fingerprint below rejects the launch rather than showing
       // a preview for mixed configurations.
       const config = await workflowProfileClient.config();
+      // A fast preview can beat the inspector's initial settings read. Bind the
+      // same one-model default here, then freeze it with the execution preview.
+      const modelOverrides = needsReviewTeam(parallelOverrides)
+        ? primaryReview(
+            (await settingsClient.load()).settings,
+            parallelOverrides,
+          )
+        : withoutCombiningOverride(parallelOverrides);
       if (snapshot.inputSelection?.interpretation === "batch") {
         let paths = snapshot.inputSelection.paths;
         if (snapshot.inputSelection.selectionKind === "folder") {
@@ -180,9 +194,7 @@ export function useReviewLaunch(
           diff: false,
           paperPath: representativePath,
           inputInterpretation: "document",
-          ...(parallelOverrides
-            ? { runParallelOverrides: parallelOverrides }
-            : {}),
+          ...(modelOverrides ? { runParallelOverrides: modelOverrides } : {}),
         });
         setDepsReport(plan.readiness);
         if (!plan.readiness.ready) {
@@ -198,11 +210,11 @@ export function useReviewLaunch(
           config: configForRunPreview(
             config,
             plan.parallelAgents ?? [],
-            parallelOverrides,
+            modelOverrides,
             plan.mergeAgent,
             plan.sequentialAgent,
           ),
-          parallelOverrides,
+          parallelOverrides: modelOverrides,
           batchPaths: paths,
         });
         return;
@@ -215,9 +227,7 @@ export function useReviewLaunch(
         diff: false,
         paperPath: snapshot.paperPath,
         inputInterpretation: snapshot.inputSelection?.interpretation ?? null,
-        ...(parallelOverrides
-          ? { runParallelOverrides: parallelOverrides }
-          : {}),
+        ...(modelOverrides ? { runParallelOverrides: modelOverrides } : {}),
       });
       setDepsReport(plan.readiness);
       if (!plan.readiness.ready) {
@@ -233,11 +243,11 @@ export function useReviewLaunch(
         config: configForRunPreview(
           config,
           plan.parallelAgents ?? [],
-          parallelOverrides,
+          modelOverrides,
           plan.mergeAgent,
           plan.sequentialAgent,
         ),
-        parallelOverrides,
+        parallelOverrides: modelOverrides,
       });
     } catch (error) {
       await rejectLaunch(

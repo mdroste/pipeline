@@ -498,7 +498,7 @@ fn a_mission_saved_before_availability_was_tracked_still_reads() {
 fn a_new_automation_watches_only_what_comes_after_it_in_its_own_project() {
     let w = crate::orchestration::tests::disposable_workspace();
     let project = |name: &str| {
-        w.create_workspace(workbench::CreateWorkspaceRequest {
+        w.create_legacy_workspace(workbench::CreateWorkspaceRequest {
             name: name.into(),
             root: None,
             operation_id: format!("watch-{}", store::id()),

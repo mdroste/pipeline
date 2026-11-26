@@ -117,3 +117,17 @@ fn explicit_gui_resource_directory_and_absent_bundle() {
         Some(directory.canonicalize().unwrap())
     );
 }
+
+#[test]
+fn windows_library_bin_layout_is_preferred_over_legacy_flat_tools() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("resources/poppler");
+    let bin = root.join("Library/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(root.join("pdftoppm.exe"), "old").unwrap();
+    std::fs::write(bin.join("pdftoppm.exe"), "new").unwrap();
+    assert_eq!(
+        find_poppler([temp.path().to_owned()], true),
+        Some(bin.canonicalize().unwrap())
+    );
+}

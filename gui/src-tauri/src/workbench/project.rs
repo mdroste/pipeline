@@ -15,18 +15,26 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod blobs;
+pub mod checks;
+pub mod citations;
+pub mod connections;
 mod git_process;
+pub mod github;
 mod home;
 mod inventory;
+mod operations;
 mod records;
+pub mod submissions;
 
 use blobs::{blob, blob_read};
 pub(super) use home::home_record;
+pub(crate) use home::prepare_home;
 use home::save_home;
 pub use home::{
     chat_brief, excluded_notes, home, project_context, selected_manuscript, ProjectHome,
     ProjectHomeSettings,
 };
+pub(crate) use inventory::InventoryScan;
 use inventory::{check_for_changes, ignored, inventory_at, refresh};
 pub(crate) use inventory::{materialize_research_files, task_capture};
 pub use inventory::{FileEntry, Inventory};
@@ -62,6 +70,7 @@ pub use file_browser::{
 pub use file_formats::{
     docx_text, file_table, tiff_preview, DocumentText, FileTableRequest, ImagePreview,
 };
+pub(crate) use file_open::WorkspaceOpen;
 pub use file_open::{open_workspace_file, preview_conversation_file};
 pub use file_search::{search_files, FileSearchMatch, FileSearchRequest, FileSearchResult};
 pub(crate) use file_workspace::conversation_file_bytes;
@@ -81,7 +90,11 @@ mod acceptance_tests;
 #[cfg(test)]
 mod assistant_files_tests;
 #[cfg(test)]
+mod home_identity_tests;
+#[cfg(test)]
 mod home_tests;
+#[cfg(test)]
+mod research_workflow_tests;
 #[cfg(test)]
 mod test_support;
 #[cfg(all(test, unix))]
@@ -247,29 +260,16 @@ pub fn mutate(store: &Store, request: ProjectMutation) -> WorkbenchResult<Value>
         request.action,
         ProjectAction::Refresh | ProjectAction::CheckForChanges
     );
-    if journaled {
-        let fingerprint = hash(&serde_json::to_vec(&request).map_err(err)?);
-        let saved: Option<(String, String)> = store
-            .connection()?
-            .query_row(
-                "SELECT request_hash,response_json FROM project_operations WHERE operation_id=?1",
-                [&request.operation_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(err)?;
-        if let Some((old, response)) = saved {
-            if old != fingerprint {
-                return Err(WorkbenchError::conflict(
-                    "Operation ID was reused with different arguments",
-                ));
-            }
-            return serde_json::from_str(&response).map_err(err);
+    let receipt = if journaled {
+        match operations::begin(store, &request.operation_id, &serde_json::to_vec(&request).map_err(err)?,
+            "Operation ID was reused with different arguments",
+            "Refresh the project; inspect interrupted applications before retrying with a new operation ID")? {
+            operations::Begin::Replay(value) => return Ok(value),
+            operations::Begin::Started(receipt) => Some(receipt),
         }
-        // Persist unknown before filesystem side effects. A failed/ambiguous mutation is
-        // never replayed; callers refresh and use the recovery operation where applicable.
-        store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,fingerprint,json!({"outcome":"unknown","recovery":"Refresh the project; inspect interrupted applications before retrying with a new operation ID"}).to_string(),now()]).map_err(err)?;
-    }
+    } else {
+        None
+    };
     let ws = &request.workspace_id;
     let record = match request.action {
         ProjectAction::SaveHome {
@@ -330,14 +330,8 @@ pub fn mutate(store: &Store, request: ProjectMutation) -> WorkbenchResult<Value>
         ProjectAction::Reject { checkpoint_id } => tasks::reject(store, ws, &checkpoint_id),
     }?;
     let value = serde_json::to_value(record).map_err(err)?;
-    if journaled {
-        store
-            .connection()?
-            .execute(
-                "UPDATE project_operations SET response_json=?2 WHERE operation_id=?1",
-                params![request.operation_id, value.to_string()],
-            )
-            .map_err(err)?;
+    if let Some(receipt) = receipt {
+        receipt.complete(store, &value)?;
     }
     Ok(value)
 }

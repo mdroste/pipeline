@@ -48,7 +48,7 @@ impl Activity {
                 if self.calls.len() >= 128 || self.calls.contains_key(native_id) {
                     continue;
                 }
-                let item = json!({"id":item_id,"type":"toolCall","runtime":"claude","tool":part["name"],"input":bounded(&part["input"]),"status":"inProgress"});
+                let item = json!({"id":item_id,"type":"toolCall","runtime":turn.auth_mode.runtime(),"tool":part["name"],"input":bounded(&part["input"]),"status":"inProgress"});
                 self.calls.insert(native_id.into(), item.clone());
                 item
             };

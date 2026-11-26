@@ -39,8 +39,16 @@ pub(super) fn revision(
     revision_id: &str,
 ) -> WorkbenchResult<research::PaperRevision> {
     scope(store, workspace_id)?;
+    revision_on(&store.connection()?, workspace_id, revision_id)
+}
+
+pub(super) fn revision_on(
+    connection: &rusqlite::Connection,
+    workspace_id: &str,
+    revision_id: &str,
+) -> WorkbenchResult<research::PaperRevision> {
     valid_id(revision_id)?;
-    store.connection()?.query_row("SELECT pr.id,pr.paper_id,pr.input_kind,pr.entrypoint,pr.dependency_manifest_json,pr.content_hash,pr.text_reference,pr.compiled_artifact_id,pr.extraction_json,pr.capture_complete,pr.captured_at FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE pr.id=?1 AND p.workspace_id=?2",params![revision_id,workspace_id],research::revision_from_row).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Document revision is not in this Workspace"))
+    connection.query_row("SELECT pr.id,pr.paper_id,pr.input_kind,pr.entrypoint,pr.dependency_manifest_json,pr.content_hash,pr.text_reference,pr.compiled_artifact_id,pr.extraction_json,pr.capture_complete,pr.captured_at FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE pr.id=?1 AND p.workspace_id=?2",params![revision_id,workspace_id],research::revision_from_row).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Document revision is not in this Workspace"))
 }
 /// Refuses a revision with no extracted text, with the reason extraction recorded.
 /// Reading one yields nothing, which is right for a viewer and wrong for an import.

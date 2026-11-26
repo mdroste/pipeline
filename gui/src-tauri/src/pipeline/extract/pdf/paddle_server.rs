@@ -59,8 +59,8 @@ pub(in crate::pipeline::extract) struct PaddleServer {
 impl Drop for PaddleServer {
     fn drop(&mut self) {
         if self.pid > 0 {
-            crate::commands::kill_process(self.pid);
-            crate::commands::unregister_child_pid(self.pid);
+            crate::process_tree::kill_process(self.pid);
+            crate::process_tree::unregister_child_pid(self.pid);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -137,7 +137,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
         .map_err(|error| format!("Failed to start managed llama-server: {error}"))?;
     let pid = child.id();
     if pid > 0 {
-        crate::commands::register_child_pid(pid);
+        crate::process_tree::register_child_pid(pid);
     }
     let log = match child.stderr.take() {
         Some(stderr) => ServerLog::capture(stderr, api_key.clone()),
@@ -147,10 +147,10 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
     let client = &*crate::pipeline::api_common::LOCAL_HTTP_CLIENT;
     let started = std::time::Instant::now();
     loop {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             if pid > 0 {
-                crate::commands::kill_process(pid);
-                crate::commands::unregister_child_pid(pid);
+                crate::process_tree::kill_process(pid);
+                crate::process_tree::unregister_child_pid(pid);
             }
             let _ = child.kill();
             let _ = child.wait();
@@ -161,7 +161,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
             .map_err(|error| format!("Failed to inspect llama-server: {error}"))?
         {
             if pid > 0 {
-                crate::commands::unregister_child_pid(pid);
+                crate::process_tree::unregister_child_pid(pid);
             }
             // Its last words may still be in the pipe.
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -215,8 +215,8 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
         }
         if started.elapsed() >= std::time::Duration::from_secs(180) {
             if pid > 0 {
-                crate::commands::kill_process(pid);
-                crate::commands::unregister_child_pid(pid);
+                crate::process_tree::kill_process(pid);
+                crate::process_tree::unregister_child_pid(pid);
             }
             let _ = child.kill();
             let _ = child.wait();
@@ -225,7 +225,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
                 &log,
             ));
         }
-        let _ = crate::commands::await_or_cancel(
+        let _ = crate::cancellation::await_or_cancel(
             tokio::time::sleep(PADDLE_READINESS_POLL_INTERVAL),
             None,
         )

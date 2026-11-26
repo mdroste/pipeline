@@ -87,6 +87,15 @@ pub async fn workbench_version_control_action(
     action: Action,
 ) -> WorkbenchResult<version_control::ActionResult> {
     let root = required_folder(workspace_id.clone()).await?;
+    let (check_ws, check_action) = (workspace_id.clone(), action.clone());
+    run_store(move |store| {
+        crate::workbench::project::connections::check_transport_action(
+            &store,
+            &check_ws,
+            &check_action,
+        )
+    })
+    .await?;
     version_control::check_idle(&root).map_err(plain)?;
     let turn = file_turn(&action, turn_queue().clone()).map_err(plain)?;
     let project = if action.changes_files() {

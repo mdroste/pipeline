@@ -1,4 +1,4 @@
-//! Workspace-owned task binding and turn inspection. Database calls use commands::run_store.
+//! Workspace-owned task binding and turn inspection. Database calls use runtime::run_store.
 use super::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -175,7 +175,7 @@ pub fn turn_running(store: &Store, session: &str, operation: &str) -> WorkbenchR
     Ok(
         submitted_turn(store, session, operation)?.is_some_and(|(_, state, thread, turn, _)| {
             !ended(&state)
-                && turn.is_some_and(|turn| super::commands::turn_has_live_owner(&thread, &turn))
+                && turn.is_some_and(|turn| super::runtime::turn_has_live_owner(&thread, &turn))
         }),
     )
 }

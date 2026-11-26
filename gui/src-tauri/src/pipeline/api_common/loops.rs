@@ -61,7 +61,7 @@ pub async fn anthropic_tool_loop(
     let start = std::time::Instant::now();
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
         validate_tool_history(&request.messages, "Anthropic")?;
@@ -255,7 +255,7 @@ pub async fn openai_tool_loop(
     let mut effort_retry_used = false;
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
         validate_tool_history(&request.messages, provider)?;
@@ -493,7 +493,7 @@ pub async fn google_tool_loop(
     let start = std::time::Instant::now();
 
     for iteration in 0..MAX_TOOL_ITERATIONS {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".into());
         }
         validate_tool_history(&request.contents, "Google")?;

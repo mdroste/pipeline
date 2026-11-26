@@ -38,7 +38,7 @@ function StatusGlyph({ run, unseen }: { run: QueuedRun; unseen: boolean }) {
       return (
         <span
           aria-hidden="true"
-          className="block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-500/25 border-t-blue-500 dark:border-blue-400/25 dark:border-t-blue-400"
+          className="block h-3.5 w-3.5 animate-spin motion-reduce:animate-none rounded-full border-2 border-running-soft border-t-running"
         />
       );
     case "queued":
@@ -50,20 +50,17 @@ function StatusGlyph({ run, unseen }: { run: QueuedRun; unseen: boolean }) {
       );
     case "done":
       return run.partial ? (
-        <Icon name="warning" className="h-4 w-4 text-amber-500" />
+        <Icon name="warning" className="h-4 w-4 text-warning" />
       ) : unseen ? (
         <span
           aria-hidden="true"
-          className="block h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"
+          className="block h-2.5 w-2.5 rounded-full bg-success ring-4 ring-success-soft"
         />
       ) : (
-        <Icon
-          name="check"
-          className="h-4 w-4 text-emerald-600 dark:text-emerald-400"
-        />
+        <Icon name="check" className="h-4 w-4 text-success" />
       );
     case "failed":
-      return <Icon name="warning" className="h-4 w-4 text-red-500" />;
+      return <Icon name="warning" className="h-4 w-4 text-danger" />;
     case "cancelled":
       return (
         <Icon
@@ -132,9 +129,9 @@ function RunRow({
           <span
             className={`block truncate text-[0.6875rem] leading-4 ${
               run.status === "running"
-                ? "tabular-nums text-blue-700 dark:text-blue-300"
+                ? "tabular-nums text-running"
                 : run.status === "failed"
-                  ? "text-red-600 dark:text-red-400"
+                  ? "text-danger"
                   : "text-gray-500 dark:text-neutral-500"
             }`}
           >

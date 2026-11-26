@@ -52,6 +52,7 @@ pub struct FileStatRequest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileStamp {
+    pub unavailable: Option<String>,
     pub path: String,
     pub kind: Option<&'static str>,
     /// Opaque; changes when the file does. `None` when the path is gone.
@@ -155,9 +156,8 @@ fn list_directory(folder: &Path, directory: String) -> WorkbenchResult<FileListi
     })
 }
 /// Stamps for the change checks. Like a listing, this runs off the database
-/// workers on a folder from `search_folder`. A path that can't be reached counts
-/// as gone and doesn't stop the check for the others, as when a folder that's
-/// open in the tree is replaced by a link.
+/// workers on a folder from `search_folder`. Unavailable is distinct from absent:
+/// a cloud placeholder or a temporarily replaced folder must not erase a draft.
 pub fn stat_workspace_files(
     folder: &Path,
     request: FileStatRequest,
@@ -170,12 +170,15 @@ pub fn stat_workspace_files(
         .paths
         .into_iter()
         .map(|path| {
-            let stat = if path.is_empty() {
-                safe.root_stat().ok()
+            let result = if path.is_empty() {
+                safe.root_stat().map(Some)
             } else {
-                safe.stat(&path).ok().flatten()
+                safe.stat(&path)
             };
+            let unavailable = result.as_ref().err().map(|error| error.message.clone());
+            let stat = result.ok().flatten();
             FileStamp {
+                unavailable,
                 kind: stat.as_ref().map(|s| kind_label(s.kind)),
                 stamp: stat.as_ref().map(EntryStat::stamp),
                 size: stat.as_ref().map_or(0, |s| s.size),
@@ -220,6 +223,17 @@ pub fn external_target(store: &Store, request: &FileReadRequest) -> WorkbenchRes
         &request.workspace_id,
         request.checkpoint_id.as_deref(),
     )?;
+    if request.checkpoint_id.is_some() {
+        // A task copy stays writable by the conversation editing it, so the
+        // system opens an immutable snapshot instead of the live file.
+        if stat.size > MAX_FILE {
+            return Err(WorkbenchError::invalid(
+                "This file is too large to open from a task copy. Reveal it in its folder to open it yourself.",
+            ));
+        }
+        let snapshot = super::file_workspace::snapshot_for_opening(store, &folder, &request.path)?;
+        return Ok(crate::file_viewer::system_path(&snapshot));
+    }
     let program = SafeRoot::open(&folder)?.marked_as_program(&request.path)?;
     crate::file_viewer::check_openable(&request.path, program).map_err(WorkbenchError::invalid)?;
     Ok(crate::file_viewer::system_path(&path))

@@ -65,7 +65,7 @@ impl Answers {
         final_answer: bool,
     ) -> NormalizedEvent {
         let item_id = format!("{}-assistant-{}", turn.id, self.index);
-        let item = json!({"id":item_id,"type":"agentMessage","text":text,"runtime":"claude","model":turn.model,
+        let item = json!({"id":item_id,"type":"agentMessage","text":text,"runtime":turn.auth_mode.runtime(),"model":turn.model,
             "phase": if final_answer { "final_answer" } else { "commentary" }});
         if complete {
             NormalizedEvent::ItemCompleted {

@@ -50,8 +50,19 @@ pub enum ConflictChoice {
 )]
 pub enum Action {
     Initialize,
+    Clone {
+        url: String,
+    },
     SetRemote {
         url: String,
+    },
+    AddRemote {
+        name: String,
+        url: String,
+    },
+    SelectRemote {
+        name: String,
+        branch: String,
     },
     SetIdentity {
         name: String,
@@ -92,7 +103,12 @@ impl Action {
     pub fn changes_files(&self) -> bool {
         !matches!(
             self,
-            Self::SetRemote { .. } | Self::SetIdentity { .. } | Self::Fetch | Self::Push
+            Self::SetRemote { .. }
+                | Self::AddRemote { .. }
+                | Self::SelectRemote { .. }
+                | Self::SetIdentity { .. }
+                | Self::Fetch
+                | Self::Push
         )
     }
 
@@ -189,12 +205,6 @@ impl Context<'_> {
             .map_err(|error| self.explained(error))
     }
 
-    fn network(&self, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
-        self.git
-            .act(args, NETWORK_TIMEOUT, Some(self.cancel))
-            .map_err(|error| self.explained(error))
-    }
-
     fn fetching(&self, options: &[&str], remote: &str) -> WorkbenchResult<Vec<u8>> {
         self.git
             .fetch(options, remote, NETWORK_TIMEOUT, Some(self.cancel))
@@ -239,7 +249,10 @@ pub(super) fn run(
     };
     match action {
         Action::Initialize => initialize(&context),
+        Action::Clone { url } => clone_into_empty(&context, &url),
         Action::SetRemote { url } => set_remote(&context, &url),
+        Action::AddRemote { name, url } => add_remote(&context, &name, &url),
+        Action::SelectRemote { name, branch } => select_remote(&context, &name, &branch),
         Action::SetIdentity { name, email } => set_identity(&context, &name, &email),
         Action::Commit {
             paths,
@@ -320,6 +333,23 @@ fn initialize(context: &Context<'_>) -> WorkbenchResult<Outcome> {
     Ok(Outcome::default())
 }
 
+fn clone_into_empty(context: &Context<'_>, url: &str) -> WorkbenchResult<Outcome> {
+    let url = remote_address(url)?;
+    if fs::read_dir(&context.git.root)
+        .map_err(err)?
+        .next()
+        .is_some()
+    {
+        return Err(WorkbenchError::invalid("Cloning requires an empty attached folder. Existing files are preserved; attach an empty destination or open an existing clone."));
+    }
+    context.git.act(&["clone", "--", &url, "."], NETWORK_TIMEOUT, Some(context.cancel))
+        .map_err(|error| WorkbenchError::invalid(format!("Cloning did not finish. Inspect the destination before retrying; any partial files remain available. {}", errors::explain(&error.message, repository::parse_remote("origin", &url).as_ref()))))?;
+    context.git.record_fetch("origin")?;
+    Ok(Outcome::notice(
+        "Repository cloned. Inspect its files and select the project connection when ready.",
+    ))
+}
+
 /// A remote address Git will contact without running anything locally. HTTPS
 /// sign-in details are dropped: `.git/config` is plain text, and Bitbucket's
 /// clone addresses carry a username the credential helper doesn't need.
@@ -350,11 +380,18 @@ fn remote_address(url: &str) -> WorkbenchResult<String> {
                 ));
             }
             if scheme == "https" {
-                address = format!("https://{host}/{path}");
+                address = if host.eq_ignore_ascii_case("git.overleaf.com") && user == "git" {
+                    format!("https://git@{host}/{path}")
+                } else {
+                    format!("https://{host}/{path}")
+                };
             }
         }
     }
     repository::parse_remote("origin", &address).ok_or_else(invalid)?;
+    if address.starts_with("https://git.overleaf.com/") {
+        address = address.replacen("https://", "https://git@", 1);
+    }
     Ok(address)
 }
 
@@ -368,6 +405,45 @@ fn set_remote(context: &Context<'_>, url: &str) -> WorkbenchResult<Outcome> {
         Err(_) => context.local(&["remote", "add", "origin", &url])?,
     };
     Ok(Outcome::default())
+}
+
+fn add_remote(context: &Context<'_>, name: &str, url: &str) -> WorkbenchResult<Outcome> {
+    if name.is_empty()
+        || name.len() > 80
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
+    {
+        return Err(WorkbenchError::invalid(
+            "Use letters, numbers, underscores, or hyphens for the remote name",
+        ));
+    }
+    let url = remote_address(url)?;
+    context.local(&["remote", "add", name, &url])?;
+    Ok(Outcome::notice(
+        "Remote added. Select its destination branch before pulling or publishing.",
+    ))
+}
+
+fn select_remote(context: &Context<'_>, name: &str, branch: &str) -> WorkbenchResult<Outcome> {
+    let remotes = repository::list_remotes(&|args| context.git.read(args));
+    let remote = remotes
+        .iter()
+        .find(|remote| remote.name == name)
+        .ok_or_else(|| WorkbenchError::invalid("Select an existing remote"))?;
+    let branch = checked_branch(context, branch)?;
+    if remote.provider.as_deref() == Some("overleaf") && !["main", "master"].contains(&branch) {
+        return Err(WorkbenchError::invalid("Overleaf uses its existing main or master branch; it cannot publish local review branches as new branches"));
+    }
+    // The destination belongs to the branch it is chosen on; other branches
+    // keep publishing under their own names.
+    let local = context.branch()?;
+    context.local(&["config", "--local", "pipeline.remote", name])?;
+    context.local(&["config", "--local", "pipeline.remoteBranch", branch])?;
+    context.local(&["config", "--local", "pipeline.localBranch", &local])?;
+    Ok(Outcome::notice(
+        "Destination selected. Check the remote and compare before publishing.",
+    ))
 }
 
 fn set_identity(context: &Context<'_>, name: &str, email: &str) -> WorkbenchResult<Outcome> {
@@ -682,6 +758,7 @@ fn create_branch(context: &Context<'_>, name: &str) -> WorkbenchResult<Outcome> 
 fn fetch(context: &Context<'_>) -> WorkbenchResult<Outcome> {
     let remote = context.remote_name()?;
     context.fetching(&["--quiet", "--prune"], &remote)?;
+    context.git.record_fetch(&remote)?;
     Ok(Outcome::default())
 }
 
@@ -695,8 +772,12 @@ fn pull(context: &Context<'_>) -> WorkbenchResult<Outcome> {
         .as_ref()
         .is_some_and(|status| status.upstream.is_some());
     if !has_upstream {
-        return Err(WorkbenchError::invalid("Publish this branch first."));
+        return Err(WorkbenchError::invalid(
+            "Select and check an existing destination branch first.",
+        ));
     }
+    let remote = context.remote_name()?;
+    let target = destination_branch(context, &remote, false)?;
     fetch(context)?;
     if context.cancel.load(Ordering::Relaxed) {
         return Ok(Outcome::notice("Stopped. Nothing was merged."));
@@ -704,7 +785,12 @@ fn pull(context: &Context<'_>) -> WorkbenchResult<Outcome> {
     let merged = context
         .git
         .act(
-            &["merge", "--quiet", "--no-edit", "@{upstream}"],
+            &[
+                "merge",
+                "--quiet",
+                "--no-edit",
+                &format!("refs/remotes/{remote}/{target}"),
+            ],
             NETWORK_TIMEOUT,
             None,
         )
@@ -720,31 +806,83 @@ fn pull(context: &Context<'_>) -> WorkbenchResult<Outcome> {
 }
 
 fn push(context: &Context<'_>) -> WorkbenchResult<Outcome> {
-    let has_upstream = context
-        .status
-        .as_ref()
-        .is_some_and(|status| status.upstream.is_some());
-    if has_upstream {
-        context.network(&["push", "--quiet"])?;
-    } else {
-        let remote = context.remote_name()?;
-        let branch = context.branch()?;
-        context
-            .git
-            .act(
-                &["push", "--quiet", "--set-upstream", "--", &remote, &branch],
-                NETWORK_TIMEOUT,
-                Some(context.cancel),
-            )
-            .map_err(|error| {
-                WorkbenchError::invalid(errors::explain_publish(
-                    &error.message,
-                    context.remote(),
-                    &branch,
-                ))
-            })?;
-    }
+    let remote = context.remote_name()?;
+    let branch = destination_branch(context, &remote, true)?;
+    let destination = format!("HEAD:refs/heads/{branch}");
+    context
+        .git
+        .act(
+            &[
+                "push",
+                "--quiet",
+                "--set-upstream",
+                "--",
+                &remote,
+                &destination,
+            ],
+            NETWORK_TIMEOUT,
+            Some(context.cancel),
+        )
+        .map_err(|error| {
+            WorkbenchError::invalid(errors::explain_publish(
+                &error.message,
+                context.remote(),
+                &branch,
+            ))
+        })?;
     Ok(Outcome::default())
+}
+
+/// The remote branch that Push publishes to or Pull merges. A destination chosen
+/// for this branch wins. Otherwise Pull follows the branch's upstream, and Push
+/// publishes under the branch's own name: like Git's `push.default=simple`, it
+/// refuses an upstream of another name instead of publishing onto it.
+fn destination_branch(
+    context: &Context<'_>,
+    remote: &str,
+    publishing: bool,
+) -> WorkbenchResult<String> {
+    let current = context.branch()?;
+    let selected = repository::selected_branch(&|args| context.git.read(args), Some(&current));
+    let branch = match selected {
+        Some(selected) => selected,
+        None => {
+            let tracked = context
+                .status
+                .as_ref()
+                .and_then(|status| status.upstream.as_ref())
+                .and_then(|target| target.strip_prefix(&format!("{remote}/")))
+                .map(str::to_owned);
+            match tracked {
+                Some(tracked) if publishing && tracked != current => {
+                    return Err(WorkbenchError::invalid(format!(
+                        "This branch tracks {remote}/{tracked}, which has a different name. \
+                         To publish there, select {remote}/{tracked} as this branch's destination \
+                         first; otherwise switch to {tracked}."
+                    )));
+                }
+                Some(tracked) => tracked,
+                None => current,
+            }
+        }
+    };
+    checked_branch(context, &branch)?;
+    if context
+        .remote()
+        .is_some_and(|remote| remote.provider.as_deref() == Some("overleaf"))
+        && (!["main", "master"].contains(&branch.as_str())
+            || context
+                .git
+                .read(&[
+                    "rev-parse",
+                    "--verify",
+                    &format!("refs/remotes/{remote}/{branch}"),
+                ])
+                .is_err())
+    {
+        return Err(WorkbenchError::invalid("Check Overleaf and select its existing main or master branch before pulling or publishing"));
+    }
+    Ok(branch)
 }
 
 fn has_conflict_markers(bytes: &[u8]) -> bool {
@@ -844,6 +982,15 @@ mod parse_tests {
         assert_eq!(
             remote_address("https://ghp_token@github.com/owner/name.git").unwrap(),
             "https://github.com/owner/name.git"
+        );
+        assert!(remote_address("https://git@ overleaf.com/p").is_err());
+        assert_eq!(
+            remote_address("https://git.overleaf.com/project123").unwrap(),
+            "https://git@git.overleaf.com/project123"
+        );
+        assert_eq!(
+            remote_address("https://git@git.overleaf.com/project123").unwrap(),
+            "https://git@git.overleaf.com/project123"
         );
         for bad in [
             "ext::sh -c touch%20x",

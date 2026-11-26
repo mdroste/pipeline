@@ -260,7 +260,14 @@ pub fn preview_import(
             store.workspace(workspace_id)?;
             Some(workspace_id.clone())
         }
-        ExchangeTarget::NewWorkspace { .. } => None,
+        ExchangeTarget::NewWorkspace { name, root } => {
+            store.prepare_workspace(crate::workbench::store::CreateWorkspaceRequest {
+                name: name.clone(),
+                root: root.clone(),
+                operation_id: "preview-project-import".into(),
+            })?;
+            None
+        }
     };
     let (decisions, _) = plan(store, &x, target_ws.as_deref())?;
     let count = |o: &str| decisions.iter().filter(|d| d.outcome == o).count();

@@ -92,7 +92,12 @@ pub(in crate::commands) fn apply_model_overrides(
             step.phase == crate::pipeline_config::Phase::Parallel
                 && (replace_pins || step.agents.is_empty())
         }) {
-            step.agents = overrides.agents.clone();
+            // Pipeline checks make no model call, and an editorial stage
+            // keeps one editor; both would fail validation after extraction.
+            let Some(agents) = step.assignable_agents(&overrides.agents) else {
+                continue;
+            };
+            step.agents = agents;
             step.model.clear();
             step.model_overrides = overrides.model_overrides.clone();
             step.effort.clear();

@@ -31,6 +31,7 @@ import { isDirty, useFileBuffers } from "./useFileBuffers";
 import useFileChanges from "./useFileChanges";
 import "./files.css";
 import ReportIssueLink from "../ReportIssueLink";
+import { scriptAdapter } from "../../lib/analysisSetup";
 const FilePane = lazy(() => import("./FilePane"));
 export interface FilePassage {
   path: string;
@@ -53,8 +54,11 @@ interface Props {
   initial?: FileLocation | null;
   onAsk?: (passage: FilePassage) => void;
   onAskFile?: (path: string) => void;
+  onRunFile?: (path: string) => void;
+  onFileRuns?: (path: string, hash?: string) => void;
   onOpenInFiles?: (location: FileLocation) => void;
   onSaved?: () => void;
+  onNavigate?: (location: FileLocation) => void;
   onAddToDocuments?: (path: string) => Promise<void>;
 }
 function restoredLayout(id: string): {
@@ -94,11 +98,16 @@ export default function FileWorkspace({
   initial,
   onAsk,
   onAskFile,
+  onRunFile,
+  onFileRuns,
   onOpenInFiles,
   onSaved,
+  onNavigate,
   onAddToDocuments,
 }: Props) {
   const workspaceRoot = useRef<HTMLDivElement>(null);
+  const navigationListener = useRef(onNavigate);
+  navigationListener.current = onNavigate;
   const [layout] = useState(() => restoredLayout(adapter.id));
   const [tabs, setTabs] = useState(layout.tabs);
   const [active, setActive] = useState<FileLocation | null>(
@@ -210,6 +219,7 @@ export default function FileWorkspace({
       });
       setForward([]);
       setPassage(null);
+      navigationListener.current?.(location);
     },
     [load, setMode],
   );
@@ -512,6 +522,29 @@ export default function FileWorkspace({
           })}
         </div>
         <div className="file-tabbar-end">
+          {active && onRunFile && scriptAdapter(active.path) && (
+            <button
+              className="file-action"
+              disabled={!!buffers[active.path] && isDirty(buffers[active.path])}
+              title="Save the script before preparing a run"
+              onClick={() => onRunFile(active.path)}
+            >
+              Run…
+            </button>
+          )}
+          {active && onFileRuns && (
+            <button
+              className="file-action"
+              onClick={() =>
+                onFileRuns(
+                  active.path,
+                  buffers[active.path]?.file.hash ?? undefined,
+                )
+              }
+            >
+              Runs
+            </button>
+          )}
           {passage && onAsk && (
             <button
               className="file-action primary"

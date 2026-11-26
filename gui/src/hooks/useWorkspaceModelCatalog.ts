@@ -12,6 +12,8 @@ function loadCatalog(
 ): Promise<{ models: WorkspaceModel[] }> {
   if (isApiProvider(runtime)) return runtimeClient.apiModelCatalog(runtime);
   if (runtime === "claude") return runtimeClient.claudeModelCatalog();
+  if (runtime === "claude-code-api")
+    return runtimeClient.claudeModelCatalog(runtime);
   return runtimeClient
     .connectCodex()
     .then(() => runtimeClient.accountState())

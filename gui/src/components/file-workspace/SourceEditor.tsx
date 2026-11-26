@@ -90,6 +90,7 @@ function changedSpan(current: string, next: string) {
   };
 }
 export interface SourceEditorHandle {
+  insertText: (text: string) => void;
   goToLine: (line: number) => void;
   focus: () => void;
 }
@@ -166,6 +167,12 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
       if (focus) editor.focus();
     };
     useImperativeHandle(ref, () => ({
+      insertText: (text) => {
+        const editor = view.current;
+        if (!editor || current.current.readOnly) return;
+        editor.dispatch(editor.state.replaceSelection(text));
+        editor.focus();
+      },
       goToLine: (line) => goToLine(line),
       focus: () => view.current?.focus(),
     }));

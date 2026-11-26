@@ -24,8 +24,7 @@ use config::write_probe_config;
 pub(super) use io::installed_version;
 use io::{read_capped, response_for, response_pair, send, streamed_command_pid};
 use platform::{
-    long_running_command, read_file_command, stdin_echo_command, terminate_probe_process,
-    wait_for_process_stopped, write_file_command,
+    long_running_command, read_file_command, stdin_echo_command, write_file_command, ProbeProcess,
 };
 use requests::{
     command_exec_request, command_exec_resize_request, command_exec_terminate_request,
@@ -79,6 +78,7 @@ pub struct QualificationProbeReport {
     pub paged_turn_history_verified: bool,
     pub runtime_workspace_roots_verified: bool,
     pub instruction_sources_empty: bool,
+    pub local_project_instructions_verified: bool,
     pub allowed_fixture_read_verified: bool,
     pub workbench_state_read_denied: bool,
     pub sibling_project_read_denied: bool,
@@ -142,6 +142,12 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         .map_err(|error| format!("Failed to write Workbench probe fixture: {error}"))?;
     std::fs::write(&sibling_file, "sibling project fixture\n")
         .map_err(|error| format!("Failed to write Workbench sibling fixture: {error}"))?;
+    #[cfg(windows)]
+    std::fs::write(
+        temporary.path().join("AGENTS.md"),
+        "Outside the granted project; must not be discovered.\n",
+    )
+    .map_err(|error| format!("Failed to write ancestor instruction fixture: {error}"))?;
     let launcher = resolved.canonical_program()?;
     write_probe_config(&codex_home, &fixture_root, &launcher)?;
     #[cfg(unix)]
@@ -368,6 +374,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         )
         .await?;
 
+        let terminated_process = ProbeProcess::observe(terminated_command_pid)?;
         let resize_id = json!(13);
         send(
             &mut stdin,
@@ -379,7 +386,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
             .as_object()
             .is_some_and(serde_json::Map::is_empty);
         if !command_exec_resize_verified {
-            terminate_probe_process(terminated_command_pid);
+            terminated_process.terminate();
             return Err(format!(
                 "command/exec/resize returned an unexpected result: {resize_response}"
             ));
@@ -399,9 +406,9 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
             && terminate_response
                 .as_object()
                 .is_some_and(serde_json::Map::is_empty)
-            && wait_for_process_stopped(terminated_command_pid).await?;
+            && terminated_process.wait_stopped().await?;
         if !command_exec_terminate_verified {
-            terminate_probe_process(terminated_command_pid);
+            terminated_process.terminate();
             return Err(format!(
                 "command/exec/terminate did not stop the fixture process: command={terminated_command}, terminate={terminate_response}"
             ));
@@ -458,6 +465,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         let active_command_pid =
             streamed_command_pid(&mut reader, &active_command_id, ACTIVE_COMMAND_PROCESS_ID)
                 .await?;
+        let active_process = ProbeProcess::observe(active_command_pid)?;
         Ok::<_, String>((
             initialize,
             account,
@@ -474,7 +482,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
             command_exec_stdin_verified,
             command_exec_resize_verified,
             command_exec_terminate_verified,
-            active_command_pid,
+            active_process,
         ))
     };
 
@@ -517,7 +525,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         command_exec_stdin_verified,
         command_exec_resize_verified,
         command_exec_terminate_verified,
-        active_command_pid,
+        active_process,
     ) = exchange_result.map_err(|error| {
         let diagnostic = String::from_utf8_lossy(&stderr);
         let diagnostic = diagnostic.lines().last().unwrap_or_default().trim();
@@ -534,12 +542,12 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
                 .to_string(),
         );
     }
-    let active_command_connection_cleanup_verified =
-        wait_for_process_stopped(active_command_pid).await?;
+    let active_command_connection_cleanup_verified = active_process.wait_stopped().await?;
     if !active_command_connection_cleanup_verified {
-        terminate_probe_process(active_command_pid);
+        active_process.terminate();
         return Err(format!(
-            "Codex App Server left command process {active_command_pid} running after connection close"
+            "Codex App Server left command process {} running after connection close",
+            active_process.pid
         ));
     }
 
@@ -707,6 +715,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         paged_turn_history_verified: true,
         runtime_workspace_roots_verified,
         instruction_sources_empty,
+        local_project_instructions_verified: true,
         allowed_fixture_read_verified,
         workbench_state_read_denied,
         sibling_project_read_denied,

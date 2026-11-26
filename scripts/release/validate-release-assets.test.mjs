@@ -14,7 +14,7 @@ import {
 
 test("requires what a release publishes: installers, update packages, checksums, signatures, and the manifest", () => {
   const expected = expectedReleaseAssets("2.3.4");
-  assert.equal(expected.length, 17);
+  assert.equal(expected.length, 22);
   for (const name of [
     "Pipeline-2.3.4-Windows.exe",
     "Pipeline-2.3.4-Windows.exe.sha256",
@@ -23,6 +23,11 @@ test("requires what a release publishes: installers, update packages, checksums,
     "Pipeline-2.3.4-macOS-Intel.app.tar.gz.sha256",
     "Pipeline-2.3.4-macOS-AppleSilicon.app.tar.gz.sig",
     "latest.json",
+    "Pipeline-2.3.4-GPU-Windows-x64.zip",
+    "Pipeline-2.3.4-GPU-Windows-x64.zip.sha256",
+    "Pipeline-2.3.4-GPU-Windows-x64.json",
+    "Pipeline-2.3.4-GPU-Windows-x64.json.sha256",
+    "Pipeline-2.3.4-GPU-Windows-x64.json.sig",
   ]) assert.ok(expected.includes(name), name);
   assert.ok(!expected.some((name) => /SBOM|provenance/i.test(name)));
   assert.deepEqual(

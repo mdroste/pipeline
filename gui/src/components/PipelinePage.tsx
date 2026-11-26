@@ -1,3 +1,4 @@
+import "../ui/page.css";
 import { useEffect, useRef } from "react";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
@@ -135,22 +136,18 @@ export default function PipelinePage({
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">
             Review designer could not be loaded
           </h2>
-          <p className="text-sm text-red-600 dark:text-red-400 break-words">
+          <p className="text-sm text-danger break-words">
             {loadError ?? "This review’s setup was unavailable."}
           </p>
           <div className="flex justify-center gap-2">
             <button
               type="button"
               onClick={retryLoad}
-              className="px-3 py-1.5 rounded bg-blue-600 text-white text-sm hover:bg-blue-700"
+              className="ui-button ui-button--primary"
             >
               Retry
             </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-700 text-sm"
-            >
+            <button type="button" onClick={onClose} className="ui-button">
               Close
             </button>
           </div>
@@ -169,7 +166,7 @@ export default function PipelinePage({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-col">
+    <div className="ui-layout-workspace relative flex h-full min-h-0 min-w-0 flex-col">
       {editor.recoveryWarning && (
         <div role="alert" className="ui-notice ui-notice--warning">
           {editor.recoveryWarning}

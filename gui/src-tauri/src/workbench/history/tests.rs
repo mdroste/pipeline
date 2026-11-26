@@ -81,7 +81,7 @@ fn retired_bindings_and_project_moves_keep_app_owned_history() {
             assert!(store.active_binding(&id).unwrap().is_none());
         } else {
             let ws = store
-                .create_workspace(CreateWorkspaceRequest {
+                .create_legacy_workspace(CreateWorkspaceRequest {
                     name: "Other project".into(),
                     root: None,
                     operation_id: "project".into(),

@@ -57,7 +57,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
     let mut skipped_special = 0usize;
     let mut truncated = false;
     while let Some(dir) = stack.pop() {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".to_string());
         }
         let Ok(canonical_dir) = dir.canonicalize() else {
@@ -159,7 +159,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
     let mut chunk = [0u8; 64 * 1024];
     let mut skipped_unreadable = 0usize;
     for (rel, size, path) in &files {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".to_string());
         }
         hasher.update(rel.as_bytes());
@@ -181,7 +181,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         };
         let mut remaining = MAX_INVENTORY_HASH_BYTES_PER_FILE;
         while remaining > 0 {
-            if crate::commands::is_cancelled() {
+            if crate::cancellation::is_cancelled() {
                 return Err("Pipeline cancelled".to_string());
             }
             let want = chunk.len().min(remaining as usize);

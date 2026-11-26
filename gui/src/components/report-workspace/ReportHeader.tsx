@@ -1,3 +1,4 @@
+import { Icon } from "../../ui/icons";
 import ExportControls from "../ExportControls";
 import { router } from "../../lib/router";
 import {
@@ -21,6 +22,7 @@ interface Props {
   pdfMarkdown: string;
   loadFullReport?: () => Promise<{ markdown: string; pdfMarkdown: string }>;
   extractedText?: string;
+  exportEnabled?: boolean;
 }
 export default function ReportHeader({
   onBack,
@@ -34,10 +36,11 @@ export default function ReportHeader({
   pdfMarkdown,
   loadFullReport,
   extractedText,
+  exportEnabled = true,
 }: Props) {
   const display = reportStatusDisplay(status, report?.quality);
   return (
-    <header className="shrink-0 border-b border-line bg-surface px-[var(--ui-page-gutter)] py-3">
+    <header className="ui-workspace-header">
       <div className="flex min-w-0 flex-wrap items-start gap-3">
         {onBack && (
           <button
@@ -47,20 +50,7 @@ export default function ReportHeader({
             className="mt-0.5 rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-800
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
           >
-            <svg
-              aria-hidden="true"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.8}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="m15 18-6-6 6-6"
-              />
-            </svg>
+            <Icon name="chevron-left" className="h-4 w-4" />
           </button>
         )}
         <div className="min-w-0 flex-[1_1_16rem]">
@@ -68,12 +58,12 @@ export default function ReportHeader({
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 display.tone === "good"
-                  ? "bg-emerald-500"
+                  ? "bg-success"
                   : display.tone === "caution"
-                    ? "bg-amber-500"
+                    ? "bg-warning"
                     : display.tone === "stopped"
                       ? "bg-gray-400"
-                      : "bg-red-500"
+                      : "bg-danger"
               }`}
             />
             <span className="text-ui-meta font-semibold text-ink">
@@ -134,16 +124,27 @@ export default function ReportHeader({
                 Automate follow-up
               </button>
             )}
-            <ExportControls
-              runId={runId}
-              markdown={markdown}
-              pdfMarkdown={pdfMarkdown}
-              loadFullReport={loadFullReport}
-              provenanceMarkdown={renderProvenanceMarkdown(provenance)}
-              report={report}
-              extractedText={extractedText}
-              inputPath={runManifest?.input_path}
-            />
+            {exportEnabled ? (
+              <ExportControls
+                runId={runId}
+                markdown={markdown}
+                pdfMarkdown={pdfMarkdown}
+                loadFullReport={loadFullReport}
+                provenanceMarkdown={renderProvenanceMarkdown(provenance)}
+                report={report}
+                extractedText={extractedText}
+                inputPath={runManifest?.input_path}
+              />
+            ) : (
+              <button
+                type="button"
+                disabled
+                className="ui-button ui-button--sm"
+                title="Export is available in your own reviews."
+              >
+                Export (example only)
+              </button>
+            )}
           </div>
         )}
       </div>

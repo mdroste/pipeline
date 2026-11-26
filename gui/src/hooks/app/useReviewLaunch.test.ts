@@ -3,6 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { useReviewSetup } from "./useReviewSetup";
 import { useReviewLaunch } from "./useReviewLaunch";
 import type { PipelineConfig } from "../../lib/workflowTypes";
+import type { RunModelOverrides } from "../../lib/reviewModelTypes";
+import { settingsClient } from "../../lib/settingsClient";
 
 const client = vi.hoisted(() => ({
   runSetup: vi.fn(),
@@ -12,6 +14,17 @@ const client = vi.hoisted(() => ({
   inputFiles: vi.fn(),
 }));
 vi.mock("../../lib/appClient", () => ({ appClient: client }));
+vi.mock("../../lib/settingsClient", () => ({
+  settingsClient: {
+    load: vi.fn(async () => ({
+      settings: {
+        preferred_provider: "claude",
+        default_model: "primary-model",
+        default_effort: "high",
+      },
+    })),
+  },
+}));
 vi.mock("../../lib/workflowProfileClient", () => ({
   workflowProfileClient: {
     config: client.pipelineConfig,
@@ -101,6 +114,143 @@ it("freezes the normalized preview note even if the draft later changes", async 
       expectedProfileSnapshotId: "prepared",
     }),
   );
+});
+
+it.each([false, true])(
+  "binds and freezes the primary-only default before the inspector loads (batch=%s)",
+  async (batch) => {
+    const { result } = await setupReview();
+    if (batch)
+      act(() =>
+        result.current.setup.setInputSelection({
+          paths: ["/a.pdf", "/b.pdf"],
+          interpretation: "batch",
+          selectionKind: "file",
+        }),
+      );
+    act(() =>
+      result.current.setup.setParallelOverrides({
+        agents: [],
+        model_overrides: {},
+        effort_overrides: {},
+        extraction_method: "pdftotext",
+      }),
+    );
+    await act(async () => {
+      await result.current.launch.handleGenerate();
+    });
+    const expected = {
+      review: { provider: "claude", model: "primary-model", effort: "high" },
+      agents: [],
+      model_overrides: {},
+      effort_overrides: {},
+      clear_settings_exceptions: true,
+      override_workflow_pins: true,
+      extraction_method: "pdftotext",
+    };
+    expect(client.executionPlan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runParallelOverrides: expected }),
+    );
+    act(() =>
+      result.current.setup.setParallelOverrides({
+        review: { provider: "codex", model: "other-model", effort: "" },
+        agents: [],
+        model_overrides: {},
+        effort_overrides: {},
+      }),
+    );
+    await act(async () => {
+      await result.current.launch.startPreparedLaunch();
+    });
+    expect(batch ? queue.enqueueBatch : queue.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runParallelOverrides: expected }),
+    );
+  },
+);
+
+it.each([
+  { batch: false, legacy: false },
+  { batch: true, legacy: false },
+  { batch: false, legacy: true },
+  { batch: true, legacy: true },
+])(
+  "drops obsolete combining choices before preview and launch ($batch, $legacy)",
+  async ({ batch, legacy }) => {
+    const { result } = await setupReview();
+    const team: RunModelOverrides = {
+      review: { provider: "codex", model: "chosen-primary", effort: "max" },
+      agents: ["codex", "claude"],
+      model_overrides: { "claude:cli": { mode: "pinned", model: "reviewer" } },
+      effort_overrides: { "claude:cli": "high" },
+      clear_settings_exceptions: true,
+      override_workflow_pins: true,
+      extraction_method: "pdftotext",
+    };
+    act(() => {
+      if (batch)
+        result.current.setup.setInputSelection({
+          paths: ["/a.pdf", "/b.pdf"],
+          interpretation: "batch",
+          selectionKind: "file",
+        });
+      result.current.setup.setParallelOverrides({
+        ...(legacy
+          ? {
+              agents: [],
+              model_overrides: {},
+              effort_overrides: {},
+              extraction_method: "pdftotext" as const,
+            }
+          : team),
+        merge_agent: "antigravity",
+        merge_model_overrides: {
+          "antigravity:cli": { mode: "pinned", model: "old-combiner" },
+        },
+        merge_effort_overrides: { "antigravity:cli": "high" },
+      });
+    });
+    await act(async () => {
+      await result.current.launch.handleGenerate();
+    });
+    const expected = legacy
+      ? {
+          ...team,
+          review: {
+            provider: "claude",
+            model: "primary-model",
+            effort: "high",
+          },
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+        }
+      : team;
+    expect(client.executionPlan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runParallelOverrides: expected }),
+    );
+    expect(result.current.launch.runPreview?.parallelOverrides).toEqual(
+      expected,
+    );
+    await act(async () => {
+      await result.current.launch.startPreparedLaunch();
+    });
+    expect(batch ? queue.enqueueBatch : queue.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ runParallelOverrides: expected }),
+    );
+  },
+);
+
+it("does not fall back to workflow models when primary defaults cannot be loaded", async () => {
+  const { result } = await setupReview();
+  vi.mocked(settingsClient.load).mockRejectedValueOnce(
+    new Error("Settings unavailable"),
+  );
+  await act(async () => {
+    await result.current.launch.handleGenerate();
+  });
+  expect(client.executionPlan).not.toHaveBeenCalled();
+  expect(result.current.launch.runPreview).toBeNull();
+  expect(result.current.launch.launchError).toContain("Settings unavailable");
 });
 
 it("rebuilds an edited preview while retaining entered workflow options", async () => {

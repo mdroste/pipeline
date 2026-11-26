@@ -1,7 +1,6 @@
 import { useState } from "react";
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import { withAccessMode } from "../../lib/providers";
 import type { DepsReport, Settings } from "../../lib/settingsTypes";
 import type { ModelCatalog } from "../../lib/reviewModelTypes";
 
@@ -9,6 +8,7 @@ import InfoButton from "../InfoButton";
 import CredentialField from "./CredentialField";
 import LocalServerUrl from "./LocalServerUrl";
 import ConnectionStatus from "./ConnectionStatus";
+import { ProviderConnectionSettings } from "./ModelConnectionSettings";
 import { ReviewSaveFeedback } from "./SaveState";
 
 import WorkflowCodexConnection from "../WorkflowCodexConnection";
@@ -130,74 +130,6 @@ export function LocalProviderSection({
   );
 }
 
-type AccessMode = "subscription" | "api";
-
-export function AccessModeSelector({
-  provider,
-  value,
-  onChange,
-  subscriptionDisabledNote,
-}: {
-  provider: string;
-  value: AccessMode;
-  onChange: (mode: AccessMode) => void;
-  /** When set, the Subscription option is shown but not selectable and this
-      note replaces the mode description. */
-  subscriptionDisabledNote?: string;
-}) {
-  const effectiveValue = subscriptionDisabledNote ? "api" : value;
-  const description =
-    subscriptionDisabledNote ??
-    (effectiveValue === "api"
-      ? "API usage is billed separately by your provider."
-      : undefined);
-  return (
-    <div className="settings-row settings-row-plain">
-      <div className="settings-row-copy">
-        <div className="settings-row-label">Connection mode</div>
-        {description && (
-          <p className="settings-row-description">{description}</p>
-        )}
-      </div>
-      <div
-        role="radiogroup"
-        aria-label={`${provider} connection mode`}
-        className="inline-flex shrink-0 rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-neutral-600 dark:bg-neutral-900"
-      >
-        {(["subscription", "api"] as const).map((mode) => {
-          const disabled =
-            mode === "subscription" && !!subscriptionDisabledNote;
-          return (
-            <label
-              key={mode}
-              // Relative keeps the hidden radio inside the scrolling settings
-              // pane. Otherwise focusing it scrolls the whole window on Windows.
-              className={`relative rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
-                disabled
-                  ? "cursor-not-allowed text-gray-300 dark:text-neutral-600"
-                  : effectiveValue === mode
-                    ? "cursor-pointer bg-white text-gray-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
-                    : "cursor-pointer text-gray-500 hover:text-gray-800 dark:text-neutral-400 dark:hover:text-neutral-200"
-              }`}
-            >
-              <input
-                type="radio"
-                name={`${provider.toLowerCase().replaceAll(" ", "-")}-access-mode`}
-                value={mode}
-                checked={effectiveValue === mode}
-                disabled={disabled}
-                onChange={() => onChange(mode)}
-                className="sr-only"
-              />
-              {mode === "subscription" ? "Subscription" : "API"}
-            </label>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function ProvidersSection({
   settings,
   setSettings,
@@ -238,12 +170,11 @@ export function ProvidersSection({
     <>
       <SettingsCard id="anthropic-provider">
         <ProviderHeader name="Anthropic">{check("claude")}</ProviderHeader>
-        <AccessModeSelector
-          provider="Claude"
-          value={settings.claude_access_mode}
-          onChange={(mode) =>
-            setSettings(withAccessMode(settings, "claude", mode))
-          }
+        <ProviderConnectionSettings
+          provider="claude"
+          settings={settings}
+          setSettings={setSettings}
+          dependencies={dependencies}
         />
         {settings.claude_access_mode === "api" ? (
           <CredentialField
@@ -254,11 +185,24 @@ export function ProvidersSection({
             }
           />
         ) : (
-          settings.anthropic_api_key && (
-            <p className="settings-row-description mt-3">
-              Your saved API key isn’t used in subscription mode.
-            </p>
-          )
+          <p className="settings-row-description mt-3">
+            {settings.claude_access_mode === "code_api" ? (
+              <>
+                Sign in through Claude Code with{" "}
+                <code>claude auth login --console</code> in Terminal. If
+                offered, choose “Create an API key.” Usage is billed to your
+                Console account. Pipeline’s saved API key is only used by the
+                direct API connection.
+              </>
+            ) : (
+              <>
+                Sign in through <code>claude auth login</code> and choose your
+                Claude subscription. If that sign-in is unavailable, requests
+                stop; Pipeline never switches to API billing. Your saved API key
+                isn’t used in subscription mode.
+              </>
+            )}
+          </p>
         )}
         <ReviewSaveFeedback />
       </SettingsCard>
@@ -282,12 +226,11 @@ export function ProvidersSection({
               settings.codex_backend === "legacy_cli") &&
               check("codex")}
           </div>
-          <AccessModeSelector
-            provider="ChatGPT"
-            value={settings.codex_access_mode}
-            onChange={(mode) =>
-              setSettings(withAccessMode(settings, "codex", mode))
-            }
+          <ProviderConnectionSettings
+            provider="codex"
+            settings={settings}
+            setSettings={setSettings}
+            dependencies={dependencies}
           />
           {settings.codex_access_mode !== "api" ? (
             <>
@@ -348,14 +291,10 @@ export function ProvidersSection({
       </SettingsCard>
       <SettingsCard id="google-provider">
         <ProviderHeader name="Google">{check("antigravity")}</ProviderHeader>
-        <AccessModeSelector
-          provider="Gemini"
-          value={settings.antigravity_access_mode}
-          onChange={(mode) =>
-            setSettings({ ...settings, antigravity_access_mode: mode })
-          }
-          subscriptionDisabledNote="Gemini needs a Google API key. Subscription sign-in isn’t available."
-        />
+        <p className="settings-row-description">
+          Gemini uses the Google API key saved in Pipeline. API usage is billed
+          separately.
+        </p>
         <CredentialField
           label="Gemini API Key"
           value={settings.google_api_key}

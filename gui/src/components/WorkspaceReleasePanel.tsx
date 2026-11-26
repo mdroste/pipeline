@@ -249,7 +249,7 @@ export default function WorkspaceReleasePanel({
               !onReviewHandoff
             }
             onClick={() => onAction(handoffToReview)}
-            className="mt-3 rounded bg-gray-900 px-3 py-2 text-xs text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+            className="ui-button ui-button--primary ui-button--sm mt-3"
           >
             Review this revision…
           </button>

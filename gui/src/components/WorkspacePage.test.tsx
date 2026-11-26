@@ -680,7 +680,9 @@ const openMenu = () => {
       name: "Conversation actions for Policy discussion",
     })
   )
-    fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Browse conversations" }),
+    );
   fireEvent.click(
     screen.getByRole("button", {
       name: "Conversation actions for Policy discussion",
@@ -805,9 +807,11 @@ it("moves an unfiled conversation into a project and follows it there", async ()
     expect(mocks.listSessions).toHaveBeenCalledWith("project", false, null),
   );
   expect(
-    await screen.findByRole("button", {
-      name: "Switch project: Monetary policy",
-    }),
+    (
+      await screen.findAllByRole("button", {
+        name: "Switch project: Monetary policy",
+      })
+    )[0],
   ).toBeVisible();
   expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBe(
     "project",

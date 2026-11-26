@@ -89,9 +89,9 @@ export function useProfileOperations(
       if (
         JSON.stringify(candidate) !== JSON.stringify(saved) &&
         (await confirmDialog(
-          "Pipeline found an unsaved draft for this review. Restore it?",
+          "Pipeline found an unsaved draft for this review design. Restore it?",
           {
-            title: "Recover review draft",
+            title: "Recover design draft",
             confirmLabel: "Restore draft",
           },
         ))
@@ -193,7 +193,7 @@ export function useProfileOperations(
     if (
       dirty &&
       !(await confirmDialog(
-        "You have unsaved changes. Switch review and discard them?",
+        "You have unsaved changes. Switch review design and discard them?",
         { destructive: true },
       ))
     )
@@ -205,7 +205,7 @@ export function useProfileOperations(
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         notify(
-          `Failed to switch review: ${e instanceof Error ? e.message : String(e)}`,
+          `Failed to switch review design: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     } finally {
@@ -215,13 +215,13 @@ export function useProfileOperations(
 
   const handleNewProfile = () => {
     setPromptDialog({
-      title: "New review name",
+      title: "New review design name",
       defaultValue: "",
       onSubmit: async (name) => {
         if (
           dirty &&
           !(await confirmDialog(
-            "Create this review and discard the current unsaved changes?",
+            "Create this review design and discard the current unsaved changes?",
             { destructive: true },
           ))
         ) {
@@ -239,7 +239,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to create review: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to create review design: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -257,7 +257,7 @@ export function useProfileOperations(
         if (
           dirty &&
           !(await confirmDialog(
-            "Duplicate this review and discard the current unsaved changes?",
+            "Duplicate this review design and discard the current unsaved changes?",
             { destructive: true },
           ))
         ) {
@@ -277,7 +277,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to duplicate review: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to duplicate review design: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -291,7 +291,7 @@ export function useProfileOperations(
     const current = profiles.find((p) => p.id === activeProfile);
     const profile = activeProfile;
     setPromptDialog({
-      title: "Rename review",
+      title: "Rename review design",
       defaultValue: current?.name ?? "",
       onSubmit: async (name) => {
         const request = beginProfileMutation();
@@ -310,7 +310,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to rename review: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to rename review design: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -323,14 +323,18 @@ export function useProfileOperations(
   const handleDeleteProfile = async () => {
     const profile = activeProfileRef.current;
     if (profiles.find((candidate) => candidate.id === profile)?.builtin) {
-      notify("Built-in reviews cannot be deleted.", "info");
+      notify("Built-in review designs cannot be deleted.", "info");
       return;
     }
     const current = profiles.find((candidate) => candidate.id === profile);
     if (
       !(await confirmDialog(
-        `Delete review “${current?.name ?? profile}”? This cannot be undone.`,
-        { title: "Delete review", confirmLabel: "Delete", destructive: true },
+        `Delete review design “${current?.name ?? profile}”? This cannot be undone.`,
+        {
+          title: "Delete review design",
+          confirmLabel: "Delete",
+          destructive: true,
+        },
       ))
     )
       return;
@@ -344,7 +348,7 @@ export function useProfileOperations(
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         notify(
-          `Failed to delete review: ${e instanceof Error ? e.message : String(e)}`,
+          `Failed to delete review design: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     } finally {
@@ -393,7 +397,7 @@ export function useProfileOperations(
     if (!dirty) return true;
     if (
       !(await confirmDialog(
-        `Exporting ${what} requires saving this review's unsaved edits first. Save and continue?`,
+        `Exporting ${what} requires saving this design's unsaved edits first. Save and continue?`,
       ))
     ) {
       return false;
@@ -401,7 +405,7 @@ export function useProfileOperations(
     const currentSaved = await persistCurrentConfig();
     if (!currentSaved) {
       notify(
-        "Export cancelled because the review changed while it was being saved.",
+        "Export cancelled because the design changed while it was being saved.",
         "info",
       );
     }
@@ -411,8 +415,12 @@ export function useProfileOperations(
   const handleReset = async () => {
     if (
       !(await confirmDialog(
-        "Reset this review to defaults? All customizations will be lost.",
-        { title: "Reset review", confirmLabel: "Reset", destructive: true },
+        "Reset this review design to defaults? All customizations will be lost.",
+        {
+          title: "Reset review design",
+          confirmLabel: "Reset",
+          destructive: true,
+        },
       ))
     )
       return;
@@ -471,7 +479,7 @@ export function useProfileOperations(
   const handleExportProfile = async () => {
     const suggestedName = `pipeline-profile-${activeProfile}.json`;
     try {
-      if (!(await saveBeforeExport("the review"))) return;
+      if (!(await saveBeforeExport("the review design"))) return;
       await workflowProfileClient.exportProfile({
         id: activeProfile,
         suggestedName,
@@ -555,7 +563,7 @@ export function useProfileOperations(
             logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
           if (
             !(await confirmDialog(
-              `Import and activate review “${envelope.name}”?\n\n` +
+              `Import and activate review design “${envelope.name}”?\n\n` +
                 `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per report (including retries and merges).\n` +
                 `Tools: ${tools.join(", ") || "none"}\n` +
                 `Agents: ${agents.join(", ") || "review default"}\n\n` +
@@ -573,8 +581,8 @@ export function useProfileOperations(
         case "bundle": {
           if (
             !(await confirmDialog(
-              `Import ${envelope.profiles.length} reviews plus provider/settings configuration?\n\n` +
-                "Existing reviews with the same ID will be overwritten. API-key fields and the active review may change. Check the active review before running it.",
+              `Import ${envelope.profiles.length} review designs plus provider/settings configuration?\n\n` +
+                "Existing review designs with the same ID will be overwritten. API-key fields and the active review design may change. Check the active review design before running it.",
             ))
           )
             return;

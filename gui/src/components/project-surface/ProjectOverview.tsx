@@ -1,37 +1,36 @@
-// The project overview answers three questions from state the app already
-// computed: what to do next at this stage of the paper, what is waiting on the
-// researcher, and what changed since they last looked. Sections with nothing
-// to report do not render, and every row carries one action. Projects with no folder or paper have nothing
-// to derive, so they get a short conversation-first page instead.
-
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useProjectEnvironment } from "../../lib/projectEnvironment";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   TranscriptItem,
   WorkbenchSession,
 } from "../../lib/workbench/sessionTypes";
-import { researchClient } from "../../lib/workbench/researchClient";
-import { projectDate } from "../../lib/projectIndex";
-import { router } from "../../lib/router";
-import { workbenchErrorMessage } from "../../lib/workbenchError";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ContextItem } from "../../lib/deskClient";
-import { kindLabel, projectStages } from "../../lib/workspaceNavigation";
+import { projectDate } from "../../lib/projectIndex";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { attentionRows } from "../../lib/project-overview/arrange";
 import {
-  BRIEF_PROMPT,
-  documentsBlock,
-} from "../../lib/project-overview/documents";
-import { arrangeOverview } from "../../lib/project-overview/arrange";
+  loadAttentionPreferences,
+  saveAttentionPreferences,
+  deferred,
+  type AttentionPreferences,
+} from "../../lib/project-overview/attention";
 import {
   briefNotes,
   leftOff,
   projectSessions,
 } from "../../lib/project-overview/conversations";
 import {
-  currentManuscript,
   draftBlock,
   isThinProject,
 } from "../../lib/project-overview/manuscript";
-import { recordVisit } from "../../lib/project-overview/visits";
+import {
+  markActivitySeen,
+  type Visit,
+} from "../../lib/project-overview/visits";
+import {
+  recentWork,
+  type RecentWork,
+} from "../../lib/project-overview/continuation";
 import { repositoryBlock } from "../../lib/project-overview/repository";
 import { roundBlock, syncBlock } from "../../lib/project-overview/review";
 import { sinceBlock } from "../../lib/project-overview/since";
@@ -40,78 +39,48 @@ import type {
   OverviewAction,
   OverviewBlock,
 } from "../../lib/project-overview/types";
-import type { Visit } from "../../lib/project-overview/visits";
 import useProjectSignals from "../../hooks/useProjectSignals";
 import { payloadText } from "../../lib/workspaceTranscript";
-import { isOpenTask, noteKindLabel, op, type SurfaceApi } from "./shared";
-import ProjectNotes from "./ProjectNotes";
+import type { SurfaceApi } from "./shared";
+import WorkspaceIcon from "../WorkspaceIcon";
+import OverviewDialog, { OverviewPane } from "./OverviewDialog";
+import OverviewRows from "./OverviewRows";
+import OverviewBrief from "./OverviewBrief";
+import OverviewWorkingSet from "./OverviewWorkingSet";
+import OverviewAttention from "./OverviewAttention";
+import OverviewSources from "./OverviewSources";
 import "../../ui/page.css";
 import "./ProjectHome.css";
+import "./ProjectOverview.css";
 
 interface Props extends SurfaceApi {
   sessions: WorkbenchSession[];
-  /** False while another project view is in front; derived state is not reloaded then. */
   active?: boolean;
-  /** The loaded conversation, used to recall the last request made in it. */
   transcript?: { sessionId: string; items: TranscriptItem[] } | null;
   onResume: (id: string) => void;
   onStartConversation: () => void;
-  /** Opens a new conversation with this text as an unsent draft. */
   onAsk: (prompt: string, context?: ContextItem[]) => void;
   onAllProjects?: () => void;
-  onOpenDocument: (revisionId: string) => void;
+  onOpenDocument: (
+    revisionId: string,
+    mode?: "read" | "edit" | "compare",
+  ) => void;
+  onOpenWork?: (work: RecentWork) => void;
+  onOpenTarget?: (action: OverviewAction) => void;
   onImportPaper: (folder: boolean) => void;
   onAttachFolder: () => void;
   showProjectName?: boolean;
-}
-
-const KEEP_ALIVE_MS = 5 * 60_000;
-
-function Block({
-  block,
-  meta,
-  busy = false,
-  onAction,
-}: {
-  block: OverviewBlock;
-  meta?: string;
-  /** True while derived state is loading; a remote check cannot be repeated meanwhile. */
+  options?: (onClose: () => void) => ReactNode;
+  error?: string | null;
+  onDismissError?: () => void;
   busy?: boolean;
-  onAction: (action: OverviewAction) => void;
-}) {
-  return (
-    <section className="project-overview-block" aria-label={block.title}>
-      <h2>
-        {block.title}
-        {meta && <span className="project-home-meta"> · {meta}</span>}
-      </h2>
-      {block.rows.map((row) => (
-        <div
-          className="project-overview-row"
-          key={row.id}
-          data-attention={row.attention || undefined}
-        >
-          <div>
-            <p>{row.text}</p>
-            {row.detail && <p className="project-home-meta">{row.detail}</p>}
-          </div>
-          <button
-            type="button"
-            className="project-home-link"
-            disabled={busy && row.action.kind === "fetch"}
-            onClick={() => onAction(row.action)}
-          >
-            {busy && row.action.kind === "fetch"
-              ? "Checking…"
-              : `${row.action.label} →`}
-          </button>
-        </div>
-      ))}
-    </section>
-  );
+  initialPanel?: "brief" | "notes" | "draft";
+  onPanelChange?: (panel: string | null) => void;
 }
 
 export default function ProjectOverview(props: Props) {
+  const { navigate, openExternal, recordVisit, embeddedDialogs } =
+    useProjectEnvironment();
   const {
     data,
     workspace,
@@ -122,16 +91,17 @@ export default function ProjectOverview(props: Props) {
     onResume,
     onStartConversation,
     onAsk,
-    onAllProjects,
     onOpenDocument,
     setTab,
-    run,
   } = props;
-  const [question, setQuestion] = useState("");
-  const [editingQuestion, setEditingQuestion] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const notes = useRef<HTMLDetailsElement>(null);
-
+  const [panel, setLocalPanel] = useState<string | null>(
+    props.initialPanel ?? null,
+  );
+  const [noteId, setNoteId] = useState<string>();
+  const setPanel = (next: string | null) => {
+    setLocalPanel(next);
+    props.onPanelChange?.(next);
+  };
   const thin = isThinProject(data, workspace);
   const own = useMemo(
     () => projectSessions(sessions, workspaceId),
@@ -145,72 +115,92 @@ export default function ProjectOverview(props: Props) {
     enabled: active && !thin,
     stamp: data,
   });
-
   const files = data.inventory?.body.files;
   const [visit, setVisit] = useState<Visit>(() =>
     recordVisit(workspaceId, new Date(), files),
   );
-  useEffect(() => {
-    setVisit(recordVisit(workspaceId, new Date(), files));
-  }, [workspaceId, files]);
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible")
-        recordVisit(workspaceId, new Date(), null);
-    }, KEEP_ALIVE_MS);
-    return () => clearInterval(timer);
-  }, [workspaceId]);
-
-  const brief = briefNotes(data);
-  const resume = leftOff(data, sessions, workspaceId, transcript, payloadText);
-  const manuscript = currentManuscript(data).paper;
-  const target = targetSummary(data.settings.body, new Date());
-  const settings = data.settings.body;
-  const { next, needs, blocks, moreTasks } = arrangeOverview(
-    data,
-    thin
-      ? []
-      : [
-          draftBlock(data, signals),
-          documentsBlock(data),
-          syncBlock(data),
-          roundBlock(signals),
-          repositoryBlock(signals, new Date()),
-        ].filter((block): block is OverviewBlock => Boolean(block)),
-    settings.stage,
+  const [preferences, setPreferences] = useState<AttentionPreferences>(() =>
+    embeddedDialogs ? {} : loadAttentionPreferences(workspaceId),
   );
-  const about = [kindLabel(settings.kind), settings.venue?.trim()].filter(
-    Boolean,
+  const [work, setWork] = useState<RecentWork[]>(() =>
+    embeddedDialogs ? [] : recentWork(workspaceId),
   );
-  const since = thin ? null : sinceBlock(data, signals, visit);
-
-  const openTasks = data.tasks
-    .filter((task) => isOpenTask(task.body.status))
-    .sort(
-      (a, b) =>
-        Number(a.body.status === "deferred") -
-          Number(b.body.status === "deferred") ||
-        b.updatedAt.localeCompare(a.updatedAt),
-    );
-  const others = own.filter((session) => session.id !== resume?.session.id);
-
-  function showNotes() {
-    if (notes.current) {
-      notes.current.open = true;
-      notes.current.scrollIntoView({ block: "start", behavior: "smooth" });
+  useEffect(() => {
+    if (!active) {
+      setPanel(null);
+      return;
     }
-  }
+    setVisit(recordVisit(workspaceId, new Date(), files));
+    setWork(embeddedDialogs ? [] : recentWork(workspaceId));
+  }, [active, workspaceId, files, embeddedDialogs]);
+  const brief = briefNotes(data).find(
+    (note) => note.pinned || data.settings.body.briefNoteIds.includes(note.id),
+  );
+  const conversation = leftOff(
+    data,
+    sessions,
+    workspaceId,
+    transcript,
+    payloadText,
+  );
+  const continuation =
+    props.onOpenWork &&
+    (!conversation ||
+      (!conversation.draft &&
+        Date.parse(work[0]?.at ?? "") >=
+          Date.parse(conversation.session.updatedAt)))
+      ? work[0]
+      : undefined;
+  const target = targetSummary(data.settings.body, new Date());
+  const derived = thin
+    ? []
+    : [
+        draftBlock(data, signals),
+        syncBlock(data),
+        roundBlock(signals),
+        repositoryBlock(signals, new Date()),
+      ].filter((block): block is OverviewBlock => Boolean(block));
+  const attention = attentionRows(data, derived);
+  const due = attention.filter((row) => !deferred(row, preferences));
+  const since = thin ? null : sinceBlock(data, signals, visit);
+  const detailBlock = [...derived, since].find((block) => block?.id === panel);
+  const repository = signals.repository;
+  const close = () => setPanel(null);
+  const navigateTab = (tab: Parameters<typeof setTab>[0]) => {
+    close();
+    setTab(tab);
+  };
   const act = (action: OverviewAction) => {
-    if (action.kind === "tab") setTab(action.tab);
-    else if (action.kind === "ask") onAsk(action.prompt);
-    else if (action.kind === "document") onOpenDocument(action.revisionId);
+    if (action.kind !== "fetch" && action.kind !== "link") close();
+    if (action.kind === "tab") {
+      if (action.targetId && props.onOpenTarget) props.onOpenTarget(action);
+      else {
+        if (action.tab === "tasks" && action.targetId)
+          props.setTaskId(action.targetId);
+        setTab(action.tab);
+      }
+    } else if (action.kind === "file") {
+      if (props.onOpenTarget) props.onOpenTarget(action);
+      else setTab("files");
+    } else if (action.kind === "ask") {
+      const context = action.context ?? [];
+      onAsk(
+        action.prompt,
+        action.target && !context.some((item) => item.role === "main")
+          ? [{ role: "main", object: action.target }, ...context]
+          : context,
+      );
+    } else if (action.kind === "document")
+      onOpenDocument(action.revisionId, action.mode);
     else if (action.kind === "run")
-      void router.navigate({ page: "history", runId: action.runId });
-    else if (action.kind === "review") void router.navigate({ page: "main" });
+      void navigate({ page: "history", runId: action.runId });
+    else if (action.kind === "review") setTab("review");
     else if (action.kind === "automation")
-      void router.navigate({ page: "tasks", taskId: action.taskId });
-    else if (action.kind === "notes") showNotes();
-    else if (action.kind === "link")
+      void navigate({ page: "tasks", taskId: action.taskId });
+    else if (action.kind === "notes") {
+      setNoteId(action.noteId);
+      setPanel("notes");
+    } else if (action.kind === "link")
       void Promise.resolve()
         .then(() => openExternal(action.url))
         .catch(() => props.reportError("The link could not be opened."));
@@ -219,375 +209,493 @@ export default function ProjectOverview(props: Props) {
         props.reportError(workbenchErrorMessage(cause)),
       );
   };
-  const saveQuestion = async () => {
-    if (!question.trim() || saving) return;
-    setSaving(true);
-    await run(async () => {
-      await researchClient.createNote({
-        workspaceId,
-        paperId: null,
-        kind: "question",
-        body: question.trim(),
-        state: "accepted",
-        origin: "user",
-        pinned: true,
-        operationId: op(),
-      });
-      setQuestion("");
-      setEditingQuestion(false);
-    });
-    setSaving(false);
+  const savePreferences = (next: AttentionPreferences) => {
+    try {
+      if (!embeddedDialogs) saveAttentionPreferences(workspaceId, next);
+      setPreferences(next);
+    } catch {
+      props.reportError("The priority could not be saved. Please try again.");
+    }
   };
-  const draftBrief = () =>
-    onAsk(
-      BRIEF_PROMPT,
-      manuscript?.revision
-        ? [
-            {
-              role: "main",
-              object: {
-                kind: "paper",
-                id: manuscript.revision.id,
-                revision: manuscript.revision.contentHash,
-              },
-            },
-          ]
-        : undefined,
-    );
-
+  const acknowledge = () => {
+    try {
+      setVisit(
+        embeddedDialogs
+          ? { since: new Date().toISOString(), baseline: null }
+          : markActivitySeen(workspaceId, new Date(), files),
+      );
+      close();
+    } catch {
+      props.reportError("The activity marker could not be saved.");
+    }
+  };
+  const hasDocuments = data.papers.some(
+    (item) => item.revision && !item.paper.archived,
+  );
   return (
-    <div className="project-home">
-      <div className="project-overview" data-thin={thin || undefined}>
-        {onAllProjects && (
-          <button
-            type="button"
-            className="project-home-link muted project-overview-back"
-            onClick={onAllProjects}
-          >
-            ← All projects
-          </button>
-        )}
-        <header className="project-home-heading">
-          <div>
-            <h1>
-              {props.showProjectName
-                ? (workspace?.name ?? "Project overview")
-                : "Project overview"}
-            </h1>
-            {(!!about.length || target) && (
-              <p>
-                {about.join(" · ")}
-                {!!about.length && target && " · "}
-                {target &&
-                  `${target.label} · ${target.date} · ${
-                    target.days > 1
-                      ? `in ${target.days} days`
-                      : target.days === 1
-                        ? "tomorrow"
-                        : target.days === 0
-                          ? "today"
-                          : target.days === -1
-                            ? "yesterday"
-                            : `${-target.days} days ago`
-                  }`}
-              </p>
-            )}
-          </div>
-          {(data.papers.some(
-            (p) =>
-              (p.paper.documentType ??
-                (p.paper.role === "manuscript" ? "paper" : "other")) ===
-              "paper",
-          ) ||
-            settings.stage) && (
-            <label className="project-overview-stage">
-              <span className="project-home-meta">Stage</span>
-              <select
-                aria-label="Stage of the paper"
-                value={settings.stage ?? ""}
-                onChange={(event) =>
-                  void props.saveSettings({ stage: event.target.value || null })
-                }
-              >
-                <option value="">Not set</option>
-                {projectStages.map((stage) => (
-                  <option key={stage.id} value={stage.id}>
-                    {stage.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <button
-            type="button"
-            className="project-home-link muted"
-            onClick={() => setTab("project-settings")}
-          >
-            Project settings
-          </button>
-        </header>
-
-        {next && <Block block={next} busy={loading} onAction={act} />}
-
-        <section className="project-brief" aria-label="Research brief">
-          <h2>Research brief</h2>
-          {brief.map((note) => (
-            <div key={note.id}>
-              <p>{note.body}</p>
-              <p className="project-home-meta">
-                {noteKindLabel(note.kind)} · {projectDate(note.updatedAt)}
-              </p>
-            </div>
-          ))}
-          {!brief.length && !editingQuestion && (
-            <div className="project-overview-tools">
-              {manuscript && (
-                <button
-                  type="button"
-                  className="project-home-link"
-                  onClick={draftBrief}
-                >
-                  Draft a brief from the paper
-                </button>
-              )}
-              <button
-                type="button"
-                className="project-home-link"
-                onClick={() => setEditingQuestion(true)}
-              >
-                Add research question
+    <div
+      className="project-home command-center research-dashboard"
+      data-thin={thin || undefined}
+    >
+      <header className="overview-heading">
+        <div className="overview-identity">
+          {props.onAllProjects && (
+            <div className="overview-eyebrow">
+              <button type="button" onClick={props.onAllProjects}>
+                ← All projects
               </button>
             </div>
           )}
-          {editingQuestion && (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void saveQuestion();
-              }}
-              className="space-y-3 mt-3"
-            >
-              <label className="block text-sm">
-                Research question
-                <textarea
-                  className="mt-2 w-full rounded-md border border-gray-300 bg-transparent px-3 py-2 dark:border-neutral-700"
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  rows={3}
-                  maxLength={10000}
-                  autoFocus
-                />
-              </label>
-              <div className="flex gap-3">
-                <button
-                  className="ui-page-button primary"
-                  disabled={saving || !question.trim()}
-                >
-                  {saving ? "Saving…" : "Save question"}
-                </button>
-                <button
-                  type="button"
-                  className="ui-page-button"
-                  disabled={saving}
-                  onClick={() => setEditingQuestion(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+          {props.showProjectName !== false && (
+            <h1 title={workspace?.name}>{workspace?.name ?? "Project"}</h1>
           )}
-          {!!brief.length && (
-            <button
-              type="button"
-              className="project-home-link"
-              onClick={showNotes}
-            >
-              Manage brief notes
-            </button>
-          )}
-        </section>
-
-        <section className="project-resume" aria-label="Where you left off">
-          <div>
-            <p className="project-home-meta">
-              {resume
-                ? `Where you left off · ${projectDate(resume.session.updatedAt)}`
-                : "Start with a conversation"}
-            </p>
-            <h2>
-              {resume?.session.title ?? "What would you like to work on?"}
-            </h2>
-            {!resume && (
-              <p className="project-home-meta">
-                Develop an idea, work through a result, or begin drafting. You
-                can add a paper or folder at any time.
-              </p>
-            )}
-            {resume?.lastAsk && (
-              <p className="project-resume-line">
-                <span>You last asked</span> {resume.lastAsk}
-              </p>
-            )}
-            {resume?.draft && (
-              <p className="project-resume-line">
-                <span>Unsent draft</span> {resume.draft}
-              </p>
-            )}
-            {!!resume?.runs.total && (
-              <p className="project-resume-line">
-                <span>Runs started there</span> {resume.runs.total}
-                {resume.runs.failed
-                  ? `, ${resume.runs.failed} unsuccessful`
-                  : ""}
-              </p>
-            )}
-            {resume?.nextSteps.map((note) => (
-              <p className="project-resume-line" key={note.id}>
-                <span>{noteKindLabel(note.kind)}</span> {note.body}
-              </p>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="ui-page-button primary"
-            onClick={() =>
-              resume ? onResume(resume.session.id) : onStartConversation()
-            }
-          >
-            {resume ? "Resume conversation" : "Start conversation"} →
-          </button>
-        </section>
-
-        {!thin && loading && !next && !blocks.length && !since && (
-          <p role="status" className="project-home-meta">
-            Checking the state of the draft…
-          </p>
-        )}
-        <div className="project-overview-columns">
-          {/* Left: the state of the paper. Right: what happened and what waits. */}
-          {!!blocks.length && (
-            <div>
-              {blocks.map((block) => (
-                <Block
-                  key={block.id}
-                  block={block}
-                  busy={loading}
-                  onAction={act}
-                />
-              ))}
-            </div>
-          )}
-          {(needs || since || !!others.length) && (
-            <div>
-              {needs && <Block block={needs} busy={loading} onAction={act} />}
-              {moreTasks > 0 && (
-                <button
-                  type="button"
-                  className="project-home-link mt-3"
-                  onClick={() => setTab("tasks")}
-                >
-                  All {openTasks.length} action items
-                </button>
-              )}
-              {since && (
-                <Block
-                  block={since}
-                  meta={visit.since ? projectDate(visit.since) : undefined}
-                  onAction={act}
-                />
-              )}
-              {!!others.length && (
-                <section
-                  className="project-overview-block"
-                  aria-label="Other conversations"
-                >
-                  <h2>Other conversations</h2>
-                  {others.slice(0, 4).map((session) => (
-                    <div className="project-overview-row" key={session.id}>
-                      <div>
-                        <p className="line-clamp-2">{session.title}</p>
-                        <p className="project-home-meta">
-                          {projectDate(session.updatedAt)}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="project-home-link"
-                        onClick={() => onResume(session.id)}
-                      >
-                        Resume →
-                      </button>
-                    </div>
-                  ))}
-                </section>
-              )}
-            </div>
+          {target && (
+            <p className="overview-deadline">{`${target.label} · ${target.date} · ${target.days > 1 ? `in ${target.days} days` : target.days === 1 ? "tomorrow" : target.days === 0 ? "today" : target.days === -1 ? "yesterday" : `${-target.days} days ago`}`}</p>
           )}
         </div>
-
-        {thin && (
-          <p className="project-home-meta project-overview-thin">
-            Import a paper or attach the project folder and this page will track
-            the state of the paper: the last build, open review findings, and
-            what changed since your last visit.
-          </p>
-        )}
-        <div className="project-overview-tools">
+        <div className="overview-actions">
           <button
             type="button"
-            className="project-home-link"
-            onClick={() => props.onImportPaper(false)}
+            className="ui-button"
+            onClick={onStartConversation}
           >
-            Add document
+            Ask
           </button>
           <button
             type="button"
-            className="project-home-link"
-            onClick={() =>
-              workspace?.root ? setTab("files") : props.onAttachFolder()
-            }
+            className="ui-button"
+            data-project-tour="brief"
+            onClick={() => {
+              setNoteId(undefined);
+              setPanel("brief");
+            }}
           >
-            {workspace?.root ? "Open files" : "Attach folder"}
+            Context
           </button>
-          {resume && (
-            <button
-              type="button"
-              className="project-home-link"
-              onClick={onStartConversation}
-            >
-              New conversation
-            </button>
-          )}
           <button
             type="button"
-            className="project-home-link"
-            onClick={() => setTab("tasks")}
+            className="ui-button"
+            onClick={() => setPanel("options")}
+            aria-haspopup="dialog"
           >
-            {openTasks.length ? "Action items" : "Add an action item"}
+            <WorkspaceIcon name="settings" />
+            Options
           </button>
-          {!thin && (
-            <button
-              type="button"
-              className="project-home-link"
-              disabled={loading}
-              onClick={reload}
-            >
-              {loading ? "Checking…" : "Check again"}
-            </button>
-          )}
         </div>
-        <details
-          ref={notes}
-          className="workspace-overview-details project-overview-notes"
+      </header>
+      {brief && (
+        <button
+          type="button"
+          className="overview-question-preview"
+          title={brief.body}
+          onClick={() => {
+            setNoteId(brief.id);
+            setPanel("brief");
+          }}
         >
-          <summary>
-            Project notes<span>{data.notes.length} saved</span>
-          </summary>
-          <div className="workspace-overview-details-body">
-            <ProjectNotes {...props} />
+          {brief.body}
+        </button>
+      )}
+      <div className="overview-grid">
+        <section
+          className="overview-card overview-resume"
+          aria-label="Resume work"
+        >
+          <div className="overview-card-heading">
+            <h2>Resume</h2>
+            {(work.length > 1 || own.length > 0) && (
+              <button
+                className="project-home-link"
+                type="button"
+                onClick={() => setPanel("conversation")}
+              >
+                Recent work →
+              </button>
+            )}
           </div>
-        </details>
+          <h3 title={continuation?.title ?? conversation?.session.title}>
+            {continuation?.title ??
+              conversation?.session.title ??
+              "What would you like to work on?"}
+          </h3>
+          {(continuation || conversation) && (
+            <p className="overview-resume-excerpt">
+              {continuation
+                ? continuation.location
+                  ? `${continuation.location.path}${continuation.location.line ? ` · line ${continuation.location.line}` : ""}`
+                  : continuation.tab === "documents"
+                    ? "Saved document · reading position retained"
+                    : "Your working view"
+                : (conversation?.draft ?? conversation?.lastAsk)}
+            </p>
+          )}
+          <div className="overview-card-footer">
+            <span className="overview-meta">
+              {continuation
+                ? projectDate(continuation.at)
+                : conversation
+                  ? `${conversation.draft ? "Unsent draft · " : ""}${projectDate(conversation.session.updatedAt)}`
+                  : ""}
+            </span>
+            <button
+              type="button"
+              className="ui-button ui-button--primary"
+              onClick={() =>
+                continuation
+                  ? props.onOpenWork?.(continuation)
+                  : conversation
+                    ? onResume(conversation.session.id)
+                    : onStartConversation()
+              }
+            >
+              {continuation
+                ? "Continue work"
+                : conversation
+                  ? "Resume conversation"
+                  : "Start conversation"}{" "}
+              →
+            </button>
+          </div>
+        </section>
+        <section
+          className="overview-card overview-paper"
+          aria-label="Working set"
+        >
+          <div className="overview-card-heading">
+            <h2>Working set</h2>
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => setPanel("add")}
+            >
+              <WorkspaceIcon name="plus" />
+              Add
+            </button>
+          </div>
+          <OverviewWorkingSet
+            data={data}
+            workspace={workspace}
+            onAction={act}
+          />
+          <div className="overview-card-footer overview-actions">
+            {hasDocuments && (
+              <button
+                type="button"
+                className="project-home-link"
+                onClick={() => navigateTab("documents")}
+              >
+                All documents →
+              </button>
+            )}
+            <button
+              type="button"
+              className="project-home-link"
+              onClick={() =>
+                workspace?.root ? navigateTab("files") : props.onAttachFolder()
+              }
+            >
+              {workspace?.root ? "Open files" : "Attach folder"} →
+            </button>
+            {derived.some((block) => block.id === "draft") && (
+              <button
+                type="button"
+                className="project-home-link"
+                data-project-tour="open-report"
+                onClick={() => setPanel("draft")}
+              >
+                Builds & reviews →
+              </button>
+            )}
+          </div>
+        </section>
+        {due.length > 0 && (
+          <section
+            className="overview-card overview-decisions"
+            aria-label="Attention"
+          >
+            <div className="overview-card-heading">
+              <h2>Attention</h2>
+              <button
+                type="button"
+                className="project-home-link"
+                onClick={() => setPanel("needs")}
+              >
+                All items →
+              </button>
+            </div>
+            <OverviewAttention
+              rows={attention}
+              preferences={preferences}
+              onPreferences={savePreferences}
+              onAction={act}
+              preview
+            />
+          </section>
+        )}
+        {since && (
+          <section
+            className="overview-card overview-activity"
+            aria-label="Recent changes"
+          >
+            <div className="overview-card-heading">
+              <h2>Recent changes</h2>
+              <button
+                type="button"
+                className="project-home-link"
+                onClick={() => setPanel("since")}
+              >
+                Inspect changes →
+              </button>
+            </div>
+            <OverviewRows block={since} preview onAction={act} pageSize={2} />
+          </section>
+        )}
       </div>
+      <footer className="overview-footer">
+        {repository ? (
+          <button
+            type="button"
+            className="project-home-link overview-repository"
+            aria-label={`Repository: ${repository.branch ?? "Detached HEAD"}`}
+            onClick={() => setPanel("repository")}
+          >
+            {repository.branch ?? "Repository"}
+            <span>
+              {" "}
+              · {repository.changed + repository.untracked} local changes
+              {signals.sources?.repository?.state === "error"
+                ? " · last known"
+                : ""}
+              {repository.upstream
+                ? repository.fetchedAt
+                  ? ` · ${repository.ahead} ahead · ${repository.behind} behind at last fetch`
+                  : " · remote unchecked"
+                : ""}
+            </span>
+          </button>
+        ) : (
+          <span />
+        )}
+        <div className="overview-actions">
+          {Object.values(signals.sources ?? {}).some(
+            (source) =>
+              source.state === "error" ||
+              (source.state === "ready" && !source.complete),
+          ) && (
+            <button
+              type="button"
+              className="project-home-link"
+              onClick={() => setPanel("draft")}
+            >
+              Some status unavailable →
+            </button>
+          )}
+          {attention.length > 0 && !due.length && (
+            <button
+              type="button"
+              className="project-home-link"
+              onClick={() => setPanel("needs")}
+            >
+              Deferred items →
+            </button>
+          )}
+          <button
+            type="button"
+            className="project-home-link"
+            data-project-tour="status-tasks"
+            onClick={() => navigateTab("tasks")}
+          >
+            Action items →
+          </button>
+        </div>
+      </footer>
+      <OverviewDialog
+        onClose={close}
+        error={props.error}
+        onDismissError={props.onDismissError}
+        busy={props.busy}
+        open={active && panel !== null}
+        title={
+          panel === "draft"
+            ? "Builds & reviews"
+            : (detailBlock?.title ??
+              {
+                brief: "Project context",
+                notes: "Project context",
+                options: "Project options",
+                add: "Add to project",
+                conversation: "Recent work",
+                needs: "Attention",
+              }[panel ?? ""] ??
+              "Attention")
+        }
+      >
+        <OverviewPane open={active && (panel === "brief" || panel === "notes")}>
+          <OverviewBrief
+            {...props}
+            selectedNoteId={noteId}
+            onAsk={(prompt, context) => {
+              close();
+              onAsk(prompt, context);
+            }}
+          />
+        </OverviewPane>
+        <OverviewPane open={active && panel === "options"}>
+          {props.options?.(close) ?? (
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => navigateTab("project-settings")}
+            >
+              Project settings
+            </button>
+          )}
+        </OverviewPane>
+        <OverviewPane open={active && panel === "needs"}>
+          {data.tasksCursor && (
+            <p className="overview-meta">
+              Showing action items from the first page. Open All action items to
+              load more.
+            </p>
+          )}
+          <OverviewAttention
+            rows={attention}
+            preferences={preferences}
+            onPreferences={savePreferences}
+            onAction={act}
+          />
+          <button
+            type="button"
+            className="ui-button"
+            onClick={() => navigateTab("tasks")}
+          >
+            All action items
+          </button>
+        </OverviewPane>
+        <OverviewPane open={active && panel === "add"}>
+          <div className="overview-tool-grid">
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => {
+                close();
+                props.onImportPaper(false);
+              }}
+            >
+              Add document
+            </button>
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => {
+                close();
+                props.onImportPaper(true);
+              }}
+            >
+              Import LaTeX folder
+            </button>
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => {
+                close();
+                workspace?.root ? setTab("files") : props.onAttachFolder();
+              }}
+            >
+              {workspace?.root ? "Open files" : "Attach folder"}
+            </button>
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => setPanel("notes")}
+            >
+              Add a note
+            </button>
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => navigateTab("tasks")}
+            >
+              Add an action item
+            </button>
+          </div>
+        </OverviewPane>
+        <OverviewPane open={active && Boolean(detailBlock)}>
+          {detailBlock && (
+            <OverviewRows
+              key={detailBlock.id}
+              block={detailBlock}
+              busy={loading}
+              onAction={act}
+              pageSize={6}
+            />
+          )}
+          {panel === "since" && (
+            <button
+              type="button"
+              className="ui-button"
+              disabled={loading}
+              onClick={acknowledge}
+            >
+              Mark these changes seen
+            </button>
+          )}
+          {panel === "repository" && (
+            <button
+              type="button"
+              className="ui-button"
+              onClick={() => navigateTab("version-control")}
+            >
+              Version control
+            </button>
+          )}
+        </OverviewPane>
+        <OverviewPane open={active && panel === "draft"}>
+          <OverviewSources
+            signals={signals}
+            onRefresh={reload}
+            tasksPartial={Boolean(data.tasksCursor)}
+          />
+        </OverviewPane>
+        <OverviewPane open={active && panel === "conversation"}>
+          {work.map((item) => (
+            <div className="overview-conversation" key={item.id}>
+              <span>
+                {item.title}
+                <small>{projectDate(item.at)}</small>
+              </span>
+              <button
+                type="button"
+                className="project-home-link"
+                onClick={() => {
+                  close();
+                  props.onOpenWork?.(item);
+                }}
+              >
+                Continue →
+              </button>
+            </div>
+          ))}
+          {own.map((session) => (
+            <div className="overview-conversation" key={session.id}>
+              <span>
+                {session.title}
+                <small>{projectDate(session.updatedAt)}</small>
+              </span>
+              <button
+                type="button"
+                className="project-home-link"
+                onClick={() => {
+                  close();
+                  onResume(session.id);
+                }}
+              >
+                Resume conversation →
+              </button>
+            </div>
+          ))}
+        </OverviewPane>
+      </OverviewDialog>
     </div>
   );
 }

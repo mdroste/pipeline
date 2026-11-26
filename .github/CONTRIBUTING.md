@@ -47,6 +47,15 @@ A build from source doesn't include Poppler. It uses the `pdftotext` and
 `gui/src-tauri/resources/poppler/` with
 [bundle-poppler.sh](../scripts/release/bundle-poppler.sh).
 
+On Windows, install graphics card support from **Settings → PDF extraction**
+after installing the Full Parser. Debug builds download the upstream Vulkan
+runtime pinned in `scripts/release/llama-vulkan-lock.json`; they do not need
+GPU assets from an unpublished Pipeline release. The archive, license, and
+complete installed file inventory must match the compiled checksums. Release
+builds accept only Pipeline's signed runtime and replace a development runtime
+through Install or Repair. Windows application control can block upstream
+binaries; use a signed Pipeline release when testing Smart App Control.
+
 To keep test projects and conversations away from your own, set
 `PIPELINE_WORKBENCH_DEV_ROOT` to the absolute path of a scratch folder before
 `npm run tauri dev`. It works in debug builds only. Reviews still use your

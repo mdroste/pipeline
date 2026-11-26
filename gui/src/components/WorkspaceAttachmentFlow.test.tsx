@@ -197,7 +197,7 @@ it("moves this chat and its unsent draft into the selected project before import
     target: { value: "project" },
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Move chat and continue" }),
+    screen.getByRole("button", { name: "Move conversation and continue" }),
   );
   await screen.findByRole("button", { name: "Choose files…" });
   expect(mocks.moveSession).toHaveBeenCalledWith(

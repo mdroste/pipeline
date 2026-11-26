@@ -80,6 +80,21 @@ pub(super) struct SafeRoot {
     /// Whether paths come from saved records. See `recorded`.
     records: bool,
 }
+pub(super) fn ensure_available(file: &fs::File) -> WorkbenchResult<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // Offline, recall-on-open, and recall-on-data-access cloud placeholders.
+        if file.metadata().map_err(err)?.file_attributes() & (0x1000 | 0x40000 | 0x400000) != 0 {
+            return Err(WorkbenchError::invalid(
+                "This cloud file is not available locally. Make it available offline and retry.",
+            ));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = file;
+    Ok(())
+}
 impl SafeRoot {
     /// A root for the paths in saved records. The file tools use `open`.
     pub(super) fn for_records(root: &Path) -> WorkbenchResult<Self> {
@@ -192,11 +207,24 @@ impl SafeRoot {
     }
     #[cfg(unix)]
     fn read_name(directory: &fs::File, name: &std::ffi::CStr) -> WorkbenchResult<Option<Vec<u8>>> {
-        let Some(f) = Self::open_name(directory, name)? else {
+        let Some(mut f) = Self::open_name(directory, name)? else {
             return Ok(None);
         };
+        let before = f.metadata().map_err(err)?;
         let mut bytes = Vec::new();
-        f.take(MAX_FILE + 1).read_to_end(&mut bytes).map_err(err)?;
+        Read::by_ref(&mut f)
+            .take(MAX_FILE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        let after = f.metadata().map_err(err)?;
+        if before.len() != after.len()
+            || before.modified().ok() != after.modified().ok()
+            || bytes.len() as u64 != before.len()
+        {
+            return Err(WorkbenchError::conflict(
+                "File changed while being read; retry when synchronization finishes",
+            ));
+        }
         if bytes.len() as u64 > MAX_FILE {
             return Err(WorkbenchError::invalid("File grew beyond capture limit"));
         }
@@ -221,10 +249,21 @@ impl SafeRoot {
                 Err(e) => return Err(err(e)),
             };
             let mut bytes = Vec::new();
+            ensure_available(&f)?;
+            let before = f.metadata().map_err(err)?;
             Read::by_ref(&mut f)
                 .take(MAX_FILE + 1)
                 .read_to_end(&mut bytes)
                 .map_err(err)?;
+            let after = f.metadata().map_err(err)?;
+            if before.len() != after.len()
+                || before.modified().ok() != after.modified().ok()
+                || bytes.len() as u64 != before.len()
+            {
+                return Err(WorkbenchError::conflict(
+                    "File changed while being read; retry when synchronization finishes",
+                ));
+            }
             if bytes.len() as u64 > MAX_FILE {
                 return Err(WorkbenchError::invalid("File exceeds capture limit"));
             }

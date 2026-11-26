@@ -65,9 +65,7 @@ export function CatalogStatus({
               ? `${catalog.models.length} ${catalog.models.length === 1 ? "model" : "models"}${catalog.stale ? " · list may be out of date" : ""}`
               : "Models not loaded"}
         {catalog?.warning && (
-          <span className="block text-amber-700 dark:text-amber-300">
-            {catalog.warning}
-          </span>
+          <span className="block text-warning">{catalog.warning}</span>
         )}
       </span>
       <button

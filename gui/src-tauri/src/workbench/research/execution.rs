@@ -123,7 +123,14 @@ pub(crate) fn list_executions_with_baseline(
     baseline: Option<&str>,
 ) -> WorkbenchResult<Vec<ResearchExecution>> {
     validate_id("workspace id", workspace_id)?;
-    let connection = open_connection(store)?;
+    list_executions_with_baseline_on(&open_connection(store)?, workspace_id, baseline)
+}
+
+pub(crate) fn list_executions_with_baseline_on(
+    connection: &rusqlite::Connection,
+    workspace_id: &str,
+    baseline: Option<&str>,
+) -> WorkbenchResult<Vec<ResearchExecution>> {
     let mut statement = connection
         .prepare(&format!(
             "{EXECUTION_LIST_SELECT} WHERE workspace_id = ?1 ORDER BY (id IS ?2) DESC, created_at DESC,id LIMIT 200"

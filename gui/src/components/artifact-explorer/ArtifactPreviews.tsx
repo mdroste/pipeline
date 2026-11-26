@@ -21,7 +21,7 @@ export function CsvView({ text, relPath }: { text: string; relPath: string }) {
   if (error)
     return (
       <div className="space-y-2">
-        <p className="text-xs text-amber-700 dark:text-amber-300">{error}</p>
+        <p className="text-xs text-warning">{error}</p>
         <CodeView text={text} relPath={relPath} />
       </div>
     );
@@ -113,7 +113,7 @@ export function BinaryCard({
         </button>
       )}
       {openError && (
-        <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">
+        <p role="alert" className="mt-3 text-xs text-danger">
           {openError}
           <ReportIssueLink />
         </p>

@@ -8,11 +8,11 @@ import {
 } from "../../lib/workspaceSessionState";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { conversationProvider } from "../../lib/workspaceProviders";
-import type { WorkspaceConversationRuntime } from "./useWorkspaceConversationRuntime";
+import type { WorkspaceConversationState } from "./useWorkspaceConversationRuntime";
 import type { ChatApprovalMode } from "../../lib/workbench/runtimeTypes";
 
 type PersistenceContext = Pick<
-  WorkspaceConversationRuntime,
+  WorkspaceConversationState,
   | "sessionId"
   | "runtime"
   | "sessionRef"
@@ -184,7 +184,7 @@ export type WorkspaceSessionPersistence = ReturnType<
 
 /** Registered after selection reconciliation, before the native event bridge. */
 export function useWorkspaceDraftAutosave(
-  conversation: WorkspaceConversationRuntime,
+  conversation: WorkspaceConversationState,
   persistence: WorkspaceSessionPersistence,
   contextBusy: boolean,
 ) {

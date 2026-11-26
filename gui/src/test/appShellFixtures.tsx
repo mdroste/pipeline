@@ -109,6 +109,15 @@ export function createAppTestFixture(
       })),
     });
     invoke.mockImplementation((command: string) => {
+      if (command === "get_settings")
+        return Promise.resolve({
+          settings: {
+            preferred_provider: "claude",
+            default_model: "",
+            default_effort: "",
+          },
+          warnings: [],
+        });
       if (command === "app_close_hides") return Promise.resolve(false);
       if (command === "set_app_close_guard" || command === "complete_app_close")
         return Promise.resolve();

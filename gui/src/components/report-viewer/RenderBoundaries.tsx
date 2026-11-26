@@ -32,7 +32,7 @@ export class ReportRenderErrorBoundary extends React.Component<
       <div className="h-full overflow-auto p-6">
         <div
           role="alert"
-          className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+          className="mb-4 rounded border border-warning bg-warning-soft px-3 py-2 text-sm text-warning"
         >
           This response could not be formatted. Showing the saved text instead.
           <ReportIssueLink />

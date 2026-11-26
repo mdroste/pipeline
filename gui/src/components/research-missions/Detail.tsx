@@ -721,8 +721,8 @@ export default function MissionDetail({
             <h3 ref={evidenceHeading} tabIndex={-1}>
               {evidence.id}
             </h3>
-            <button
-              aria-label="Close evidence"
+            <IconButton
+              label="Close evidence"
               onClick={() => {
                 evidenceVersion.current++;
                 setEvidence(null);
@@ -731,8 +731,8 @@ export default function MissionDetail({
                 if (opener?.isConnected) opener.focus();
               }}
             >
-              ×
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
           <pre className="task-result">
             {typeof evidence.value === "string"

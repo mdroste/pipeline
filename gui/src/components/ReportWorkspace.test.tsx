@@ -8,6 +8,7 @@ import {
   splitUnexpectedPreamble,
 } from "../lib/reportPresentation";
 import type { PipelineReport } from "../lib/reviewTypes";
+import { router } from "../lib/router";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -56,6 +57,60 @@ function makeReport(): PipelineReport {
 describe("ReportWorkspace", () => {
   beforeEach(() => {
     invoke.mockReset();
+    router.init({ page: "home" });
+  });
+
+  it("opens and focuses a finding from a project search result", async () => {
+    const report = makeReport();
+    report.step_outputs[0].raw_text = JSON.stringify({
+      issues: [
+        {
+          id: "linked",
+          title: "Linked finding",
+          severity: "high",
+          body: "Specific evidence",
+        },
+      ],
+    });
+    invoke.mockImplementation(async (command: string) => {
+      if (command === "get_run_report") return report;
+      if (command === "get_annotations") return "{}";
+      if (command === "workbench_get_workspace")
+        return { id: "p", name: "Trade paper" };
+      return null;
+    });
+    router.init({
+      page: "history",
+      runId: "r",
+      findingId: "linked",
+      projectId: "p",
+    });
+    render(
+      <ReportWorkspace runId="r" report={report} markdown="# Saved review" />,
+    );
+    expect(
+      await screen.findByRole("tab", { name: /Findings/ }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      await screen.findByRole(
+        "button",
+        { name: /Linked finding/, expanded: true },
+        lazyPanelWait,
+      ),
+    ).toBeVisible();
+    expect(
+      document.querySelector('[data-review-issue="linked"]'),
+    ).toHaveFocus();
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Trade paper" }),
+    );
+    expect(router.route).toEqual({
+      page: "workspace",
+      projectId: "p",
+      surface: "project",
+      destination: "overview",
+    });
   });
 
   it("shows a saved author note as plain text in details and clears it for a different run", async () => {
@@ -389,7 +444,7 @@ describe("ReportWorkspace", () => {
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
     const provenanceTab = screen.getByRole("tab", { name: "Report details" });
-    const issuesTab = screen.getByRole("tab", { name: /Issues/ });
+    const issuesTab = screen.getByRole("tab", { name: /Findings/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     expect(issuesTab).toHaveAttribute(
       "id",
@@ -409,7 +464,7 @@ describe("ReportWorkspace", () => {
     expect(issuesTab).toHaveFocus();
     expect(issuesTab).toHaveAttribute("aria-selected", "true");
     expect(
-      await screen.findByRole("tabpanel", { name: /Issues/ }, lazyPanelWait),
+      await screen.findByRole("tabpanel", { name: /Findings/ }, lazyPanelWait),
     ).toHaveAttribute("aria-labelledby", expect.stringMatching(/-tab-issues$/));
 
     await user.keyboard("{ArrowRight}");

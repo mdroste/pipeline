@@ -20,8 +20,8 @@ export function NetworkDisclosure({
   if (info.networkServices.length === 0) return null;
   const services = info.networkServices.join(" and ");
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/25">
-      <label className="flex items-start gap-2 text-xs text-amber-950 dark:text-amber-100">
+    <div className="rounded-lg border border-warning bg-warning-soft p-3">
+      <label className="flex items-start gap-2 text-xs text-warning">
         <input
           type="checkbox"
           checked={enabled}
@@ -30,7 +30,7 @@ export function NetworkDisclosure({
         />
         <span>
           <span className="font-medium">Look up at {services}</span>
-          <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-amber-800 dark:text-amber-300">
+          <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-warning">
             Sends: {info.networkPayload} Without lookups, the check runs only
             local tests on this computer.
           </span>
@@ -67,7 +67,7 @@ export default function AnalyzerChoice({
 
   if (error) {
     return (
-      <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+      <p role="alert" className="text-xs text-danger">
         Could not load Pipeline checks: {error}
         <ReportIssueLink />
       </p>

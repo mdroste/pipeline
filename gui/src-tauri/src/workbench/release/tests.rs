@@ -18,7 +18,7 @@ fn store() -> (tempfile::TempDir, Store, String, String) {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open_at(temp.path()).unwrap();
     let workspace = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Research".into(),
             root: None,
             operation_id: "create_workspace".into(),
@@ -438,7 +438,7 @@ fn archive_round_trip_is_consistent_and_retires_native_bindings() {
         path: archive.to_string_lossy().into_owned(),
     })
     .unwrap();
-    assert_eq!(inspection.format_version, 2);
+    assert_eq!(inspection.format_version, 3);
     assert!(inspection.workspace_roots.is_empty());
     let mut zip = zip::ZipArchive::new(File::open(&archive).unwrap()).unwrap();
     let mut manifest_text = String::new();

@@ -30,10 +30,7 @@ export function ExtractionSection({
   knownControls?: ParserControls;
 }) {
   const [paddleInstalled, setPaddleInstalled] = useState(false);
-  const [
-    { graphicsCard: gpuInstalled, processorCores: gpuListed },
-    setControls,
-  ] = useState(knownControls);
+  const [{ processorCores: gpuListed }, setControls] = useState(knownControls);
   const handleEngineStatusChange = useCallback((engines: EngineStatus[]) => {
     setPaddleInstalled(
       engines.some(
@@ -200,10 +197,10 @@ export function ExtractionSection({
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
               <SubsectionHeader label="Speed and memory" />
               <div className="space-y-3 pl-4">
-                {gpuInstalled && (
+                {gpuListed && (
                   <Toggle
                     label="Use graphics card"
-                    description="Read pages with your graphics card. Turn this off to use the processor, which is slower but needs no graphics memory."
+                    description="Set up and use graphics card recognition automatically when supported. Downloads up to 2 GB after the Full Parser is installed. Turn this off to use the processor."
                     checked={settings.paddle_use_gpu}
                     onChange={(v) =>
                       setSettings({ ...settings, paddle_use_gpu: v })
@@ -476,7 +473,7 @@ export function ExtractionSection({
 
         <Field
           label="Extraction time limit"
-          help="Time allowed to read a whole document, including retries. If time runs out, the review stops."
+          help="Time allowed to read a whole PDF, including retries. Independent of the step time limit. If time runs out, the review stops."
         >
           <select
             aria-label="PDF extraction time limit"
@@ -492,8 +489,10 @@ export function ExtractionSection({
             <option value={300}>5 minutes</option>
             <option value={600}>10 minutes</option>
             <option value={900}>15 minutes</option>
-            <option value={1800}>30 minutes (recommended)</option>
+            <option value={1800}>30 minutes</option>
+            <option value={2700}>45 minutes (default)</option>
             <option value={3600}>60 minutes</option>
+            <option value={7200}>120 minutes</option>
           </select>
         </Field>
       </div>

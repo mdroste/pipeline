@@ -58,8 +58,8 @@ export default function ProvenancePanel({
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${
               display.tone === "good"
-                ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
-                : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                ? "bg-success-soft text-success"
+                : "bg-warning-soft text-warning"
             }`}
           >
             {display.label}
@@ -150,7 +150,7 @@ export default function ProvenancePanel({
               ))}
             </dl>
             {(quality.limitations?.length ?? 0) > 0 ? (
-              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <div className="mt-4 rounded-xl border border-warning bg-warning-soft p-4 text-sm text-warning">
                 <p className="font-semibold">Recorded limitations</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   {quality.limitations?.map((limitation, index) => (
@@ -159,7 +159,7 @@ export default function ProvenancePanel({
                 </ul>
               </div>
             ) : (
-              <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">
+              <p className="mt-4 text-sm text-success">
                 No limitations were reported by the automatic checks.
               </p>
             )}

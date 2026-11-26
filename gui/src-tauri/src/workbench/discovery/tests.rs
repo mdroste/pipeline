@@ -1,5 +1,46 @@
 use super::*;
 
+/// Exercise recovery of discovery Projects saved before folders were required.
+pub(crate) fn legacy_source(
+    store: &Store,
+    operation: &str,
+    title: &str,
+    acquire: bool,
+) -> WorkbenchResult<String> {
+    let project_op = format!("discovery-project-{}", key(operation));
+    if existing(store, &project_op, "workspace")?.is_none() {
+        store.create_legacy_workspace(CreateWorkspaceRequest {
+            name: format!("Research discovery: {title}"),
+            root: None,
+            operation_id: project_op,
+        })?;
+    }
+    source(store, operation, title, acquire, None)
+}
+
+#[test]
+fn new_discovery_requires_a_folder_and_retries_keep_its_project() {
+    let temporary = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temporary.path().join("store")).unwrap();
+    assert_eq!(
+        source(&store, "new", "Study", false, None)
+            .unwrap_err()
+            .code,
+        "invalid_input"
+    );
+    assert!(store.list_workspaces(false).unwrap().workspaces.is_empty());
+    let root = temporary.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    let session = source(&store, "new", "Study", false, Some(root.to_str().unwrap())).unwrap();
+    let snapshot = store.session_snapshot(&session).unwrap();
+    assert!(snapshot.workspace.unwrap().root.is_some());
+    assert_eq!(
+        source(&store, "new", "Study", false, Some(root.to_str().unwrap())).unwrap(),
+        session
+    );
+    assert_eq!(store.list_workspaces(false).unwrap().workspaces.len(), 1);
+}
+
 #[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn isolated_roles_are_idempotent_private_and_revocable() {
@@ -13,9 +54,9 @@ fn isolated_roles_are_idempotent_private_and_revocable() {
     ] {
         let temporary = tempfile::tempdir().unwrap();
         let store = Store::open_at(&temporary.path().join("store")).unwrap();
-        let session = source(&store, "start-op", "Historical sources", false).unwrap();
+        let session = legacy_source(&store, "start-op", "Historical sources", false).unwrap();
         assert_eq!(
-            source(&store, "start-op", "Historical sources", false).unwrap(),
+            legacy_source(&store, "start-op", "Historical sources", false).unwrap(),
             session
         );
         let current = store.session_snapshot(&session).unwrap().session;
@@ -191,7 +232,7 @@ fn roles_keep_the_source_conversation_provider() {
     ] {
         let temporary = tempfile::tempdir().unwrap();
         let store = Store::open_at(&temporary.path().join("store")).unwrap();
-        let session = source(&store, "claude-start", "Claude sources", false).unwrap();
+        let session = legacy_source(&store, "claude-start", "Claude sources", false).unwrap();
         let current = store.session_snapshot(&session).unwrap().session;
         store
             .update_session(UpdateSessionRequest {
@@ -258,7 +299,7 @@ fn role_scopes_pass_the_check_every_submitted_turn_runs() {
     ] {
         let temporary = tempfile::tempdir().unwrap();
         let store = Store::open_at(&temporary.path().join("store")).unwrap();
-        let session = source(&store, "gate-start", "Gate sources", false).unwrap();
+        let session = legacy_source(&store, "gate-start", "Gate sources", false).unwrap();
         let current = store.session_snapshot(&session).unwrap().session;
         store
             .update_session(UpdateSessionRequest {
@@ -290,7 +331,7 @@ fn role_scopes_pass_the_check_every_submitted_turn_runs() {
 fn saved_scopes_without_a_connection_recover_through_refresh() {
     let temporary = tempfile::tempdir().unwrap();
     let store = Store::open_at(&temporary.path().join("store")).unwrap();
-    let session = source(&store, "saved-start", "Saved sources", false).unwrap();
+    let session = legacy_source(&store, "saved-start", "Saved sources", false).unwrap();
     let source = source_scope(&store, &session);
     let connection = source.connection_id;
     let deadline = chrono::Utc::now().timestamp() + 3600;
@@ -325,13 +366,13 @@ fn partial_setup_recovers_and_expired_grants_cannot_be_reused() {
     let store = Store::open_at(&temporary.path().join("store")).unwrap();
     let operation = "interrupted-start";
     store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Self-discovery: test".into(),
             root: None,
             operation_id: format!("discovery-project-{}", key(operation)),
         })
         .unwrap();
-    let session = source(&store, operation, "test", true).unwrap();
+    let session = legacy_source(&store, operation, "test", true).unwrap();
     assert_eq!(store.list_workspaces(false).unwrap().workspaces.len(), 1);
     let binding = tasks::binding(&store, &session).unwrap();
     assert!(super::super::acquisition::network_enabled(

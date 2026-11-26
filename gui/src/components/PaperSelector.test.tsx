@@ -109,9 +109,12 @@ describe("PaperSelector", () => {
       multiple: false,
     });
     expect(onPathChange).toHaveBeenCalledWith("/papers/latex-project");
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Input options" }));
     expect(
-      screen.getByRole("combobox", { name: "Input interpretation" }),
-    ).toHaveValue("latex_project");
+      screen.getByRole("menuitemradio", { name: /^One LaTeX document/ }),
+    ).toHaveAttribute("aria-checked", "true");
     expect(
       screen.queryByRole("option", { name: "Watch for new documents" }),
     ).not.toBeInTheDocument();
@@ -137,9 +140,10 @@ describe("PaperSelector", () => {
       interpretation: "batch",
       selectionKind: "file",
     });
+    expect(screen.getByText("Batch · 2 independent reviews")).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Input interpretation" }),
-    ).toHaveValue("batch");
+      screen.queryByRole("combobox", { name: "Input interpretation" }),
+    ).not.toBeInTheDocument();
   });
 
   it("lets a selected folder be reinterpreted as a source tree", async () => {
@@ -154,9 +158,9 @@ describe("PaperSelector", () => {
     );
     const user = userEvent.setup();
     await user.click(screen.getByTitle("Select folder"));
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Input interpretation" }),
-      "source_tree",
+    await user.click(screen.getByRole("button", { name: "Input options" }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: /^Browsable source folder/ }),
     );
 
     expect(onSelectionChange).toHaveBeenLastCalledWith({
@@ -187,7 +191,7 @@ describe("PaperSelector", () => {
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /select file/i }));
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
     expect(onPathChange).toHaveBeenLastCalledWith(null);
     expect(screen.queryByText("Recent input")).not.toBeInTheDocument();
     expect(
@@ -315,5 +319,39 @@ describe("PaperSelector", () => {
       screen.getByRole("button", { name: "Select files..." }),
     );
     expect(onPathChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps single-file batching in the input menu instead of a Use as field", async () => {
+    const onSelectionChange = vi.fn();
+    openDialog.mockResolvedValueOnce("/papers/a.pdf");
+    render(
+      <PaperSelector
+        onPathChange={() => {}}
+        onSelectionChange={onSelectionChange}
+        disabled={false}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Select files..." }));
+    expect(screen.queryByText("Use as")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Input options" }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "One-item batch" }),
+    );
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      paths: ["/papers/a.pdf"],
+      selectionKind: "file",
+      interpretation: "batch",
+    });
+    await user.click(screen.getByRole("button", { name: "Input options" }));
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "One document" }),
+    );
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      paths: ["/papers/a.pdf"],
+      selectionKind: "file",
+      interpretation: "document",
+    });
   });
 });

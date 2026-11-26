@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import {
   fmtTokens,
   fmtClock,
@@ -334,18 +335,10 @@ export default function Console({ logs, usage, active = true }: Props) {
             aria-expanded={open}
             className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm font-medium text-gray-700 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-300 dark:hover:text-gray-100"
           >
-            <svg
-              aria-hidden
-              viewBox="0 0 12 12"
+            <Icon
+              name="chevron-right"
               className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-90" : ""}`}
-            >
-              <path
-                d="M4 2.5 7.5 6 4 9.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-              />
-            </svg>
+            />
             <span>
               {active ? "Active run console" : "Completed run console"}
             </span>
@@ -408,7 +401,7 @@ export default function Console({ logs, usage, active = true }: Props) {
                     aria-pressed={level === lv}
                     className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
                       level === lv
-                        ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
+                        ? "ui-selected"
                         : "text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
                     }`}
                     title={
@@ -440,7 +433,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           {errorCount > 0 && (
             <button
               onClick={jumpToFirstError}
-              className="cursor-pointer text-red-600 transition-colors hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 dark:text-red-400 dark:hover:text-red-300"
+              className="cursor-pointer text-danger transition-colors hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger"
               title="Scroll to the first error"
             >
               {errorCount} {errorCount === 1 ? "error" : "errors"}
@@ -454,7 +447,7 @@ export default function Console({ logs, usage, active = true }: Props) {
               aria-pressed={showTimestamps}
               className={`cursor-pointer rounded-md border border-gray-300 px-1.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 ${
                 showTimestamps
-                  ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
+                  ? "ui-selected"
                   : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               }`}
               title="Toggle timestamps"
@@ -489,7 +482,7 @@ export default function Console({ logs, usage, active = true }: Props) {
       {copyError && (
         <div
           role="alert"
-          className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          className="shrink-0 border-b border-danger bg-danger-soft px-4 py-1.5 text-xs text-danger"
         >
           {copyError}
           <ReportIssueLink />

@@ -15,7 +15,7 @@ export default function WorkflowWarnings({
   return (
     <details
       open
-      className="mx-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+      className="mx-4 mb-2 rounded-lg border border-warning bg-warning-soft px-3 py-2 text-xs text-warning"
     >
       <summary className="font-semibold">
         Step references · {warnings.length}{" "}

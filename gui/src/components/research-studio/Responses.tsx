@@ -11,6 +11,7 @@ import {
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
 import { researchClient } from "../../lib/workbench/researchClient";
+import ResponseLinks from "./ResponseLinks";
 import type { RunSummary } from "../../lib/reviewTypes";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import useReopenCount from "../../hooks/useReopenCount";
@@ -44,6 +45,10 @@ export default function Responses({
   onDocument,
   onReviewHandoff,
   active,
+  responseTargetId,
+  onResponseOpen,
+  onAsk,
+  onRelatedTarget,
 }: StudioProps) {
   const [records, setRecords] = useState<ProjectRecord<ResponseRecord>[]>([]);
   const [selected, setSelected] = useState("");
@@ -73,7 +78,7 @@ export default function Responses({
   useEffect(() => {
     let disposed = false;
     void studioClient
-      .records<ResponseRecord>(workspaceId, "response")
+      .records(workspaceId, "response")
       .then((v) => {
         if (!disposed) setRecords(v);
       })
@@ -86,6 +91,28 @@ export default function Responses({
   }, [workspaceId, setError, reopened]);
   const current = records.find((r) => r.id === selected);
   const decisionForm = useReveal<HTMLDivElement>();
+  const openResponse = (record: ProjectRecord<ResponseRecord>) =>
+    decisionGuard.replace("response", () => {
+      decisionGuard.markSaved(record.body.decision);
+      setSelected(record.id);
+      setDecision(record.body.decision);
+      setHistory([]);
+      decisionForm.reveal();
+      onResponseOpen?.(record.id, `Response ${record.body.decision.number}`);
+    });
+  const handledTarget = useRef("");
+  useEffect(() => {
+    if (active === false) {
+      handledTarget.current = "";
+      return;
+    }
+    if (!responseTargetId || handledTarget.current === responseTargetId) return;
+    const target = records.find((record) => record.id === responseTargetId);
+    if (target) {
+      handledTarget.current = responseTargetId;
+      openResponse(target);
+    }
+  }, [active, responseTargetId, records]);
   // A preview answers for this selection, format and these saved decisions only.
   const letterInputs = JSON.stringify([
     format,
@@ -376,6 +403,26 @@ export default function Responses({
       </div>
       <section className={panel}>
         <h2 className="font-semibold">Response matrix</h2>
+        {current && decision && (
+          <ResponseLinks
+            workspaceId={workspaceId}
+            data={data}
+            record={current}
+            decision={decision}
+            onRefresh={onRefresh}
+            onAsk={onAsk}
+            onRelatedTarget={onRelatedTarget}
+            onSaved={(saved) => {
+              setRecords((records) =>
+                records.map((record) =>
+                  record.id === saved.id ? saved : record,
+                ),
+              );
+              setDecision(saved.body.decision);
+              decisionGuard.markSaved(saved.body.decision);
+            }}
+          />
+        )}
         <div className="overflow-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -401,15 +448,7 @@ export default function Responses({
                   <td className="max-w-sm p-2">
                     <button
                       className="text-left underline"
-                      onClick={() =>
-                        decisionGuard.replace("response", () => {
-                          decisionGuard.markSaved(r.body.decision);
-                          setSelected(r.id);
-                          setDecision(r.body.decision);
-                          setHistory([]);
-                          decisionForm.reveal();
-                        })
-                      }
+                      onClick={() => openResponse(r)}
                     >
                       {r.body.decision.number}.{" "}
                       {r.body.source.finding?.title ??

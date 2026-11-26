@@ -92,3 +92,60 @@ export function recordVisit(
   }
   return visit;
 }
+
+const seenKey = (workspaceId: string) => `pipeline.project.seen.${workspaceId}`;
+/** Explicit acknowledgment owns this baseline; returning never marks work read. */
+export function readActivitySince(
+  workspaceId: string,
+  now: Date,
+  files: FileEntry[] | null | undefined,
+): Visit {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(seenKey(workspaceId)) ?? "null",
+    );
+    if (
+      value &&
+      typeof value.since === "string" &&
+      Number.isFinite(Date.parse(value.since))
+    ) {
+      const baseline =
+        value.baseline && typeof value.baseline === "object"
+          ? value.baseline
+          : snapshotFiles(files);
+      if (!value.baseline && baseline)
+        localStorage.setItem(
+          seenKey(workspaceId),
+          JSON.stringify({ since: value.since, baseline }),
+        );
+      return {
+        since: value.since,
+        baseline,
+      };
+    }
+    // Carry forward the old visit baseline once, without starting another visit.
+    const old = JSON.parse(
+      localStorage.getItem(visitKey(workspaceId)) ?? "null",
+    );
+    const initial =
+      old?.version === 1 && old.lastActive
+        ? {
+            since: old.since ?? old.lastActive,
+            baseline: old.baseline ?? old.latest ?? snapshotFiles(files),
+          }
+        : { since: now.toISOString(), baseline: snapshotFiles(files) };
+    localStorage.setItem(seenKey(workspaceId), JSON.stringify(initial));
+    return initial;
+  } catch {
+    return { since: null, baseline: null };
+  }
+}
+export function markActivitySeen(
+  workspaceId: string,
+  now: Date,
+  files: FileEntry[] | null | undefined,
+): Visit {
+  const visit = { since: now.toISOString(), baseline: snapshotFiles(files) };
+  localStorage.setItem(seenKey(workspaceId), JSON.stringify(visit));
+  return visit;
+}

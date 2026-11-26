@@ -295,7 +295,7 @@ describe("App navigation", () => {
 
       if (page === "project-index") {
         await user.click(
-          await screen.findByRole("button", { name: "Browse chats" }),
+          await screen.findByRole("button", { name: "Browse conversations" }),
         );
       }
       await user.click(
@@ -303,7 +303,7 @@ describe("App navigation", () => {
           name:
             page === "home"
               ? /Work on a project with your choice of model/
-              : "+ New chat",
+              : "+ New conversation",
         }),
       );
 

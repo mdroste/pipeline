@@ -64,6 +64,7 @@ pub struct GitIdentity {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryView {
+    pub remotes: Vec<repository::RepositoryRemote>,
     pub status: RepositoryStatus,
     /// Changes in the project folder, conflicts first.
     pub files: Vec<ChangedFile>,
@@ -109,6 +110,14 @@ pub(super) struct Git {
 }
 
 impl Git {
+    pub(super) fn record_fetch(&self, remote: &str) -> WorkbenchResult<()> {
+        self.act(
+            &["config", "--local", "pipeline.lastFetchedRemote", remote],
+            Duration::from_secs(10),
+            None,
+        )?;
+        Ok(())
+    }
     pub(super) fn open(root: &Path) -> Option<Self> {
         Some(Self {
             binary: crate::deps::find_working_git()?,
@@ -285,6 +294,7 @@ pub(super) fn view(git: &Git) -> WorkbenchResult<VersionControl> {
     let can_undo_commit = operation.is_none() && status::latest_commit_is_local(git, &status);
     let large_files = status::review_new_files(git, &mut changes.files);
     Ok(VersionControl::Ready(Box::new(RepositoryView {
+        remotes: repository::list_remotes(&|args| git.read(args)),
         large_files: large_files.found,
         large_files_cut_short: large_files.cut_short,
         branches: status::branches(git),

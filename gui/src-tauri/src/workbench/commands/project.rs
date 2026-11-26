@@ -1,6 +1,7 @@
 //! Project Tauri commands.
 
 use super::*;
+use crate::workbench::runtime::run_store_phased;
 use crate::workbench::store::WorkbenchSession;
 
 #[tauri::command]
@@ -17,7 +18,12 @@ pub async fn workbench_project_index(
 pub async fn workbench_project_home(
     workspace_id: String,
 ) -> WorkbenchResult<crate::workbench::project::ProjectHome> {
-    run_store(move |store| crate::workbench::project::home(&store, &workspace_id)).await
+    run_store_phased(
+        move |store| crate::workbench::project::prepare_home(store, &workspace_id),
+        |snapshot| snapshot.finish(),
+        |_, home| Ok(home),
+    )
+    .await
 }
 /// The assistant-only layout needs just the brief of a project without a
 /// folder or captured paper. Leave inventory, tasks and ledgers unopened.
@@ -72,6 +78,21 @@ pub async fn workbench_project_tasks(
 pub async fn workbench_project_mutate(
     request: crate::workbench::project::ProjectMutation,
 ) -> WorkbenchResult<Value> {
+    if matches!(
+        request.action,
+        crate::workbench::project::ProjectAction::Refresh
+            | crate::workbench::project::ProjectAction::CheckForChanges
+    ) {
+        return run_store_phased(
+            move |store| crate::workbench::project::InventoryScan::for_request(store, request),
+            |scan| scan.scan(),
+            |store, scan| {
+                serde_json::to_value(scan.commit(store)?)
+                    .map_err(|error| WorkbenchError::storage("Failed to encode inventory", error))
+            },
+        )
+        .await;
+    }
     // Hold the same permit as native turns across checkpoint and acceptance I/O.
     // Checking active state alone would race a turn starting immediately afterward.
     let _turn_guard = if matches!(
@@ -138,6 +159,14 @@ pub async fn workbench_file_external(
 pub async fn workbench_file_open(
     request: crate::workbench::project::FileReadRequest,
 ) -> WorkbenchResult<crate::workbench::project::FilePreview> {
+    if request.revision_id.is_none() {
+        return run_store_phased(
+            move |store| crate::workbench::project::WorkspaceOpen::prepare(store, request),
+            |prepared| prepared.read(),
+            |store, opened| opened.finish(store),
+        )
+        .await;
+    }
     run_store(move |store| crate::workbench::project::open_workspace_file(&store, request)).await
 }
 
@@ -543,8 +572,17 @@ pub async fn workbench_reconcile_job(
 
 #[tauri::command]
 pub async fn workbench_studio_mutate(
+    app: tauri::AppHandle,
     request: crate::workbench::project::StudioMutation,
 ) -> WorkbenchResult<Value> {
+    let saved = match &request.action {
+        crate::workbench::project::StudioAction::SaveText {
+            checkpoint_id: None,
+            path,
+            ..
+        } => Some((request.workspace_id.clone(), path.clone())),
+        _ => None,
+    };
     let _turn_guard = if matches!(
         request.action,
         crate::workbench::project::StudioAction::SaveText { .. }
@@ -561,7 +599,12 @@ pub async fn workbench_studio_mutate(
     } else {
         None
     };
-    run_store(move |store| crate::workbench::project::studio_mutate(&store, request)).await
+    let result =
+        run_store(move |store| crate::workbench::project::studio_mutate(&store, request)).await?;
+    if let Some((ws, path)) = saved {
+        super::project_integrations::schedule_project_check(app, ws, path);
+    }
+    Ok(result)
 }
 #[tauri::command]
 pub async fn workbench_studio_records(

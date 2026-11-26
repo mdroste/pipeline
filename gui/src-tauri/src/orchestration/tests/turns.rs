@@ -4,7 +4,7 @@ use super::coordinator::coordinator_fixture;
 use super::*;
 use crate::agent_runtime::events::NormalizedEvent;
 use crate::orchestration::commands::control;
-use crate::workbench::{api, commands, store as workspace, tasks};
+use crate::workbench::{api, runtime, store as workspace, tasks};
 use std::time::Duration;
 
 /// A prepared automation with its Workspace step started and its turn accepted.
@@ -14,7 +14,8 @@ async fn started_step(
     namespace: &str,
 ) -> (TaskRun, String, String) {
     let operation = store::id();
-    let session = crate::workbench::discovery::source(w, &operation, "Turns", false).unwrap();
+    let session =
+        crate::workbench::discovery::legacy_source(w, &operation, "Turns", false).unwrap();
     let plan = chain(vec![step(
         "ask",
         Action::Workspace {
@@ -268,13 +269,13 @@ async fn a_turn_with_a_live_owner_is_left_alone() {
     let w = disposable_workspace();
     let (_temp, m) = coordinator_fixture();
     let (run, session, thread) = started_step(&w, &m, api::NAMESPACE).await;
-    commands::accept_local_turn(1, &thread, "turn-1");
+    runtime::accept_local_turn(1, &thread, "turn-1");
     let waited = tokio::time::timeout(
         Duration::from_millis(700),
         wait_for_turn(&run, &session, &thread, NO_GRACE),
     )
     .await;
-    commands::finish_local_turn(1, &thread, "turn-1");
+    runtime::finish_local_turn(1, &thread, "turn-1");
     assert!(waited.is_err(), "an owned turn is still running");
     assert_eq!(outcome(&w, &run, &session)["state"], "running");
 }

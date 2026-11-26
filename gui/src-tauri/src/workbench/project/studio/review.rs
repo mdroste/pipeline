@@ -1,3 +1,4 @@
+use super::super::records::{put_body, read_body, RecordBody};
 use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,6 +42,9 @@ pub struct ResponseRecord {
     pub source: Value,
     pub decision: ResponseDecision,
     pub flags: Vec<String>,
+}
+impl RecordBody for ResponseRecord {
+    const KIND: &'static str = "response";
 }
 fn initial(number: String) -> ResponseDecision {
     ResponseDecision {
@@ -268,7 +272,7 @@ pub(super) fn save_response(
     expected: i64,
     d: ResponseDecision,
 ) -> WorkbenchResult<ProjectRecord> {
-    let old: ResponseRecord = decode(&record(store, ws, object_id, "response")?)?;
+    let old: ResponseRecord = read_body(store, ws, object_id)?;
     bounded(&d.number, 100)?;
     if !matches!(
         d.category.as_str(),
@@ -306,11 +310,10 @@ pub(super) fn save_response(
         execution(store, ws, id)?;
     }
     let flags = response_flags(store, ws, &d)?;
-    put(
+    put_body(
         store,
         ws,
         object_id,
-        "response",
         expected,
         &ResponseRecord {
             source: old.source,
@@ -367,7 +370,7 @@ pub fn export_responses(
     }
     let mut responses = selected
         .iter()
-        .map(|object_id| decode::<ResponseRecord>(&record(store, ws, object_id, "response")?))
+        .map(|object_id| read_body::<ResponseRecord>(store, ws, object_id))
         .collect::<WorkbenchResult<Vec<_>>>()?;
     // The letter follows the referee's numbering, not the order of selection.
     responses.sort_by_cached_key(|r| {

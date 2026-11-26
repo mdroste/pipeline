@@ -1,4 +1,9 @@
-import colors from "tailwindcss/colors.js";
+const adaptiveNeutral = Object.fromEntries(
+  [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((shade) => [
+    shade,
+    `rgb(var(--color-neutral-${shade}) / <alpha-value>)`,
+  ]),
+);
 
 const adaptiveAccent = {
   50: "rgb(var(--color-accent-50) / <alpha-value>)",
@@ -20,11 +25,11 @@ export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
-      // Tailwind's default gray palette has a cool blue cast. Keep the
-      // existing semantic gray utilities, but render them as true neutrals so
-      // dark mode uses black and gray surfaces.
+      // Existing gray/neutral utilities follow the selected palette. Default
+      // keeps exactly the original neutral scale in both appearances.
       colors: {
-        gray: colors.neutral,
+        gray: adaptiveNeutral,
+        neutral: adaptiveNeutral,
         blue: adaptiveAccent,
         // Semantic tokens from App.css. Theme switching happens in the
         // variables, so these need no dark: variant.
@@ -40,9 +45,20 @@ export default {
         inverse: "var(--ui-inverse)",
         "on-inverse": "var(--ui-on-inverse)",
         danger: "var(--ui-danger)",
+        "danger-soft": "var(--ui-danger-soft)",
+        success: "var(--ui-success)",
+        "success-soft": "var(--ui-success-soft)",
+        running: "var(--ui-running)",
+        "running-soft": "var(--ui-running-soft)",
+        selection: "var(--ui-selection)",
+        "selection-soft": "var(--ui-selection-soft)",
+        "selection-indicator": "var(--ui-selection-indicator)",
         warning: "var(--ui-warning)",
         "warning-soft": "var(--ui-warning-soft)",
         scrim: "var(--ui-scrim)",
+      },
+      backgroundColor: {
+        white: "rgb(var(--color-white) / <alpha-value>)",
       },
       borderRadius: {
         "ui-sm": "var(--ui-radius-sm)",
@@ -59,6 +75,7 @@ export default {
         "ui-label": ["var(--ui-text-label)", "1.125rem"],
         "ui-body": ["var(--ui-text-body)", "1.375rem"],
         "ui-title": ["var(--ui-text-title)", "1.5rem"],
+        "ui-page": ["var(--ui-text-page)", "1.3"],
       },
       keyframes: {
         "ui-pop": {
@@ -80,7 +97,7 @@ export default {
         "ui-shimmer": "ui-shimmer 1.6s linear infinite",
       },
       fontFamily: {
-        sans: ['"Inter"', "system-ui", "sans-serif"],
+        sans: ["var(--ui-font-sans)", "system-ui", "sans-serif"],
         mono: ['"JetBrains Mono"', "monospace"],
       },
     },

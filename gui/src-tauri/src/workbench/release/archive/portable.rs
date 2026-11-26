@@ -38,6 +38,14 @@ pub(in crate::workbench::release) struct PortablePaths {
 
 impl PortablePaths {
     pub(in crate::workbench::release) fn insert(&mut self, name: &str) -> WorkbenchResult<()> {
+        self.insert_kind(name, true)
+    }
+
+    pub(super) fn directory(&mut self, name: &str) -> WorkbenchResult<()> {
+        self.insert_kind(name, false)
+    }
+
+    fn insert_kind(&mut self, name: &str, is_file: bool) -> WorkbenchResult<()> {
         if !safe_archive_name(name) {
             return Err(WorkbenchError::invalid(format!(
                 "Archive contains an unsafe traversal path: {name:?}"
@@ -53,7 +61,7 @@ impl PortablePaths {
                 prefix.push('/');
             }
             prefix.push_str(part);
-            let file = index + 1 == components.len();
+            let file = is_file && index + 1 == components.len();
             let key = prefix.to_uppercase();
             if let Some((old, old_file)) = self.paths.get(&key) {
                 if old != &prefix || *old_file || file {

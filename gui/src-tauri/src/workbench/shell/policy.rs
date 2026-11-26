@@ -63,12 +63,8 @@ pub(super) fn request(
     }
     // These repository control files remain readable, but cannot be rewritten
     // to arrange later execution by an unsandboxed Git process.
-    for name in [".git", ".gitconfig"] {
-        let path = root.join(name);
-        if path.exists() {
-            fs.readonly_paths
-                .push(text(&path.canonicalize().map_err(|e| e.to_string())?)?);
-        }
+    for path in repository_controls(&root) {
+        fs.readonly_paths.push(text(&path)?);
     }
     for path in protected_paths(&root) {
         fs.denied_paths.push(text(&protected_path(path)?)?);
@@ -297,13 +293,68 @@ fn protected_paths(root: &Path) -> Vec<PathBuf> {
     {
         let store = store.canonicalize().unwrap_or(store);
         // A conversation's private working folder can be inside this store;
-        // the positive grant exposes only that folder, not its siblings.
-        if !root.starts_with(&store) {
+        // the positive grant exposes only that folder, not its siblings. The
+        // store itself cannot be denied without denying the folder, so deny
+        // its credentials and records explicitly instead.
+        if root.starts_with(&store) {
+            paths.extend(store_denies(root, &store));
+        } else {
             paths.push(store);
         }
     }
     paths.push(root.join(".env"));
+    paths.sort();
+    paths.dedup();
     paths
+}
+
+/// Repository control entries to keep read-only. Only an entry that resolves
+/// inside the root qualifies: a `.git` or `.gitconfig` link elsewhere (the
+/// research store, the home folder) must never become a read grant for its
+/// target. Such a link is left ungranted, so the sandbox refuses reads
+/// through it.
+fn repository_controls(root: &Path) -> Vec<PathBuf> {
+    [".git", ".gitconfig"]
+        .into_iter()
+        .filter_map(|name| {
+            let path = root.join(name);
+            let metadata = std::fs::symlink_metadata(&path).ok()?;
+            let resolved = path.canonicalize();
+            if !metadata.file_type().is_symlink() {
+                // A real entry of the canonical root stays inside it.
+                return Some(resolved.unwrap_or(path));
+            }
+            let target = resolved.ok()?;
+            target.starts_with(root).then_some(target)
+        })
+        .collect()
+}
+
+/// Credentials and research records that stay hidden from a command whose
+/// folder is inside `store` (private conversation folders and task copies).
+const STORE_PRIVATE: [&str; 13] = [
+    "keyfile",
+    "settings.json",
+    "providers",
+    "runs",
+    "projects",
+    "orchestration",
+    "research.sqlite3",
+    "research.sqlite3-wal",
+    "research.sqlite3-shm",
+    "blobs",
+    "backups",
+    "codex",
+    "context",
+];
+
+fn store_denies(root: &Path, store: &Path) -> Vec<PathBuf> {
+    [store.to_path_buf(), store.join("workbench")]
+        .iter()
+        .flat_map(|base| STORE_PRIVATE.iter().map(move |name| base.join(name)))
+        // Never deny the command folder or a folder that contains it.
+        .filter(|path| !root.starts_with(path) && !path.starts_with(root))
+        .collect()
 }
 
 fn system_roots() -> Vec<PathBuf> {
@@ -414,5 +465,78 @@ mod tests {
             offline.ingress.unwrap().host_loopback,
             Some(NetworkAction::Deny)
         );
+    }
+
+    #[test]
+    fn a_real_git_folder_stays_read_only() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        assert_eq!(
+            repository_controls(&root),
+            vec![root.join(".git").canonicalize().unwrap()]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_control_links_outside_the_root_are_never_granted() {
+        let folder = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = folder.path().canonicalize().unwrap();
+        std::fs::write(outside.path().join("keyfile"), b"secret").unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join(".git")).unwrap();
+        std::os::unix::fs::symlink("../..", root.join(".gitconfig")).unwrap();
+        assert!(repository_controls(&root).is_empty());
+
+        let scratch = tempfile::tempdir().unwrap();
+        let request = request(&root, true, scratch.path(), "echo ok", None).unwrap();
+        let outside = outside.path().canonicalize().unwrap();
+        let granted = request.filesystem.unwrap().readonly_paths;
+        assert!(
+            granted
+                .iter()
+                .all(|path| !Path::new(path).starts_with(&outside)),
+            "{granted:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_git_link_inside_the_root_keeps_its_target_read_only() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("gitdir")).unwrap();
+        std::os::unix::fs::symlink("gitdir", root.join(".git")).unwrap();
+        assert_eq!(repository_controls(&root), vec![root.join("gitdir")]);
+    }
+
+    #[test]
+    fn store_credentials_stay_denied_around_a_private_folder() {
+        let store = Path::new("/store");
+        let root = store.join("workbench/jobs/conversations/abc");
+        let denied = store_denies(&root, store);
+        for secret in [
+            "keyfile",
+            "settings.json",
+            "providers",
+            "workbench/research.sqlite3",
+            "workbench/blobs",
+            "workbench/codex",
+        ] {
+            assert!(denied.contains(&store.join(secret)), "{secret}");
+        }
+        assert!(denied
+            .iter()
+            .all(|path| !root.starts_with(path) && !path.starts_with(&root)));
+    }
+
+    #[test]
+    fn store_denies_never_cover_the_command_folder() {
+        let store = Path::new("/store");
+        let root = store.join("projects/paper");
+        let denied = store_denies(&root, store);
+        assert!(!denied.contains(&store.join("projects")));
+        assert!(denied.contains(&store.join("keyfile")));
     }
 }

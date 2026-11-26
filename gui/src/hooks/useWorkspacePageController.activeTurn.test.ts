@@ -3,9 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspacePageController } from "./useWorkspacePageController";
 import { startupRoute } from "../lib/appPreferences";
 import { router } from "../lib/router";
-import type { ActiveTurn } from "../lib/workbench/runtimeTypes";
+import type { EventCallback } from "@tauri-apps/api/event";
+import type { WorkbenchEvent, ActiveTurn } from "../lib/workbench/runtimeTypes";
 import type { Workspace } from "../lib/workbench/sessionTypes";
 
+const events = await vi.hoisted(async () => {
+  const { nativeEventHarness } = await import("../test/nativeEventHarness");
+  return nativeEventHarness<WorkbenchEvent>();
+});
 const mocks = vi.hoisted(() => ({
   activeTurn: vi.fn(),
   listWorkspaces: vi.fn(),
@@ -19,7 +24,6 @@ const mocks = vi.hoisted(() => ({
   updateSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
-  listeners: [] as any[],
 }));
 vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
 vi.mock("../lib/workbench/conversationClient", () => ({
@@ -27,15 +31,17 @@ vi.mock("../lib/workbench/conversationClient", () => ({
 }));
 vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (name: string, cb: any) => {
-    if (name === "workbench:event") mocks.listeners.push(cb);
-    return () => {};
+  listen: vi.fn(async (name: string, cb: EventCallback<WorkbenchEvent>) => {
+    if (name !== "workbench:event") return () => {};
+    const registered = events.register(cb);
+    events.ready();
+    return registered;
   }),
 }));
 
-const emit = async (payload: Record<string, unknown>) => {
+const emit = async (payload: WorkbenchEvent) => {
   await act(async () => {
-    for (const cb of mocks.listeners) cb({ payload });
+    events.emit(payload);
   });
 };
 const settle = () =>
@@ -88,7 +94,7 @@ const approval = {
 };
 
 async function open(id: string) {
-  mocks.listeners.length = 0;
+  events.reset();
   localStorage.setItem("pipeline.workspace.sessionId", id);
   const hook = renderHook(() => useWorkspacePageController({}));
   await waitFor(() =>
@@ -100,7 +106,7 @@ async function open(id: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.listeners.length = 0;
+  events.reset();
   localStorage.clear();
   saved = { A: conversation("A"), B: conversation("B") };
   mocks.listWorkspaces.mockResolvedValue({ workspaces: [] });

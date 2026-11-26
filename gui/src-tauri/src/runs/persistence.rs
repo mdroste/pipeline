@@ -22,6 +22,7 @@ pub(super) fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), S
         .map_err(|e| format!("Failed to sync manifest temp file: {e}"))?;
     crate::safety::persist_file(temp, &destination)
         .map_err(|e| format!("Failed to publish manifest: {}", e.error))?;
+    super::history_reads::changed();
     #[cfg(unix)]
     {
         // Make the rename durable across a sudden power loss.

@@ -1,6 +1,46 @@
 use super::*;
 use crate::workbench::store::CreateWorkspaceRequest;
 
+#[test]
+fn private_project_copies_are_counted_but_never_pruned_as_scratch() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(temp.path()).unwrap();
+    let path = store
+        .root_path()
+        .join("project-copies/workspace/checkpoint/generated.bin");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, vec![0u8; 1024 * 1024]).unwrap();
+    let report = storage_report(&store).unwrap();
+    let category = report
+        .categories
+        .iter()
+        .find(|c| c.key == "project_copies")
+        .unwrap();
+    assert_eq!(category.bytes, 1024 * 1024);
+    assert!(!category.disposable);
+    assert!(!category.partial);
+    assert!(prune(&store, &["project_copies"], false).is_err());
+    prune(&store, &DISPOSABLE, true).unwrap();
+    assert!(path.exists());
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        storage_report(&store)
+            .unwrap()
+            .categories
+            .iter()
+            .find(|c| c.key == "project_copies")
+            .unwrap()
+            .bytes,
+        0
+    );
+    let mut walk = Walk {
+        left: 1,
+        partial: false,
+    };
+    children(&store.root_path().join("project-copies"), &mut walk, None).unwrap();
+    assert!(walk.partial);
+}
+
 fn prune(store: &Store, categories: &[&str], apply: bool) -> WorkbenchResult<PrunePlan> {
     let categories: Vec<String> = categories.iter().map(|c| (*c).into()).collect();
     let preview = prune_storage(
@@ -221,7 +261,7 @@ fn prune_preserves_referenced_evidence_and_is_recoverable() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open_at(temp.path()).unwrap();
     let ws = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Retention".into(),
             root: None,
             operation_id: "create".into(),

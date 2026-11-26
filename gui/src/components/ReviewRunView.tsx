@@ -26,6 +26,7 @@ interface Props {
   passTimes: Record<string, PassTiming>;
   reviewRouting: ReviewRoutingSummary | null;
   onCancel: () => void;
+  allowPassCancellation?: boolean;
   onNewReview: () => void;
   onResume?: (runId: string) => void;
   onConnections?: () => void;
@@ -59,6 +60,7 @@ export default function ReviewRunView({
   passTimes,
   reviewRouting,
   onCancel,
+  allowPassCancellation = true,
   onNewReview,
   onResume,
   onConnections,
@@ -97,7 +99,7 @@ export default function ReviewRunView({
             another review; this one stays in All activity until it finishes.
           </p>
           <p className="mt-1 text-xs text-gray-400 dark:text-neutral-500">
-            Workflow: {run.profileName || "Active workflow"}
+            Review design: {run.profileName || "Active review design"}
           </p>
           <div className="mt-5 flex gap-2">
             <Button onClick={onCancel}>Remove from queue</Button>
@@ -129,6 +131,7 @@ export default function ReviewRunView({
             <Button
               variant="primary"
               onClick={() => onOpenHistory(run.runId ?? undefined)}
+              data-review-tour="open-report"
             >
               Open report
             </Button>
@@ -154,6 +157,7 @@ export default function ReviewRunView({
       {showProgress && (
         <PipelineProgress
           runKey={run.key}
+          allowPassCancellation={allowPassCancellation}
           state={state}
           plan={plan ?? undefined}
           stageHistory={stageHistory}
@@ -170,7 +174,7 @@ export default function ReviewRunView({
             className={
               run.status === "cancelled"
                 ? "rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm leading-5 text-gray-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
-                : "rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm leading-5 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                : "rounded-lg border border-danger bg-danger-soft px-3 py-2.5 text-sm leading-5 text-danger"
             }
           >
             {state.message}
@@ -215,8 +219,8 @@ export default function ReviewRunView({
             type="button"
             onClick={onCancel}
             className="mx-auto mt-4 block rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors
-                     hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
-                     focus-visible:ring-red-300 dark:text-neutral-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                     hover:bg-danger-soft hover:text-danger focus-visible:outline-none focus-visible:ring-2
+                     focus-visible:ring-danger dark:text-neutral-400  "
           >
             Cancel review
           </button>

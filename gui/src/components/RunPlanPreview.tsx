@@ -47,14 +47,14 @@ export default function RunPlanPreview({
     return (
       <div className="flex min-h-full items-center justify-center p-8">
         <p className="max-w-sm text-center text-xs text-gray-500 dark:text-gray-400">
-          The workflow plan could not be loaded. {error}
+          The review plan could not be loaded. {error}
         </p>
       </div>
     );
   if (!config)
     return (
       <div className="min-h-full">
-        <Spinner label="Loading workflow plan…" />
+        <Spinner label="Loading review plan…" />
       </div>
     );
   return (

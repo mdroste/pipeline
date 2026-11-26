@@ -29,7 +29,7 @@ use super::{
     store::{self, now, Result, TaskRun},
     Coordinator,
 };
-use crate::workbench::{commands::run_store, discovery as workspace, missions as research};
+use crate::workbench::{discovery as workspace, missions as research, runtime::run_store};
 use model::*;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};

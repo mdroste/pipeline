@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "version": "b9637",
   "license": "MIT",
+  "developmentIntegritySha256": "351bef66be9928343082b97b44b9113cf6ef84b167da0e45a3ccaee8f02e08e3",
   "archive": {
     "url": "https://github.com/ggml-org/llama.cpp/releases/download/b9637/llama-b9637-bin-win-vulkan-x64.zip",
     "sha256": "a353945604cffdac3d0d6da6392de78ca565a531a6f2ff3521f44b9b7c6e553f"

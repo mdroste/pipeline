@@ -4,6 +4,7 @@
   "version": "../package.json",
   "identifier": "com.pipeline.report",
   "build": {
+    "features": ["cli-launcher"],
     "beforeDevCommand": "npm run prepare:release-resources && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run prepare:release-resources && npm run build",
@@ -13,6 +14,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "Pipeline",
         "width": 1400,
         "height": 800,

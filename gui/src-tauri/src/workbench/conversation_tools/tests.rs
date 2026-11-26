@@ -353,7 +353,7 @@ fn unfiled_conversations_never_receive_project_write_tools() {
 
 #[tokio::test]
 async fn a_closed_connection_stops_only_what_it_owns() {
-    use crate::workbench::commands::{accept_local_turn, finish_local_turn, stop_connection_tools};
+    use crate::workbench::runtime::{accept_local_turn, finish_local_turn, stop_connection_tools};
     let _turn = crate::orchestration::tests::exclusive_turn_state().await;
     let watching = |thread: &str, turn: &str| {
         cancellations()

@@ -3,9 +3,12 @@ import { memo, useState } from "react";
 import {
   modelDisplayName,
   unsetEffortLabel,
+  unsetEffortOption,
   unsetModelOption,
+  unsetModelSummary,
+  withoutDefaultModel,
 } from "../../lib/modelChoice";
-import type { ModelCatalog } from "../../lib/reviewModelTypes";
+import type { ModelCatalog, ModelSelection } from "../../lib/reviewModelTypes";
 import type { Settings } from "../../lib/settingsTypes";
 import type { StepConfig } from "../../lib/workflowTypes";
 import {
@@ -76,29 +79,45 @@ function ModelOverrides({
     if (!settings) return "Not set";
     const catalog = catalogs[provider];
     // A saved Automatic choice skips the Settings stage and step model.
-    if (explicitAutomatic) return unsetModelOption(settings, provider, catalog);
-    if (step.model)
-      return `This step: ${modelDisplayName(catalog, step.model)}`;
+    if (explicitAutomatic)
+      return unsetModelOption(withoutDefaultModel(settings), provider, catalog);
+    if (step.model) return `${modelDisplayName(catalog, step.model)} (step)`;
     const staged = usesStage
       ? (stageModels?.[key] ?? stageModels?.[provider])
       : undefined;
     if (staged?.mode === "pinned")
-      return `Settings → ${stage}: ${modelDisplayName(catalog, staged.model)}`;
+      return `${modelDisplayName(catalog, staged.model)} (settings)`;
     if (staged?.mode === "role")
-      return `Settings → ${stage}: ${catalog?.roles.find((role) => role.id === staged.role)?.label ?? staged.role}`;
+      return `${catalog?.roles.find((role) => role.id === staged.role)?.label ?? staged.role} (settings)`;
     return unsetModelOption(settings, provider, catalog);
   };
 
-  const inheritedEffort = (provider: string, key: string): string => {
+  const inheritedEffort = (
+    provider: string,
+    key: string,
+    selection: ModelSelection | undefined,
+    compact = false,
+  ): string => {
     if (!settings) return "Not set";
     const capitalized = (value: string) =>
       value.charAt(0).toUpperCase() + value.slice(1);
-    if (step.effort) return `This step: ${capitalized(step.effort)}`;
+    if (step.effort)
+      return compact
+        ? `${capitalized(step.effort)} (step)`
+        : `This step: ${capitalized(step.effort)}`;
     const staged = usesStage
       ? stageEfforts?.[key] || stageEfforts?.[provider]
       : undefined;
-    if (staged) return `Settings → ${stage}: ${capitalized(staged)}`;
-    return unsetEffortLabel(settings, provider);
+    if (staged)
+      return compact
+        ? `${capitalized(staged)} (settings)`
+        : `Settings → ${stage}: ${capitalized(staged)}`;
+    return (compact ? unsetEffortOption : unsetEffortLabel)(
+      settings,
+      provider,
+      catalogs[provider],
+      selection,
+    );
   };
 
   const updateModel = (key: string, value: string) => {
@@ -150,6 +169,14 @@ function ModelOverrides({
             const key = `${provider}:${transportFor(provider)}`;
             const catalog = catalogs[provider];
             const selection = step.model_overrides?.[key];
+            const effectiveSelection =
+              selection ??
+              step.model_overrides?.[provider] ??
+              (step.model
+                ? { mode: "pinned" as const, model: step.model }
+                : usesStage
+                  ? (stageModels?.[key] ?? stageModels?.[provider])
+                  : undefined);
             const value =
               selection?.mode === "automatic"
                 ? "inherit"
@@ -160,7 +187,7 @@ function ModelOverrides({
               catalog?.models.some((model) => value === `pinned:${model.id}`);
             const efforts = effortOptions(
               catalog,
-              selection,
+              effectiveSelection,
               provider === "claude"
                 ? ["low", "medium", "high", "max"]
                 : provider === "codex"
@@ -177,6 +204,23 @@ function ModelOverrides({
                 </div>
                 <select
                   aria-label={`${provider} ${transportFor(provider)} model override`}
+                  title={
+                    effectiveSelection?.mode === "pinned"
+                      ? effectiveSelection.model
+                      : effectiveSelection?.mode === "role"
+                        ? (catalog?.roles.find(
+                            (role) => role.id === effectiveSelection.role,
+                          )?.model ?? effectiveSelection.role)
+                        : settings
+                          ? unsetModelSummary(
+                              effectiveSelection?.mode === "automatic"
+                                ? withoutDefaultModel(settings)
+                                : settings,
+                              provider,
+                              catalog,
+                            )
+                          : "Not set"
+                  }
                   value={value}
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
@@ -219,11 +263,17 @@ function ModelOverrides({
                 {!!efforts.length && (
                   <select
                     aria-label={`${provider} ${transportFor(provider)} effort override`}
+                    title={
+                      step.effort_overrides?.[key] ||
+                      inheritedEffort(provider, key, effectiveSelection)
+                    }
                     value={step.effort_overrides?.[key] ?? ""}
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
-                    <option value="">{inheritedEffort(provider, key)}</option>
+                    <option value="">
+                      {inheritedEffort(provider, key, effectiveSelection, true)}
+                    </option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}

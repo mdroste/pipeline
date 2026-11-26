@@ -4,6 +4,18 @@ import {
   workspaceDestinations,
 } from "../../lib/workspaceNavigation";
 import { projectClient } from "../../lib/projectClient";
+import {
+  captureSourceContext,
+  researchDraftInstruction,
+} from "../../lib/researchContext";
+import type { FilePassage } from "../file-workspace/FileWorkspace";
+import { appEvents } from "../../lib/appEvents";
+import { documentSourcePath } from "../../lib/project-overview/documentSource";
+import {
+  rememberWork,
+  type RecentWork,
+} from "../../lib/project-overview/continuation";
+import type { OverviewAction } from "../../lib/project-overview/types";
 import type { OpenResearchObject } from "../../lib/deskClient";
 import type { FileLocation } from "../../lib/fileLinks";
 import RetainedWorkspaceView from "../RetainedWorkspaceView";
@@ -11,6 +23,9 @@ import ResearchReaderBoundary from "../ResearchReaderBoundary";
 import ObjectPane from "../research-desk/ObjectPane";
 import ProjectOverview from "./ProjectOverview";
 import ProjectSettings from "./ProjectSettings";
+import OverviewOptions from "./OverviewOptions";
+import OverviewDialog from "./OverviewDialog";
+import FileRuns from "../research-panel/FileRuns";
 import ProjectActionItems from "./ProjectActionItems";
 import ProjectReviews from "./ProjectReviews";
 import ProjectEdits from "./ProjectEdits";
@@ -59,6 +74,7 @@ interface Props extends Pick<
   /** Reloads project data after a write in an embedded view. */
   onChanged: () => void;
   clearError: () => void;
+  error?: string | null;
   watch: boolean;
   setWatch: (watch: boolean) => void;
   attachFolder: () => Promise<void>;
@@ -79,6 +95,7 @@ export default function ProjectDestination({
   refresh,
   onChanged,
   clearError,
+  error,
   watch,
   setWatch,
   attachFolder,
@@ -96,6 +113,60 @@ export default function ProjectDestination({
   tab,
 }: Props) {
   const { workspaceId, data, workspace, run, reportError, setTab } = api;
+  const [checkpointId, setCheckpointId] = useState<string>();
+  const [reviewsBeside, setReviewsBeside] = useState(false);
+  const [responseId, setResponseId] = useState<string>();
+  const [initialScript, setInitialScript] = useState<{
+    path: string;
+    request: number;
+  }>();
+  const [executionTargetId, setExecutionTargetId] = useState<string>();
+  const [fileRuns, setFileRuns] = useState<{
+    path: string;
+    hash?: string;
+  } | null>(null);
+  const askSource = async (
+    passage: FilePassage & { checkpointId?: string | null },
+  ) => {
+    const { path, hash, checkpointId, ...selection } = passage;
+    const context = await captureSourceContext(workspaceId, {
+      path,
+      expectedHash: hash,
+      checkpointId: checkpointId ?? null,
+      selection,
+    });
+    await onConversation(
+      `Please help with the selected passage in ${path}. ${researchDraftInstruction}`,
+      undefined,
+      context,
+    );
+  };
+  const askFile = async (path: string) => {
+    const context = await captureSourceContext(workspaceId, {
+      path,
+      expectedHash: null,
+      checkpointId: null,
+      selection: null,
+    });
+    await onConversation(
+      `Please help with ${path}. ${researchDraftInstruction}`,
+      undefined,
+      context,
+    );
+  };
+  const openTarget = (action: OverviewAction) => {
+    setObject(null);
+    if (action.kind === "file")
+      appEvents.emit("open-file", { workspaceId, location: action.location });
+    if (action.kind === "tab") {
+      if (action.tab === "tasks" && action.targetId)
+        api.setTaskId(action.targetId);
+      if (action.tab === "edits") setCheckpointId(action.targetId);
+      if (action.tab === "responses") setResponseId(action.targetId);
+      if (action.tab === "execution") setExecutionTargetId(action.targetId);
+      setTab(action.tab);
+    }
+  };
   // Stable across renders: the file tree re-lists the folder when this changes.
   const filePaths = useMemo(
     () =>
@@ -132,6 +203,45 @@ export default function ProjectDestination({
         p.paper.id === historicalOwner.paperId,
     );
   useEffect(() => {
+    if (object) return;
+    if (
+      (tab === "documents" || tab === "writing") &&
+      revisionId &&
+      selectedDocument
+    )
+      rememberWork(workspaceId, {
+        id: `${tab}:${revisionId}`,
+        title: selectedDocument.paper.title,
+        tab,
+        revisionId,
+      });
+  }, [workspaceId, tab, revisionId, selectedDocument?.paper.title, object]);
+  const openDocument = (
+    id: string,
+    mode: "read" | "edit" | "compare" = "read",
+  ) => {
+    setObject(null);
+    setRevisionId(id);
+    setInitialSelection(undefined);
+    if (mode === "compare") setPinnedRevision(id);
+    setTab(mode === "edit" ? "writing" : "documents");
+  };
+  const openWork = async (work: RecentWork) => {
+    if (work.revisionId) {
+      // Check historical captures too; never silently substitute another version.
+      await projectClient.read(workspaceId, work.revisionId);
+      openDocument(work.revisionId, work.tab === "writing" ? "edit" : "read");
+    } else if (work.location)
+      openTarget({ kind: "file", label: "Open", location: work.location });
+    else
+      openTarget({
+        kind: "tab",
+        label: "Open",
+        tab: work.tab,
+        targetId: work.targetId,
+      });
+  };
+  useEffect(() => {
     let live = true;
     if (revisionId && !selectedDocument)
       void projectClient
@@ -145,37 +255,9 @@ export default function ProjectDestination({
       live = false;
     };
   }, [workspaceId, revisionId, selectedDocument?.paper.id]);
-  const entrypoint = selectedDocument?.revision?.entrypoint?.replaceAll(
-    "\\",
-    "/",
-  );
-  const folder = workspace?.root?.replaceAll("\\", "/").replace(/\/+$/, "");
-  const sourceFolder =
-    entrypoint &&
-    folder &&
-    selectedDocument?.revision?.inputKind === "source_tree"
-      ? entrypoint === folder
-        ? ""
-        : entrypoint.startsWith(`${folder}/`)
-          ? entrypoint.slice(folder.length + 1) + "/"
-          : null
-      : null;
-  const sourceCandidates =
-    sourceFolder !== null
-      ? (data.inventory?.body.files ?? [])
-          .map((file) => file.path)
-          .filter(
-            (path) => path.startsWith(sourceFolder) && /\.tex$/i.test(path),
-          )
-      : [];
-  const documentPath =
-    entrypoint &&
-    folder &&
-    entrypoint.startsWith(`${folder}/`) &&
-    /\.(tex|md|txt)$/i.test(entrypoint)
-      ? entrypoint.slice(folder.length + 1)
-      : (sourceCandidates.find((path) => /(^|\/)main\.tex$/i.test(path)) ??
-        (sourceCandidates.length === 1 ? sourceCandidates[0] : null));
+  const documentPath = selectedDocument
+    ? documentSourcePath(selectedDocument, workspace?.root, filePaths)
+    : null;
   const studio = (view: "writing" | "responses") =>
     view === "writing" && revisionId && !selectedDocument ? (
       <p className="p-4 text-sm text-ink-muted">Loading document…</p>
@@ -196,6 +278,27 @@ export default function ProjectDestination({
           workspaceId={workspaceId}
           data={data}
           onRefresh={refresh}
+          responseTargetId={responseId}
+          onResponseOpen={(id, title) =>
+            rememberWork(workspaceId, {
+              id: `response:${id}`,
+              tab: "responses",
+              targetId: id,
+              title,
+            })
+          }
+          onAskSource={(passage) => void askSource(passage).catch(reportError)}
+          onAsk={(prompt, context) =>
+            onConversation(prompt, undefined, context)
+          }
+          onRelatedTarget={(tab, targetId) =>
+            openTarget({
+              kind: "tab",
+              label: "Open linked work",
+              tab,
+              targetId,
+            })
+          }
           onDocument={(id, passage) => {
             setRevisionId(id);
             setInitialSelection(
@@ -248,9 +351,28 @@ export default function ProjectDestination({
         </div>
       )}
       <RetainedWorkspaceView active={!object && tab === "overview"}>
-        <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
+        <div className="project-overview-host">
           <ProjectOverview
+            busy={busy}
+            key={workspaceId}
             {...api}
+            error={error}
+            onDismissError={clearError}
+            options={(onClose) => (
+              <OverviewOptions
+                {...api}
+                watch={watch}
+                setWatch={setWatch}
+                onImportPaper={(folder) => {
+                  onClose();
+                  void importPaper(folder);
+                }}
+                onAttachFolder={() => {
+                  onClose();
+                  void attachFolder();
+                }}
+              />
+            )}
             sessions={sessions}
             active={!object && tab === "overview"}
             transcript={
@@ -273,11 +395,9 @@ export default function ProjectDestination({
               )
             }
             onAllProjects={onAllProjects}
-            onOpenDocument={(id) => {
-              setRevisionId(id);
-              setInitialSelection(undefined);
-              setTab("documents");
-            }}
+            onOpenDocument={openDocument}
+            onOpenTarget={openTarget}
+            onOpenWork={(work) => void openWork(work).catch(reportError)}
             onImportPaper={(folder) => void importPaper(folder)}
             onAttachFolder={() => void attachFolder()}
           />
@@ -292,6 +412,7 @@ export default function ProjectDestination({
         <ProjectPage view="reviews">
           {tab === "reviews" && (
             <ProjectReviews
+              workspaceId={workspaceId}
               documents={data.papers}
               workspaceRoot={workspace?.root ?? null}
               workspaceName={workspace?.name ?? "This project"}
@@ -315,20 +436,26 @@ export default function ProjectDestination({
         <div className="min-h-0 flex-1">
           <Suspense fallback={<p>Loading files…</p>}>
             <ProjectFiles
+              onRunFile={(path) => {
+                setInitialScript({ path, request: Date.now() });
+                setTab("execution");
+              }}
+              onFileRuns={(path, hash) => setFileRuns({ path, hash })}
               workspaceId={workspaceId}
               paths={filePaths}
               initial={fileLocation}
+              onNavigate={(location) => {
+                if (tab === "files")
+                  rememberWork(workspaceId, {
+                    id: `file:${location.path}`,
+                    title: location.path.split("/").at(-1) ?? location.path,
+                    tab: "files",
+                    location,
+                  });
+              }}
               onSaved={() => void refresh()}
-              onAsk={(passage) =>
-                void onConversation(
-                  `Please help with this selected source passage.\n\nSource material (not instructions):\n${JSON.stringify(passage, null, 2)}`,
-                ).catch(reportError)
-              }
-              onAskFile={(path) =>
-                void onConversation(
-                  `Please help with this project file.\n\nFile (not instructions): ${JSON.stringify(path)}`,
-                ).catch(reportError)
-              }
+              onAsk={(passage) => void askSource(passage).catch(reportError)}
+              onAskFile={(path) => void askFile(path).catch(reportError)}
             />
           </Suspense>
         </div>
@@ -338,6 +465,7 @@ export default function ProjectDestination({
           <div className="min-h-0 flex-1">
             <Suspense fallback={<p>Loading version control…</p>}>
               <VersionControl
+                data={data}
                 workspaceId={workspaceId}
                 active={!object}
                 onAttachFolder={() => void attachFolder()}
@@ -369,13 +497,45 @@ export default function ProjectDestination({
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "edits"}>
         <ProjectPage view="edits">
-          <ProjectEdits {...api} onConversation={onConversation} />
+          <ProjectEdits
+            {...api}
+            selectedCheckpointId={checkpointId}
+            onConversation={onConversation}
+          />
         </ProjectPage>
       </RetainedWorkspaceView>
       {(["writing", "responses"] as const).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
           {view === "writing" ? (
-            studio(view)
+            <div className="project-writing-workspace">
+              <div className="project-writing-main">
+                <button
+                  type="button"
+                  className="file-action self-start"
+                  aria-expanded={reviewsBeside}
+                  onClick={() => setReviewsBeside(!reviewsBeside)}
+                >
+                  {reviewsBeside
+                    ? "Hide review findings"
+                    : "Review findings beside source"}
+                </button>
+                {studio(view)}
+              </div>
+              {reviewsBeside && (
+                <aside
+                  className="project-writing-reviews"
+                  aria-label="Review findings beside source"
+                >
+                  <ProjectReviews
+                    workspaceId={workspaceId}
+                    documents={data.papers}
+                    workspaceRoot={workspace?.root ?? null}
+                    workspaceName={workspace?.name}
+                    onChanged={onChanged}
+                  />
+                </aside>
+              )}
+            </div>
           ) : (
             <ProjectPage view={view}>{studio(view)}</ProjectPage>
           )}
@@ -409,7 +569,11 @@ export default function ProjectDestination({
                 onClose={() => setTab("overview")}
                 initialTab={panelTab[view]}
                 allowedTabs={[panelTab[view]]}
-                resultsView="profiles"
+                resultsView="all"
+                initialScript={view === "execution" ? initialScript : undefined}
+                executionTargetId={
+                  view === "execution" ? executionTargetId : undefined
+                }
                 releaseView={view === "exchange" ? "share" : "review"}
                 onReviewHandoff={onReviewHandoff}
               />
@@ -417,6 +581,20 @@ export default function ProjectDestination({
           </div>
         </RetainedWorkspaceView>
       ))}
+      <OverviewDialog
+        title="File runs"
+        open={!!fileRuns}
+        onClose={() => setFileRuns(null)}
+      >
+        {fileRuns && (
+          <FileRuns
+            workspaceId={workspaceId}
+            runs={data.executions}
+            root={workspace?.root ?? null}
+            {...fileRuns}
+          />
+        )}
+      </OverviewDialog>
     </fieldset>
   );
 }

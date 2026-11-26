@@ -44,6 +44,8 @@ interface Props {
   queued?: boolean;
   onCancel: () => void;
   onRun: () => void;
+  /** The containing tutorial owns keyboard focus; the preview looks identical. */
+  embedded?: boolean;
 }
 
 function basename(path: string): string {
@@ -140,8 +142,9 @@ export default function RunPreview({
   queued = false,
   onCancel,
   onRun,
+  embedded = false,
 }: Props) {
-  const dialogRef = useModalDialog<HTMLDivElement>(onCancel);
+  const dialogRef = useModalDialog<HTMLDivElement>(onCancel, !embedded);
   const steps = config.steps.filter((step) => step.enabled);
   const conditionalSteps = steps.filter((step) => !!step.run_if).length;
   const autoAssembled = isAutoReview(config);
@@ -288,8 +291,9 @@ export default function RunPreview({
     >
       <div
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
+        role={embedded ? "region" : "dialog"}
+        aria-modal={embedded ? undefined : true}
+        data-review-tour="run-preview"
         aria-labelledby="run-preview-title"
         tabIndex={-1}
         className="ui-overlay-frame flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden"
@@ -303,10 +307,7 @@ export default function RunPreview({
             {inputInterpretation.replaceAll("_", " ")}
           </p>
           {plan.inputNotices?.map((notice) => (
-            <p
-              key={notice}
-              className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
-            >
+            <p key={notice} className="mt-2 text-xs leading-5 text-warning">
               {notice}
             </p>
           ))}
@@ -335,7 +336,7 @@ export default function RunPreview({
                 See below for what each step can send.
               </p>
               {plan.backupUnavailable && (
-                <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                <p className="mt-1 text-xs leading-5 text-warning">
                   Your backup, {providerList([plan.backupUnavailable])}, isn’t
                   connected. If you reach a usage limit, this review stops.
                 </p>
@@ -370,10 +371,10 @@ export default function RunPreview({
               aria-label="Pipeline checks that use the network"
               className="ui-notice ui-notice--warning mt-5"
             >
-              <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              <h2 className="text-sm font-semibold text-warning">
                 Lookups outside your AI provider
               </h2>
-              <ul className="mt-1 space-y-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+              <ul className="mt-1 space-y-1 text-xs leading-5 text-warning">
                 {networkChecks.map((check) => (
                   <li key={check.stepId}>
                     <span className="font-medium">{check.stepLabel}</span>{" "}
@@ -436,6 +437,7 @@ export default function RunPreview({
             data-autofocus
             type="button"
             onClick={onRun}
+            data-review-tour="start-review"
             className="ui-button ui-button--primary"
           >
             {batchCount > 1

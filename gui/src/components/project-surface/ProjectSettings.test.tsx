@@ -66,3 +66,45 @@ it("clears the date when the field is emptied", () => {
   fireEvent.blur(field);
   expect(saveSettings).toHaveBeenCalledWith({ targetDate: null });
 });
+
+it("refreshes saved fields across retained settings views without replacing local exclusions", () => {
+  const data = makeProjectHome();
+  const props = {
+    workspaceId: "workspace",
+    data,
+    workspace: { root: "/research" },
+    act: vi.fn(),
+    saveSettings: vi.fn(),
+    reportError: vi.fn(),
+    watch: false,
+    setWatch: vi.fn(),
+    onImportPaper: vi.fn(),
+    onAttachFolder: vi.fn(),
+  } as unknown as Parameters<typeof ProjectSettings>[0];
+  const view = render(<ProjectSettings {...props} />);
+  fireEvent.change(screen.getByLabelText("Paths to leave out"), {
+    target: { value: "unsaved-folder" },
+  });
+  view.rerender(
+    <ProjectSettings
+      {...props}
+      data={{
+        ...data,
+        settings: {
+          ...data.settings,
+          body: {
+            ...data.settings.body,
+            venue: "New venue",
+            targetLabel: "Resubmission",
+            ignoredPaths: ["saved-elsewhere"],
+          },
+        },
+      }}
+    />,
+  );
+  expect(screen.getByLabelText("Venue")).toHaveValue("New venue");
+  expect(screen.getByLabelText("Target label")).toHaveValue("Resubmission");
+  expect(screen.getByLabelText("Paths to leave out")).toHaveValue(
+    "unsaved-folder",
+  );
+});

@@ -55,8 +55,7 @@ const TABS: Array<[TabId, string]> = [
   ["modules", "Tools & context"],
 ];
 
-const primaryButton =
-  "rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-200";
+const primaryButton = "ui-button ui-button--primary ui-button--sm";
 const secondaryButton =
   "rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800";
 const inputClass =
@@ -147,12 +146,12 @@ function HarnessPresetPanel({
             </span>
           )}
           {inUse && (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[0.625rem] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+            <span className="rounded-full bg-success-soft px-2 py-0.5 text-[0.625rem] font-medium text-success">
               In use by this conversation
             </span>
           )}
           {dirty && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.625rem] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+            <span className="rounded-full bg-warning-soft px-2 py-0.5 text-[0.625rem] font-medium text-warning">
               Unsaved
             </span>
           )}

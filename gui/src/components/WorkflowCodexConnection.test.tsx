@@ -5,11 +5,9 @@ import WorkflowCodexConnection from "./WorkflowCodexConnection";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mocked = vi.mocked(invoke);
-let pending = false;
 let unresolved: Array<{ id: string; state: string; label: string }> = [];
 
 beforeEach(() => {
-  pending = false;
   unresolved = [];
   mocked.mockReset();
   mocked.mockImplementation(async (command) => {
@@ -18,17 +16,9 @@ beforeEach(() => {
         account: { status: "signedOut", email: null, planType: null },
         version: "0.153.4",
         epoch: 9,
-        loginInProgress: pending,
+        loginInProgress: false,
         unresolvedAttempts: unresolved,
       };
-    if (command === "workflow_codex_login_start") {
-      pending = true;
-      return { loginId: "login-1", epoch: 9 };
-    }
-    if (command === "workflow_codex_login_cancel") {
-      pending = false;
-      return true;
-    }
     if (command === "workflow_codex_acknowledge_attempt") {
       unresolved = [];
       return null;

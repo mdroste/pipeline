@@ -81,14 +81,16 @@ describe("RunSetupPanel", () => {
     expect(alert).toHaveTextContent("code is invalid");
     expect(alert).not.toHaveTextContent("could not be loaded");
     expect(
-      screen.queryByRole("button", { name: "Retry workflow" }),
+      screen.queryByRole("button", { name: "Retry review design" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Preview/ })).toBeEnabled();
   });
 
   it("still blocks Preview when the workflow setup failed to load", () => {
     renderPanel({ configError: "profile unreadable" });
-    expect(screen.getByText(/Couldn.t load the workflow/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Couldn.t load the review design/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Preview/ })).toBeDisabled();
   });
 });

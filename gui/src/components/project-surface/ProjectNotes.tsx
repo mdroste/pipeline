@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { researchClient } from "../../lib/workbench/researchClient";
-import { projectClient } from "../../lib/projectClient";
+import { useProjectEnvironment } from "../../lib/projectEnvironment";
+import { useEffect, useRef, useState } from "react";
 import type { ResearchNote } from "../../lib/workbench/researchTypes";
 import {
   NOTE_KINDS,
@@ -12,7 +11,14 @@ import {
   op,
   type SurfaceApi,
 } from "./shared";
-function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
+export function NoteCard({
+  note,
+  api,
+}: {
+  note: ResearchNote;
+  api: SurfaceApi;
+}) {
+  const { researchClient, projectClient } = useProjectEnvironment();
   const { data, run, saveSettings } = api;
   const brief = data.settings.body.briefNoteIds;
   const excluded = data.settings.body.excludedNoteIds;
@@ -43,7 +49,10 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
       }),
     );
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950">
+    <div
+      data-note-id={note.id}
+      className="rounded-lg border border-gray-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-950"
+    >
       <div className={`flex flex-wrap items-center gap-x-2 ${muted}`}>
         <span className="font-medium">{noteKindLabel(note.kind)}</span>
         {note.state === "proposed" && (
@@ -169,18 +178,131 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
   );
 }
 
-export default function ProjectNotes(props: SurfaceApi) {
+function RetainedNote({
+  note,
+  api,
+  visible,
+}: {
+  note: ResearchNote;
+  api: SurfaceApi;
+  visible: boolean;
+}) {
+  const visited = useRef(false);
+  if (visible) visited.current = true;
+  return visited.current ? (
+    <div hidden={!visible}>
+      <NoteCard note={note} api={api} />
+    </div>
+  ) : null;
+}
+
+export default function ProjectNotes(
+  props: SurfaceApi & {
+    compact?: boolean;
+    context?: boolean;
+    selectedNoteId?: string;
+  },
+) {
+  const { researchClient } = useProjectEnvironment();
   const { data, workspaceId, run } = props;
   const [noteBody, setNoteBody] = useState("");
   const [noteKind, setNoteKind] = useState<ResearchNote["kind"]>("question");
+  const [selected, setSelected] = useState("");
+  const [composing, setComposing] = useState(false);
+  const [filter, setFilter] = useState("brief");
+  const notesRoot = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (props.selectedNoteId) {
+      setSelected(props.selectedNoteId);
+      setFilter("all");
+    }
+  }, [props.selectedNoteId]);
+  const visibleNotes = props.context
+    ? data.notes.filter(
+        (item) =>
+          filter === "all" ||
+          (filter === "suggested"
+            ? item.state === "proposed"
+            : item.state === "accepted" &&
+              (data.settings.body.briefNoteIds.includes(item.id) ||
+                item.pinned)),
+      )
+    : data.notes;
+  const note = data.notes.find((item) => item.id === selected) ?? data.notes[0];
+  useEffect(() => {
+    if (!props.selectedNoteId || filter !== "all") return;
+    const target = Array.from(
+      notesRoot.current?.querySelectorAll<HTMLElement>("[data-note-id]") ?? [],
+    ).find((element) => element.dataset.noteId === props.selectedNoteId);
+    target?.scrollIntoView?.({ block: "nearest" });
+  }, [props.selectedNoteId, filter]);
   return (
-    <section className="space-y-3">
-      <h2 className="font-semibold">Notes</h2>
-      <p className={muted}>
-        Save decisions, assumptions, questions, and next steps to use in future
-        conversations.
-      </p>
-      <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+    <section
+      ref={notesRoot}
+      className={`space-y-3 ${props.compact ? "overview-notes" : ""}`}
+    >
+      {!props.compact && <h2 className="font-semibold">Notes</h2>}
+      {!props.context && (
+        <p className={muted}>
+          Save decisions, assumptions, questions, and next steps to use in
+          future conversations.
+        </p>
+      )}
+      {props.context && (
+        <div className="overview-sections" aria-label="Project context views">
+          {[
+            ["brief", "Brief"],
+            ["all", "All notes"],
+            ["suggested", "Suggested"],
+          ].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={filter === id}
+              onClick={() => setFilter(id)}
+            >
+              {label}
+            </button>
+          ))}
+          <button type="button" onClick={() => setComposing(!composing)}>
+            {composing ? "Close new note" : "Add a note"}
+          </button>
+        </div>
+      )}
+      {props.compact && !props.context && (
+        <div className="overview-actions">
+          {!!data.notes.length && (
+            <label className="overview-note-picker">
+              Saved note
+              <select
+                className="ui-input"
+                aria-label="Saved note"
+                value={note?.id ?? ""}
+                onChange={(event) => setSelected(event.target.value)}
+              >
+                {data.notes.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {noteKindLabel(item.kind)} · {item.state} ·{" "}
+                    {item.body.slice(0, 80)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            className="ui-button"
+            aria-expanded={composing}
+            onClick={() => setComposing(!composing)}
+          >
+            {composing ? "Close new note" : "Add a note"}
+          </button>
+        </div>
+      )}
+      <div
+        hidden={props.compact && !composing}
+        className="flex flex-wrap gap-2 sm:flex-nowrap"
+      >
         <select
           aria-label="Note type"
           className="rounded-md border border-gray-300 bg-transparent px-2 text-xs dark:border-neutral-700"
@@ -213,10 +335,11 @@ export default function ProjectNotes(props: SurfaceApi) {
                 body: noteBody,
                 state: "accepted",
                 origin: "user",
-                pinned: false,
+                pinned: Boolean(props.context && filter === "brief"),
                 operationId: op(),
               });
               setNoteBody("");
+              setComposing(false);
             })
           }
         >
@@ -224,10 +347,32 @@ export default function ProjectNotes(props: SurfaceApi) {
         </button>
       </div>
       {!data.notes.length && <p className={muted}>No notes yet.</p>}
-      <div className="grid gap-3 lg:grid-cols-2">
-        {data.notes.map((n) => (
-          <NoteCard key={n.id} note={n} api={props} />
-        ))}
+      {props.context && data.notes.length > 0 && !visibleNotes.length && (
+        <p className={muted}>
+          {filter === "brief"
+            ? "Pin accepted notes to compose your brief."
+            : "No suggested notes."}
+        </p>
+      )}
+      <div
+        className={
+          props.compact ? "overview-note-detail" : "grid gap-3 lg:grid-cols-2"
+        }
+      >
+        {data.notes.map((n) =>
+          props.compact ? (
+            <RetainedNote
+              key={n.id}
+              note={n}
+              api={props}
+              visible={
+                props.context ? visibleNotes.includes(n) : n.id === note?.id
+              }
+            />
+          ) : (
+            <NoteCard key={n.id} note={n} api={props} />
+          ),
+        )}
       </div>
       {data.noteHistory?.length ? (
         <details

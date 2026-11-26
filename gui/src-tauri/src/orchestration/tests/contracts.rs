@@ -11,7 +11,8 @@ async fn every_worker_recovers_only_its_own_committed_attempt() {
     let _guard = exclusive_turn_state().await;
     let w = disposable_workspace();
     let session =
-        crate::workbench::discovery::source(&w, &store::id(), "Recovery matrix", false).unwrap();
+        crate::workbench::discovery::legacy_source(&w, &store::id(), "Recovery matrix", false)
+            .unwrap();
     let scope = adapters::prepare(&chain(vec![delay("x")]), Some(session.clone()), &json!({}))
         .await
         .unwrap();

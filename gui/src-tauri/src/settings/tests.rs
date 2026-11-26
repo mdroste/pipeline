@@ -25,6 +25,32 @@ fn step_timeout_defaults_to_forty_five_minutes_and_preserves_saved_limits() {
 }
 
 #[test]
+fn pdf_timeout_defaults_to_forty_five_minutes_independently_of_step_limit() {
+    assert_eq!(Settings::default().pdf_extraction_timeout_secs, 2700);
+    let missing: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(missing.pdf_extraction_timeout_secs, 2700);
+    for step_seconds in [600, 7200] {
+        let legacy: Settings = serde_json::from_value(serde_json::json!({
+            "step_timeout_secs": step_seconds,
+        }))
+        .unwrap();
+        assert_eq!(legacy.pdf_extraction_timeout_secs, 2700);
+        for pdf_seconds in [120, 1800, 2700, 7200] {
+            let saved: Settings = serde_json::from_value(serde_json::json!({
+                "step_timeout_secs": step_seconds,
+                "pdf_extraction_timeout_secs": pdf_seconds,
+            }))
+            .unwrap();
+            assert!(saved.validate().is_ok());
+            let restored: Settings =
+                serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+            assert_eq!(restored.step_timeout_secs, step_seconds);
+            assert_eq!(restored.pdf_extraction_timeout_secs, pdf_seconds);
+        }
+    }
+}
+
+#[test]
 fn validation_preserves_first_failure_order() {
     let mut settings = Settings {
         codex_backend: "unknown".into(),
@@ -224,7 +250,7 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert!(defaults.paddle_full_merge_tables);
     assert!(defaults.paddle_full_relevel_titles);
     assert!(defaults.paddle_full_show_formula_numbers);
-    assert_eq!(defaults.pdf_extraction_timeout_secs, 1800);
+    assert_eq!(defaults.pdf_extraction_timeout_secs, 2700);
     assert!(defaults.reuse_pdf_extraction_cache);
 
     // Unknown retired fields remain harmless because settings deserialization
@@ -246,7 +272,7 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert!(legacy.paddle_full_merge_tables);
     assert!(legacy.paddle_full_relevel_titles);
     assert!(legacy.paddle_full_show_formula_numbers);
-    assert_eq!(legacy.pdf_extraction_timeout_secs, 1800);
+    assert_eq!(legacy.pdf_extraction_timeout_secs, 2700);
     assert!(legacy.reuse_pdf_extraction_cache);
 }
 

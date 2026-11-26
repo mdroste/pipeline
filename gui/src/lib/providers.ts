@@ -1,6 +1,11 @@
 import type { ModelCatalog, ModelSelection } from "./reviewModelTypes";
 import type { Settings } from "./settingsTypes";
-import { modelDisplayName, unsetModel, unsetModelOption } from "./modelChoice";
+import {
+  modelDisplayName,
+  unsetEffortLabel,
+  unsetModel,
+  unsetModelOption,
+} from "./modelChoice";
 
 import {
   providerFamilies,
@@ -20,6 +25,20 @@ export function defaultConnectionId(settings: Settings): ConnectionId {
   return reviewConnectionId(settings, settings.preferred_provider);
 }
 
+/** Choosing a family preserves that provider's saved connection and credentials. */
+export function withDefaultProvider(
+  settings: Settings,
+  provider: ProviderFamily,
+): Settings {
+  return {
+    ...settings,
+    preferred_provider: provider,
+    default_model: "",
+    default_effort: "",
+    default_model_chosen: true,
+  };
+}
+
 /** A model and thinking level belong to one connection, so changing it clears them. */
 export function withDefaultConnection(
   settings: Settings,
@@ -30,7 +49,12 @@ export function withDefaultConnection(
     ...settings,
     preferred_provider: family,
     ...(family === "claude" ? { claude_access_mode: access } : {}),
-    ...(family === "codex" ? { codex_access_mode: access } : {}),
+    ...(family === "codex"
+      ? {
+          codex_access_mode:
+            access === "api" ? ("api" as const) : ("subscription" as const),
+        }
+      : {}),
     default_model: "",
     default_effort: "",
     default_model_chosen: true,
@@ -43,6 +67,7 @@ export function withAccessMode(
   family: "claude" | "codex",
   mode: Settings["claude_access_mode"],
 ): Settings {
+  if (family === "codex" && mode === "code_api") return settings;
   const key = family === "claude" ? "claude_access_mode" : "codex_access_mode";
   return {
     ...settings,
@@ -71,7 +96,12 @@ export function defaultModelSummary(
       : unset.name
         ? `${unset.name} (${unset.chooser}'s choice)`
         : `${unset.chooser}'s choice`,
-    effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : null,
+    effort
+      ? effort.charAt(0).toUpperCase() + effort.slice(1)
+      : catalog?.models.find((model) => model.id === (pinned || unset.id))
+            ?.default_effort
+        ? unsetEffortLabel(settings, provider, catalog)
+        : null,
   ]
     .filter(Boolean)
     .join(" · ");

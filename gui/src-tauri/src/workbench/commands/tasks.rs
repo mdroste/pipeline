@@ -3,8 +3,6 @@
 use super::{run_store, turn_queue};
 use serde_json::Value;
 
-pub(crate) use super::codex::requests::task_pending_request;
-
 pub(crate) async fn deliver_task(
     binding: crate::workbench::tasks::TaskBinding,
     operation: String,

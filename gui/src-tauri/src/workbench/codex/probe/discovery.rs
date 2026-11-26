@@ -14,8 +14,14 @@ pub(super) async fn verify(
 ) -> Result<(), String> {
     let temporary = tempfile::tempdir().map_err(|e| e.to_string())?;
     let store = Store::open_at(&temporary.path().join("store")).map_err(|e| e.message)?;
-    let session =
-        discovery::source(&store, "probe", "Synthetic research", false).map_err(|e| e.message)?;
+    let session = discovery::source(
+        &store,
+        "probe",
+        "Synthetic research",
+        false,
+        Some(&root.to_string_lossy()),
+    )
+    .map_err(|e| e.message)?;
     let source = Scope {
         workspace_id: store
             .session_snapshot(&session)

@@ -268,7 +268,8 @@ async fn crashed_delivery(
     name: &str,
 ) -> TaskRun {
     let operation = store::id();
-    let session = crate::workbench::discovery::source(w, &operation, "Return", false).unwrap();
+    let session =
+        crate::workbench::discovery::legacy_source(w, &operation, "Return", false).unwrap();
     let plan = chain(vec![step(
         "step",
         Action::Deliver {

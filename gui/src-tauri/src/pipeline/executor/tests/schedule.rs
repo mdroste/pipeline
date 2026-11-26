@@ -405,7 +405,14 @@ fn unit_that_stops_before_its_provider_call_reports_an_error_status() {
 #[test]
 fn unit_preparation_error_fails_only_its_own_unit() {
     let temp = tempfile::tempdir().unwrap();
-    let first = make_step("first", Phase::Parallel);
+    let mut first = make_step("first", Phase::Parallel);
+    // A sibling completes without calling a provider. Preparation now follows
+    // admission, so this test must keep the worker semaphore open.
+    first.for_each = Some(crate::pipeline_config::ForEach {
+        glob: "*.unmatched".into(),
+        max: 20,
+        artifact: None,
+    });
     let mut second = make_step("second", Phase::Parallel);
     second.context.include.push(ArtifactSelector::Step {
         step: "first".into(),
@@ -413,27 +420,28 @@ fn unit_preparation_error_fails_only_its_own_unit() {
         glob: String::new(),
     });
 
-    let (result, passes) = run_wave_recording(&[&first, &second], &[], temp.path(), true);
+    let (result, passes) = run_wave_recording(&[&first, &second], &[], temp.path(), false);
     let wave =
         result.unwrap_or_else(|_| panic!("a unit that cannot be prepared must not abort the wave"));
     let (outputs, mut failures) = (wave.outputs, wave.failures);
 
-    assert!(outputs.is_empty());
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].step_id, "first");
+    assert!(outputs[0].skipped);
     failures.sort_by(|a, b| a.step_id.cmp(&b.step_id));
     let failed: Vec<_> = failures.iter().map(|f| f.step_id.as_str()).collect();
-    assert_eq!(failed, ["first", "second"]);
+    assert_eq!(failed, ["second"]);
     assert!(
-        failures[1]
+        failures[0]
             .error
             .contains("cannot consume another step's output"),
         "{}",
-        failures[1].error
+        failures[0].error
     );
-    // The unit dispatched earlier still settles; the unprepared one is
-    // reported failed without being announced as queued.
-    assert!(passes.contains(&serde_json::json!({"name": "first", "status": "error"})));
+    // A preparation failure settles its announced unit; the sibling remains complete.
+    assert!(passes.contains(&serde_json::json!({"name": "first", "status": "skipped"})));
     assert!(passes.contains(&serde_json::json!({"name": "second", "status": "error"})));
-    assert!(!passes.contains(&serde_json::json!({"name": "second", "status": "pending"})));
+    assert!(passes.contains(&serde_json::json!({"name": "second", "status": "pending"})));
 }
 
 #[test]

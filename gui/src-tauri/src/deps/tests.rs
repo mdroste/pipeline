@@ -852,3 +852,33 @@ fn generated_markdown_does_not_require_pdf_extraction() {
         ));
     }
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn claude_auth_rechecks_reused_native_executable_after_billing_changes() {
+    use crate::agent_runtime::claude::{verified_resolved_auth, AuthMode};
+    let directory = tempfile::tempdir().unwrap();
+    let script = directory.path().join("claude-auth-fixture.cmd");
+    let resolved = super::ResolvedCommand {
+        discovered_path: script.clone(),
+        program: "cmd.exe".into(),
+        prefix_args: vec!["/d".into(), "/c".into(), script.as_os_str().to_owned()],
+    };
+    let subscription = serde_json::json!({"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty","forcedLoginMethod":"claudeai","subscriptionType":"max"});
+    let console = serde_json::json!({"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty","forcedLoginMethod":"console","subscriptionType":null});
+    for (status, mode, accepted) in [
+        (&subscription, AuthMode::Subscription, true),
+        (&console, AuthMode::Subscription, false),
+        (&console, AuthMode::Api, true),
+        (&subscription, AuthMode::Api, false),
+        (&subscription, AuthMode::Subscription, true),
+    ] {
+        std::fs::write(
+            &script,
+            format!("@echo off\r\necho {status}\r\nexit /b 0\r\n"),
+        )
+        .unwrap();
+        let result = verified_resolved_auth(resolved.clone(), mode).await;
+        assert_eq!(result.is_ok(), accepted, "{result:?}");
+    }
+}

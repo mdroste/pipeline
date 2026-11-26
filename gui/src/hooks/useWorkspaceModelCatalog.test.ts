@@ -200,3 +200,38 @@ it("clears only its own failure when the conversation changes", async () => {
   expect(hook.result.current.error).toBe("Could not refresh");
   hook.unmount();
 });
+
+it("loads Console models through Claude Code without borrowing the subscription catalog", async () => {
+  vi.clearAllMocks();
+  client.claudeModelCatalog.mockResolvedValueOnce({
+    models: [{ model: "subscription-model" }],
+  });
+  client.claudeModelCatalog.mockResolvedValueOnce({
+    models: [{ model: "console-model" }],
+  });
+  const models = vi.fn();
+  const error = vi.fn();
+  const hook = renderHook(
+    ({ runtime }) =>
+      useWorkspaceModelCatalog(
+        "chat",
+        "session",
+        "session",
+        runtime,
+        models,
+        error,
+      ),
+    { initialProps: { runtime: "claude" as "claude" | "claude-code-api" } },
+  );
+  await waitFor(() =>
+    expect(models).toHaveBeenLastCalledWith([{ model: "subscription-model" }]),
+  );
+  hook.rerender({ runtime: "claude-code-api" });
+  await waitFor(() =>
+    expect(models).toHaveBeenLastCalledWith([{ model: "console-model" }]),
+  );
+  expect(client.claudeModelCatalog).toHaveBeenLastCalledWith("claude-code-api");
+  expect(client.apiModelCatalog).not.toHaveBeenCalled();
+  expect(client.connectCodex).not.toHaveBeenCalled();
+  hook.unmount();
+});

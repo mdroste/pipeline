@@ -92,7 +92,7 @@ export interface Settings {
   max_saved_runs: number;
   max_saved_run_bytes: number;
   /** Explicit cloud connection mode; Claude subscription uses its CLI. */
-  claude_access_mode: "subscription" | "api";
+  claude_access_mode: "subscription" | "code_api" | "api";
   /** Codex subscription uses App Server by default; CLI is an advanced option. */
   codex_backend?: "legacy_cli" | "app_server";
   /** Persisted one-time migration from the former legacy CLI default. */

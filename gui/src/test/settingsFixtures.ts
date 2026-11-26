@@ -29,7 +29,7 @@ export function makeSettings(): Settings {
     paddle_full_merge_tables: true,
     paddle_full_relevel_titles: true,
     paddle_full_show_formula_numbers: true,
-    pdf_extraction_timeout_secs: 1800,
+    pdf_extraction_timeout_secs: 2700,
     reuse_pdf_extraction_cache: true,
     verbose_logging: false,
     step_timeout_secs: 2700,

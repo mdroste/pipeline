@@ -87,8 +87,13 @@ it("preserves legacy desk preferences without making the project content own ass
 it("opens signed-out project state without a model call or choosing reference results", async () => {
   const conversation = vi.fn();
   await mount(conversation);
-  fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
-  expect(screen.getByLabelText("Current version of the paper")).toHaveValue("");
+  fireEvent.click(screen.getByRole("button", { name: "Options" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Full project settings →" }),
+  );
+  expect(screen.getByLabelText("Reference version of the paper")).toHaveValue(
+    "",
+  );
   expect(screen.getByText("research")).toBeInTheDocument();
   expect(mocks.mutate).not.toHaveBeenCalled();
   expect(conversation).not.toHaveBeenCalled();
@@ -189,28 +194,18 @@ it("opens a research conversation only when explicitly requested", async () => {
 
 it("keeps an unsaved project note when changing project destinations", async () => {
   await mount();
-  expect(screen.getByLabelText("New note")).not.toBeVisible();
-  expect(
-    screen.queryByLabelText("Current version of the paper"),
-  ).not.toBeInTheDocument();
-  fireEvent.click(
-    screen.getByText("Project notes", { selector: "summary", exact: false }),
-  );
+  expect(screen.queryByLabelText("New note")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Context" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
   const draft = screen.getByLabelText("New note");
   fireEvent.change(draft, {
     target: { value: "Retain the aggregation assumptions" },
   });
-  fireEvent.click(
-    screen.getByText("Project notes", { selector: "summary", exact: false }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
   expect(draft).not.toBeVisible();
-  fireEvent.click(
-    screen.getByText("Project notes", { selector: "summary", exact: false }),
-  );
-  expect(draft).toHaveValue("Retain the aggregation assumptions");
   fireEvent.click(screen.getByRole("button", { name: "Notes" }));
-  expect(draft).not.toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+  fireEvent.click(screen.getByRole("button", { name: "Context" }));
   expect(draft).toBeVisible();
   expect(draft).toHaveValue("Retain the aggregation assumptions");
   expect(mocks.mutate).not.toHaveBeenCalled();
@@ -278,12 +273,17 @@ it("keeps proposed research questions out of the brief while showing their pendi
   data.settings.body.briefNoteIds = ["proposed"];
   mocks.home.mockResolvedValue(data);
   await mount();
+  expect(screen.getByRole("region", { name: "Attention" })).toHaveTextContent(
+    "An unaccepted claim",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Context" }));
   expect(
-    screen.getByRole("region", { name: "Research brief" }),
+    screen.getByRole("dialog", { name: "Project context" }),
   ).not.toHaveTextContent("An unaccepted claim");
+  fireEvent.click(screen.getByRole("button", { name: "Suggested" }));
   expect(
-    screen.getByRole("button", { name: "Review suggested notes →" }),
-  ).toBeVisible();
+    screen.getByRole("dialog", { name: "Project context" }),
+  ).toHaveTextContent("An unaccepted claim");
 });
 
 it("asks for the conversation first only when a project has nothing but conversations", async () => {

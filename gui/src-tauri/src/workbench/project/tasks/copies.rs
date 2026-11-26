@@ -175,7 +175,13 @@ pub(super) fn task_root_path(
             "The project root changed; restore/remap task files explicitly before continuing",
         ));
     }
-    let expected = current.join(SCRATCH).join(checkpoint_id);
+    let private = super::super::connections::private_copy_parent(store, ws).join(checkpoint_id);
+    // Older copies remain readable at their original location; new copies are private.
+    let expected = if Path::new(&checkpoint.task_root) == private {
+        private
+    } else {
+        current.join(SCRATCH).join(checkpoint_id)
+    };
     let unavailable = || {
         WorkbenchError::conflict(
             "Task copy is missing, relocated, or replaced; its saved snapshots remain available",
@@ -239,6 +245,9 @@ pub(in crate::workbench::project) fn checkpoint(
         ));
     }
     let source = root(store, ws)?;
+    if store.root_path().starts_with(&source) {
+        return Err(WorkbenchError::invalid("Move Pipeline's private data folder outside this project before creating isolated task copies"));
+    }
     let reader = files::SafeRoot::open(&source)?;
     let mut base = BTreeMap::new();
     let mut total = 0;
@@ -272,7 +281,13 @@ pub(in crate::workbench::project) fn checkpoint(
         );
     }
     let checkpoint_id = id("checkpoint")?;
-    let parent = source.join(SCRATCH);
+    let parent = super::super::connections::private_copy_parent(store, ws);
+    fs::create_dir_all(
+        parent
+            .parent()
+            .ok_or_else(|| WorkbenchError::invalid("Missing private copy parent"))?,
+    )
+    .map_err(err)?;
     match fs::create_dir(&parent) {
         Ok(()) => (),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),

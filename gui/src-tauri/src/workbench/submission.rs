@@ -1,6 +1,6 @@
 //! Cancellation before dispatch is definitive. Once a native request is in
 //! flight, its owner must await acknowledgement and interrupt the accepted turn.
-use super::commands::RuntimeCommandError;
+use super::runtime::RuntimeCommandError;
 use std::future::Future;
 use tokio::sync::watch;
 

@@ -1,15 +1,16 @@
 import { workflowDescription } from "../lib/workflowDescriptions";
+import { useSetupReads } from "./reviewSetupReads";
+import { useState, useEffect, useId } from "react";
+import { useReviewSetupEnvironment } from "./reviewSetupEnvironment";
+import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
+import ReportIssueLink from "./ReportIssueLink";
+import ReviewWorkflowComparison from "./review-setup/ReviewWorkflowComparison";
 import {
-  adaptiveAgentCountLabel,
   adaptiveAgentCount,
+  adaptiveAgentCountLabel,
   adaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
-import { useSetupReads } from "./reviewSetupReads";
-import { useState, useEffect, useId } from "react";
-import { workflowProfileClient } from "../lib/workflowProfileClient";
-import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
-import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   disabled: boolean;
@@ -25,6 +26,7 @@ export default function WorkflowPanel({
   refreshKey,
 }: Props) {
   const selectId = useId();
+  const [comparing, setComparing] = useState(false);
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [activeId, setActiveId] = useState<string>("");
@@ -34,6 +36,7 @@ export default function WorkflowPanel({
   const [loadAttempt, setLoadAttempt] = useState(0);
 
   const reads = useSetupReads(refreshKey);
+  const environment = useReviewSetupEnvironment();
   useEffect(() => {
     let stale = false;
     setLoading(true);
@@ -62,10 +65,11 @@ export default function WorkflowPanel({
     setSwitching(true);
     setError(null);
     try {
-      const newConfig = await workflowProfileClient.switch({ id });
+      const newConfig = await environment.switchWorkflow({ id });
       setConfig(newConfig);
       setActiveId(id);
       onProfileChange(newConfig);
+      setComparing(false);
     } catch (e) {
       console.error("Failed to switch profile:", e);
       setError(e instanceof Error ? e.message : String(e));
@@ -80,7 +84,7 @@ export default function WorkflowPanel({
         role="status"
         className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-line dark:text-gray-400"
       >
-        Loading workflow…
+        Loading review design…
       </div>
     );
   }
@@ -88,9 +92,9 @@ export default function WorkflowPanel({
     return (
       <div
         role="alert"
-        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-line dark:text-red-400"
+        className="border-t border-gray-200 pt-4 text-xs text-danger dark:border-line"
       >
-        <p>Workflow unavailable{error ? `: ${error}` : "."}</p>
+        <p>Review design unavailable{error ? `: ${error}` : "."}</p>
         <button
           type="button"
           onClick={() => setLoadAttempt((attempt) => attempt + 1)}
@@ -104,29 +108,40 @@ export default function WorkflowPanel({
   }
 
   return (
-    <div className="border-t border-line pt-4">
+    <div className="review-workflow-picker">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
         <label
           htmlFor={selectId}
           className="text-ui-label font-medium text-ink"
         >
-          Workflow
+          Review design
         </label>
-        <button
-          type="button"
-          onClick={onConfigure}
-          disabled={disabled}
-          className="shrink-0 rounded-ui-sm px-1.5 py-1 text-ui-meta font-medium text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
-        >
-          Edit workflow…
-        </button>
+        <div className="review-workflow-actions">
+          <button
+            type="button"
+            className="ui-button ui-button--quiet ui-button--sm"
+            aria-label="Compare review designs"
+            disabled={disabled || switching}
+            onClick={() => setComparing(true)}
+          >
+            Compare
+          </button>
+          <button
+            type="button"
+            onClick={onConfigure}
+            disabled={disabled}
+            className="ui-button ui-button--link ui-button--sm"
+          >
+            Edit design
+          </button>
+        </div>
       </div>
       <select
         id={selectId}
         value={activeId}
         onChange={(e) => handleSwitch(e.target.value)}
         disabled={disabled || switching}
-        title={switching ? "Switching workflow" : undefined}
+        title={switching ? "Switching review design" : undefined}
         className="w-full"
       >
         {profiles.map((p) => (
@@ -143,65 +158,30 @@ export default function WorkflowPanel({
                 .outcome
             }
           </p>
-          <p>
-            {config.extraction?.input_mode === "none"
-              ? "No document needed"
-              : config.extraction?.input_mode === "folder"
-                ? "Folder input"
-                : workflowDescription(profiles.find((p) => p.id === activeId)!)
-                    .inputs}{" "}
-            · {config.steps.filter((step) => step.enabled).length} configured
-            steps
-            {isAutoReview(config)
-              ? " + " +
-                adaptiveAgentCountLabel(
-                  adaptiveAgentCount(config),
-                  adaptiveAgentRange(config),
-                ) +
-                " specialists"
-              : ""}
-          </p>
+          {isAutoReview(config) && (
+            <p>
+              This design selects{" "}
+              {adaptiveAgentCountLabel(
+                adaptiveAgentCount(config),
+                adaptiveAgentRange(config),
+              )}{" "}
+              specialist roles for each document. Model settings choose which
+              models perform those roles.
+            </p>
+          )}
         </div>
       )}
-      <details className="mt-3 text-ui-meta">
-        <summary className="review-disclosure">Compare workflows</summary>
-        {Array.from(
-          new Set(profiles.map((p) => workflowDescription(p).category)),
-        ).map((category) => (
-          <section key={category} className="mt-3">
-            <h3 className="mb-1 font-medium text-ink-muted">{category}</h3>
-            {profiles
-              .filter((p) => workflowDescription(p).category === category)
-              .map((profile) => (
-                <button
-                  key={profile.id}
-                  type="button"
-                  disabled={disabled || switching || !!profile.invalid}
-                  aria-pressed={profile.id === activeId}
-                  onClick={() => void handleSwitch(profile.id)}
-                  className="mb-2 block w-full rounded-lg border border-line p-3 text-left hover:bg-sunken aria-pressed:bg-sunken disabled:opacity-50"
-                >
-                  <span className="font-medium">
-                    {profile.name}
-                    {profile.id === activeId ? " · Selected" : ""}
-                  </span>
-                  <span className="mt-1 block text-ink-muted">
-                    {workflowDescription(profile).outcome}
-                  </span>
-                  <span className="mt-1 block text-ink-muted">
-                    {workflowDescription(profile).inputs} · {profile.step_count}{" "}
-                    configured steps{profile.invalid ? " · Needs repair" : ""}
-                  </span>
-                </button>
-              ))}
-          </section>
-        ))}
-      </details>
+      {comparing && (
+        <ReviewWorkflowComparison
+          profiles={profiles}
+          activeId={activeId}
+          disabled={disabled || switching}
+          onSelect={(id) => void handleSwitch(id)}
+          onClose={() => setComparing(false)}
+        />
+      )}
       {profiles.find((p) => p.id === activeId)?.invalid && (
-        <p
-          role="alert"
-          className="mt-1 text-[0.6875rem] text-amber-800 dark:text-amber-200"
-        >
+        <p role="alert" className="mt-1 text-[0.6875rem] text-warning">
           {profiles.find((p) => p.id === activeId)?.invalid}
         </p>
       )}
@@ -210,7 +190,7 @@ export default function WorkflowPanel({
           role="status"
           className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
         >
-          Switching workflow…
+          Switching review design…
         </p>
       )}
     </div>

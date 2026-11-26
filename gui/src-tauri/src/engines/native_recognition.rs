@@ -1,7 +1,7 @@
 //! Built-in PaddlePaddle recognition for the Full Parser.
 //!
-//! Windows ships only llama.cpp's CPU build, and Smart App Control refuses its
-//! unsigned DLLs, so new Windows installs read pages with PaddlePaddle itself.
+//! New Windows installs read pages on the processor with PaddlePaddle itself.
+//! GPU recognition uses a separately downloaded, signed Vulkan runtime.
 //! The choice is recorded in the parser manifest when the runtime is installed
 //! and never changes during extraction. Installs made with managed llama.cpp
 //! keep using it. Graphics-card recognition is a separate optional component;

@@ -93,13 +93,13 @@ pub(crate) struct DiscoveryProcessGuard {
 impl DiscoveryProcessGuard {
     pub(crate) fn terminate(&self) {
         if self.armed {
-            crate::commands::lifecycle::kill_independent_process(self.pid);
+            crate::process_tree::kill_independent_process(self.pid);
         }
     }
 
     pub(crate) fn register(pid: u32) -> Self {
         if pid > 0 {
-            crate::commands::lifecycle::register_independent_child_pid(pid);
+            crate::process_tree::register_independent_child_pid(pid);
         }
         Self {
             pid,
@@ -109,7 +109,7 @@ impl DiscoveryProcessGuard {
 
     pub(crate) fn unregister(&mut self) {
         if self.armed {
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
             self.armed = false;
         }
     }
@@ -119,7 +119,7 @@ impl Drop for DiscoveryProcessGuard {
     fn drop(&mut self) {
         if self.armed {
             self.terminate();
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
         }
     }
 }

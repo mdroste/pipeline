@@ -2,6 +2,27 @@
 
 use tauri::AppHandle;
 
+#[tauri::command]
+pub async fn cli_tools_status() -> Result<crate::cli_tools::CliToolsStatus, String> {
+    tokio::task::spawn_blocking(crate::cli_tools::status)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_cli_tools() -> Result<crate::cli_tools::CliToolsStatus, String> {
+    tokio::task::spawn_blocking(crate::cli_tools::install)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn uninstall_cli_tools() -> Result<crate::cli_tools::CliToolsStatus, String> {
+    tokio::task::spawn_blocking(crate::cli_tools::uninstall)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Open the active research data folder. The path is resolved server-side
 /// (never passed from the frontend) so there is nothing to sanitize.
 #[tauri::command]

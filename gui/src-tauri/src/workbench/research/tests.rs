@@ -10,6 +10,8 @@ mod automation_identity;
 mod document_types;
 #[path = "tests/paper_imports.rs"]
 mod paper_imports;
+#[path = "tests/paper_listing.rs"]
+mod paper_listing;
 #[path = "tests/session_moves.rs"]
 mod session_moves;
 

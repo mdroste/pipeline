@@ -69,16 +69,12 @@ case "$platform" in
     echo "$(jq -r '.windows.archive.sha256' "$lock")  $archive" | sha256sum --check --strict
     unzip -q "$archive" -d "$unpacked"
     root="$unpacked/poppler-$poppler_version"
-    cp "$root/Library/bin/pdftoppm.exe" "$root/Library/bin/pdftotext.exe" "$destination/"
-    for dll in "$root/Library/bin/"*.dll; do
-      case "$(basename "$dll")" in
-        Qt5*|Qt6*|poppler-cpp.dll|poppler-glib.dll) continue ;;
-      esac
-      cp "$dll" "$destination/"
-    done
+    node "$repo_root/scripts/release/poppler-windows.mjs" "$root/Library/bin" "$destination/Library/bin"
     mkdir -p "$destination/share" "$destination/licenses/poppler"
     cp -R "$root/share/poppler" "$destination/share/poppler"
     cp "$root/share/poppler/COPYING"* "$destination/licenses/poppler/"
+    # Keep the upstream Library/bin + share/poppler data lookup layout.
+    node "$repo_root/scripts/release/qualify-poppler.mjs" "$root" "$destination"
     printf '%s\n' "$distribution_version" > "$destination/DISTRIBUTION_VERSION"
     ;;
 
@@ -89,7 +85,7 @@ case "$platform" in
 esac
 
 case "$platform" in
-  windows) "$destination/pdftotext.exe" -v ;;
+  windows) "$destination/Library/bin/pdftotext.exe" -v ;;
   *) "$destination/pdftotext" -v ;;
 esac
 

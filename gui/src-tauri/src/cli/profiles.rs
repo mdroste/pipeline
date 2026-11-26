@@ -2,7 +2,7 @@
 
 use super::args::ProfilesArgs;
 use super::io::emit_stdout;
-use pipeline_gui_lib::pipeline_config;
+use crate::pipeline_config;
 
 pub(super) fn cmd_profiles(args: ProfilesArgs) -> i32 {
     match args {

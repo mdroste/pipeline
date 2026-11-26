@@ -278,6 +278,28 @@ impl Default for StepConfig {
 }
 
 impl StepConfig {
+    /// Editorial (Declaude) stages run one editor each: fan-out or merged
+    /// agents would lose the identity of each edit.
+    pub fn is_editorial(&self) -> bool {
+        self.output_schema
+            .as_ref()
+            .and_then(crate::pipeline::editorial::stage)
+            .is_some()
+    }
+
+    /// The agents a step takes from a role or run-wide list: none for a step
+    /// that makes no model call, and only the first for an editorial stage.
+    pub fn assignable_agents(&self, agents: &[String]) -> Option<Vec<String>> {
+        if !self.kind.is_model() {
+            return None;
+        }
+        Some(if self.is_editorial() {
+            agents.iter().take(1).cloned().collect()
+        } else {
+            agents.to_vec()
+        })
+    }
+
     /// Resolve the most specific model policy for a provider. New
     /// provider/transport keys win, followed by a provider-wide override and
     /// finally the legacy free-text field.
@@ -320,7 +342,9 @@ pub fn apply_agent_defaults(config: &mut PipelineConfig, settings: &crate::setti
         }
         let (models, efforts) = match step.phase {
             Phase::Parallel => {
-                step.agents = settings.parallel_agents();
+                step.agents = step
+                    .assignable_agents(&settings.parallel_agents())
+                    .unwrap_or_default();
                 (
                     &settings.default_parallel_model_overrides,
                     &settings.default_parallel_effort_overrides,

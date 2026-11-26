@@ -69,7 +69,7 @@ it("opens the selected project with research details and chats out of the picker
   expect(onResumeConversation).not.toHaveBeenCalled();
   expect(invoke).toHaveBeenCalledExactlyOnceWith("workbench_project_index");
   expect(
-    screen.queryByRole("region", { name: "Chats" }),
+    screen.queryByRole("region", { name: "Conversations" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByText(/suggested notes/)).not.toBeInTheDocument();
   expect(
@@ -171,4 +171,29 @@ it("clears an unmatched project search", async () => {
   expect(
     screen.getByRole("button", { name: "Production networks" }),
   ).toBeVisible();
+});
+
+it("shows the date used for deadline sorting and offers an explicit overview", async () => {
+  invoke.mockResolvedValue([
+    { ...project, targetDate: "2099-04-12", targetLabel: "Submission" },
+  ]);
+  const onOpenProject = vi.fn(),
+    user = userEvent.setup();
+  render(
+    <ProjectIndexPage
+      onNewConversation={vi.fn()}
+      onOpenProject={onOpenProject}
+      onResumeConversation={vi.fn()}
+    />,
+  );
+  await screen.findByRole("button", { name: project.name });
+  await user.selectOptions(screen.getByLabelText("Sort projects"), "deadline");
+  expect(screen.getByText(/Submission · .*2099/)).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: `Overview of ${project.name}` }),
+  );
+  expect(onOpenProject).toHaveBeenCalledWith(project.id, "overview");
+  expect(
+    invoke.mock.calls.every(([name]) => name === "workbench_project_index"),
+  ).toBe(true);
 });

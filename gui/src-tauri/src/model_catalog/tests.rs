@@ -227,7 +227,10 @@ fn google_cli_discovery_is_rejected_before_any_subprocess() {
         .build()
         .unwrap();
     assert!(runtime
-        .block_on(cli_catalog("antigravity"))
+        .block_on(cli_catalog(
+            "antigravity",
+            crate::agent_runtime::claude::AuthMode::Subscription
+        ))
         .unwrap_err()
         .contains("Unknown CLI provider"));
 }
@@ -241,7 +244,10 @@ fn retired_gemini_provider_id_is_rejected_by_both_transports() {
     let settings = Settings::default();
     let api = runtime.block_on(api_catalog("gemini", &settings));
     assert!(api.unwrap_err().contains("Unknown model provider"));
-    let cli = runtime.block_on(cli_catalog("gemini"));
+    let cli = runtime.block_on(cli_catalog(
+        "gemini",
+        crate::agent_runtime::claude::AuthMode::Subscription,
+    ));
     assert!(cli.unwrap_err().contains("Unknown CLI provider"));
 }
 

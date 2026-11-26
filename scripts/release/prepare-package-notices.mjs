@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { LIBRARY_NOTICE, libraryNotice } from "./library-licenses.mjs";
-import { writeInventory } from "./poppler-inventory.mjs";
+import { writeInventory, popplerBinary } from "./poppler-inventory.mjs";
 import { validateReleaseIdentity } from "./validate-release-identity.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
@@ -21,7 +21,7 @@ function writeChanged(file, contents) {
 
 fs.mkdirSync(output, { recursive: true });
 const poppler = path.join(root, "gui/src-tauri/resources/poppler");
-if (fs.existsSync(path.join(poppler, process.platform === "win32" ? "pdftotext.exe" : "pdftotext")))
+if (fs.existsSync(popplerBinary(poppler, "pdftotext")))
   writeInventory(poppler, process.env.PIPELINE_BUNDLE_PLATFORM || process.platform);
 else if (official) throw new Error("Official releases require a bundled Poppler inventory");
 writeChanged(path.join(output, "PIPELINE_LICENSE.txt"), fs.readFileSync(path.join(root, "LICENSE"), "utf8"));

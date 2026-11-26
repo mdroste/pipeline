@@ -4,6 +4,8 @@ import {
   recordedEffortLabel,
   recordedModelLabel,
   unsetEffortLabel,
+  unsetEffortOption,
+  stageModelDetails,
   unsetModelOption,
   unsetModelSummary,
 } from "./modelChoice";
@@ -42,7 +44,7 @@ const anthropicApi = {
 describe("unset models", () => {
   it("names the model a CLI picks and who picks it", () => {
     expect(unsetModelOption(subscription, "claude", claudeCli)).toBe(
-      "Claude Code's choice: Opus 5.5",
+      "Opus 5.5 (auto)",
     );
     expect(unsetModelSummary(subscription, "claude", claudeCli)).toBe(
       "Opus 5.5 (Claude Code's choice)",
@@ -59,7 +61,7 @@ describe("unset models", () => {
   it("names Pipeline's recommended model on an API connection", () => {
     const api = { ...subscription, claude_access_mode: "api" } as Settings;
     expect(unsetModelOption(api, "claude", anthropicApi)).toBe(
-      "Pipeline's choice: Sonnet 4.6",
+      "Sonnet 4.6 (auto)",
     );
   });
 
@@ -69,12 +71,10 @@ describe("unset models", () => {
       default_model: "gpt-5.6-sol",
       default_effort: "high",
     } as Settings;
-    expect(unsetModelOption(shared, "codex")).toBe(
-      "Default model: gpt-5.6-sol",
-    );
+    expect(unsetModelOption(shared, "codex")).toBe("gpt-5.6-sol (default)");
     expect(unsetEffortLabel(shared, "codex")).toBe("Default thinking: High");
     expect(unsetModelOption(shared, "claude", claudeCli)).toBe(
-      "Claude Code's choice: Opus 5.5",
+      "Opus 5.5 (auto)",
     );
     expect(unsetEffortLabel(shared, "claude")).toBe(
       "Claude Code default thinking",
@@ -88,6 +88,105 @@ describe("unset models", () => {
     expect(unsetModelOption(subscription, "local")).toBe(
       "Local server: no model selected",
     );
+  });
+});
+
+describe("live thinking defaults", () => {
+  const catalog = {
+    provider: "codex",
+    transport: "cli",
+    default_model: "model-a",
+    models: [
+      { id: "model-a", display_name: "Model A", default_effort: "medium" },
+      { id: "model-b", display_name: "Model B", default_effort: "high" },
+      { id: "unknown", display_name: "Unknown", supported_efforts: ["low"] },
+    ],
+    roles: [{ id: "quality", model: "model-b" }],
+  } as ModelCatalog;
+
+  it("shows the live automatic default with the useful value first", () => {
+    expect(unsetEffortOption(subscription, "codex", catalog)).toBe(
+      "Medium (default)",
+    );
+    expect(unsetEffortLabel(subscription, "codex", catalog)).toBe(
+      "ChatGPT default thinking: Medium",
+    );
+    expect(unsetModelOption(subscription, "codex", catalog)).toBe(
+      "Model A (auto)",
+    );
+  });
+
+  it("uses the selected model, role, or inherited model rather than always the provider default", () => {
+    const pinned = { mode: "pinned", model: "model-b" } as const;
+    expect(unsetEffortOption(subscription, "codex", catalog, pinned)).toBe(
+      "High (default)",
+    );
+    expect(
+      unsetEffortOption(subscription, "codex", catalog, {
+        mode: "role",
+        role: "quality",
+      }),
+    ).toBe("High (default)");
+    const shared = { ...subscription, default_model: "model-b" };
+    expect(unsetEffortOption(shared, "codex", catalog)).toBe("High (default)");
+    expect(
+      unsetEffortOption(shared, "codex", catalog, { mode: "automatic" }),
+    ).toBe("Medium (default)");
+    expect(
+      stageModelDetails(
+        subscription,
+        "codex",
+        { "codex:cli": pinned },
+        {},
+        { codex: catalog },
+      ).effort,
+    ).toBe("ChatGPT default thinking: High");
+  });
+
+  it("keeps a configured thinking override ahead of model defaults", () => {
+    const shared = { ...subscription, default_effort: "low" };
+    expect(unsetEffortOption(shared, "codex", catalog)).toBe("Low (default)");
+    expect(unsetEffortLabel(shared, "codex", catalog)).toBe(
+      "Default thinking: Low",
+    );
+    expect(
+      stageModelDetails(
+        shared,
+        "codex",
+        {},
+        { "codex:cli": "high" },
+        { codex: catalog },
+      ).effort,
+    ).toBe("High");
+  });
+
+  it("does not guess from supported levels or fall back from an unknown pinned model", () => {
+    for (const id of ["unknown", "missing"]) {
+      expect(
+        unsetEffortOption(subscription, "codex", catalog, {
+          mode: "pinned",
+          model: id,
+        }),
+      ).toBe("Provider default");
+    }
+    expect(unsetEffortOption(subscription, "codex")).toBe("Provider default");
+    expect(
+      unsetEffortOption(subscription, "codex", catalog, {
+        mode: "role",
+        role: "missing",
+      }),
+    ).toBe("Provider default");
+  });
+
+  it("follows API Automatic's recommended model", () => {
+    const api = { ...subscription, codex_access_mode: "api" } as Settings;
+    expect(
+      unsetEffortOption(api, "codex", {
+        ...catalog,
+        transport: "api",
+        recommended_model: "model-b",
+      }),
+    ).toBe("High (default)");
   });
 });
 

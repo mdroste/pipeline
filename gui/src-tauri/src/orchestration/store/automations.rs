@@ -16,16 +16,10 @@ pub struct AutomationSummary {
     pub due_at: Option<i64>,
 }
 
-impl Store {
-    pub fn automations(&self, view: &str, offset: u32) -> Result<Vec<AutomationSummary>> {
-        let history = match view {
-            "active" => false,
-            "history" => true,
-            _ => return Err("Choose Active or History to list automation runs".into()),
-        };
-        let c = self.connection()?;
-        let mut q = c.prepare(
-            "WITH candidates AS (
+/// One page of top-level automations, newest first. Each kind reads its
+/// newest-first index and stops once the page is full, so validating bodies
+/// stays proportional to the page rather than to all history.
+pub(super) const PAGE: &str = "WITH candidates AS (
                 SELECT 'task' kind, id, updated_at FROM runs
                 WHERE (state IN ('finished','cancelled','failed')) = ?1
                   AND state<>'unreadable' AND json_valid(body)
@@ -53,8 +47,17 @@ impl Store {
             LEFT JOIN runs r ON page.kind='task' AND r.id=page.id
             LEFT JOIN missions m ON page.kind='research' AND m.id=page.id
             LEFT JOIN discovery_runs d ON page.kind='discovery' AND d.id=page.id
-            ORDER BY page.updated_at DESC, page.kind, page.id",
-        ).map_err(err)?;
+            ORDER BY page.updated_at DESC, page.kind, page.id";
+
+impl Store {
+    pub fn automations(&self, view: &str, offset: u32) -> Result<Vec<AutomationSummary>> {
+        let history = match view {
+            "active" => false,
+            "history" => true,
+            _ => return Err("Choose Active or History to list automation runs".into()),
+        };
+        let c = self.connection()?;
+        let mut q = c.prepare(PAGE).map_err(err)?;
         let rows = q
             .query_map(params![history, offset], |r| {
                 Ok(AutomationSummary {

@@ -8,6 +8,7 @@
   "connections": [
     {"id": "codex", "label": "ChatGPT", "family": "codex", "access": "subscription"},
     {"id": "claude", "label": "Claude Code", "family": "claude", "access": "subscription"},
+    {"id": "claude-code-api", "label": "Claude Code (API)", "family": "claude", "access": "code_api"},
     {"id": "openai-api", "label": "OpenAI API", "family": "codex", "access": "api"},
     {"id": "anthropic-api", "label": "Anthropic API", "family": "claude", "access": "api"},
     {"id": "google-api", "label": "Gemini API", "family": "antigravity", "access": "api"},

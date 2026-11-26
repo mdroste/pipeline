@@ -118,7 +118,7 @@ pub(super) async fn answer(
             "availableDecisions": ["accept", "decline"],
         }),
     };
-    if super::super::commands::has_saved_chat_approval(&event).await {
+    if super::super::runtime::has_saved_chat_approval(&event).await {
         return Ok(json!({"behavior":"allow","updatedInput":input}));
     }
     let (decision, wait) = oneshot::channel();
@@ -151,6 +151,7 @@ mod tests {
     #[tokio::test]
     async fn only_the_pending_sandboxed_command_can_be_allowed_once() {
         let turn = Turn {
+            auth_mode: crate::agent_runtime::claude::AuthMode::Subscription,
             epoch: fresh_epoch(),
             thread: "thread".into(),
             id: "turn".into(),

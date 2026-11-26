@@ -1,3 +1,5 @@
+import { Icon } from "../ui/icons";
+import IconButton from "../ui/IconButton";
 import { reportExportClient } from "../lib/reportExportClient";
 import type {
   ExportMode,
@@ -379,13 +381,12 @@ export default function ExportControls({
                     file list and checksums to help detect changes.
                   </p>
                 </div>
-                <button
-                  aria-label="Close custom export"
+                <IconButton
+                  label="Close custom export"
                   onClick={() => setCustomOpen(false)}
-                  className="text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
                 >
-                  ✕
-                </button>
+                  <Icon name="close" className="h-4 w-4" />
+                </IconButton>
               </div>
               <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
                 {(
@@ -422,7 +423,7 @@ export default function ExportControls({
                 ))}
               </div>
               {customSensitive && (
-                <p className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <p className="mt-3 rounded bg-warning-soft px-2 py-1.5 text-xs text-warning">
                   This selection includes private material. Check the files
                   before sharing them.
                 </p>
@@ -430,7 +431,7 @@ export default function ExportControls({
               <button
                 onClick={() => void runPackageExport("custom", selection)}
                 disabled={!Object.values(selection).some(Boolean)}
-                className="mt-4 w-full rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+                className="ui-button ui-button--primary mt-4 w-full"
               >
                 Export selected items…
               </button>
@@ -448,7 +449,7 @@ export default function ExportControls({
                     }
                     className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
                   >
-                    <span className="block text-sm font-medium text-amber-700 dark:text-amber-300">
+                    <span className="block text-sm font-medium text-warning">
                       Complete review archive · Includes private material
                     </span>
                     <span className="block text-xs text-gray-500 dark:text-gray-400">
@@ -486,20 +487,19 @@ export default function ExportControls({
           <PdfExportResult path={pdfPath} onDismiss={() => setPdfPath(null)} />
         )}
         {result && (
-          <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-left text-xs text-green-900 shadow-lg dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+          <div className="rounded border border-success bg-success-soft px-3 py-2 text-left text-xs text-success shadow-lg">
             <div className="flex items-start justify-between gap-3">
               <p className="font-medium">
                 {packageName(result.mode)} ready · {result.fileCount} files ·{" "}
                 {formatBytes(result.bytes)}
               </p>
-              <button
+              <IconButton
                 type="button"
-                aria-label="Dismiss export result"
+                label="Dismiss export result"
                 onClick={() => setResult(null)}
-                className="shrink-0 hover:opacity-70"
               >
-                ✕
-              </button>
+                <Icon name="close" className="h-4 w-4" />
+              </IconButton>
             </div>
             <p className="mt-1 break-all" title={result.exportedPath}>
               {result.exportedPath}
@@ -512,7 +512,7 @@ export default function ExportControls({
             </p>
             <button
               onClick={() => void reveal()}
-              className="mt-2 rounded border border-line-strong bg-surface px-2 py-1 text-ink hover:bg-sunken dark:bg-transparent dark:text-green-200 dark:border-green-800 dark:hover:bg-green-900/40"
+              className="mt-2 rounded border border-line-strong bg-surface px-2 py-1 hover:bg-sunken dark:bg-transparent text-success border-success hover:bg-success-soft"
             >
               Reveal in folder
             </button>

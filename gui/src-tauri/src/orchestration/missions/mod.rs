@@ -34,7 +34,7 @@ use super::{
 };
 #[cfg(test)]
 use crate::orchestration::definition::{Action, Chain, Limits, Step};
-use crate::workbench::{commands::run_store, missions as workspace};
+use crate::workbench::{missions as workspace, runtime::run_store};
 use model::*;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};

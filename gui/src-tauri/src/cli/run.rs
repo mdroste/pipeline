@@ -7,8 +7,8 @@ use super::io::{
     report_markdown, validate_output_path, write_report_file,
 };
 use super::workflow::load_cli_workflow;
-use pipeline_gui_lib::commands;
-use pipeline_gui_lib::emit::{CliEvents, EventBus};
+use crate::commands;
+use crate::emit::{CliEvents, EventBus};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -69,7 +69,7 @@ pub(super) async fn cmd_run(args: RunArgs) -> i32 {
 }
 
 /// One-line rough usage estimate for `check`.
-fn usage_line(estimate: &pipeline_gui_lib::pipeline::executor::budget::UsageEstimate) -> String {
+fn usage_line(estimate: &crate::pipeline::executor::budget::UsageEstimate) -> String {
     let calls = if estimate.calls_low == estimate.calls_high {
         estimate.calls_low.to_string()
     } else {
@@ -157,7 +157,7 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
             emit_stdout("No external dependencies are required for this run.");
         }
         for dependency in required {
-            let ready = pipeline_gui_lib::deps::dependency_ready(dependency);
+            let ready = crate::deps::dependency_ready(dependency);
             let marker = if ready { "ok" } else { "missing" };
             let detail = if !dependency.version.is_empty() {
                 format!(" ({})", dependency.version)

@@ -1,9 +1,6 @@
+import { useProjectEnvironment } from "../../lib/projectEnvironment";
 import { useState, useEffect, useRef } from "react";
-import {
-  projectClient,
-  type ProjectRecord,
-  type ResearchTask,
-} from "../../lib/projectClient";
+import { type ProjectRecord, type ResearchTask } from "../../lib/projectClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import {
   TASK_STATUSES,
@@ -30,6 +27,7 @@ function mergeFirstPage(history: Task[], page: Task[]): Task[] {
 }
 
 export default function ProjectActionItems(props: SurfaceApi) {
+  const { projectClient } = useProjectEnvironment();
   const {
     data,
     workspace,

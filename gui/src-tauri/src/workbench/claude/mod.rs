@@ -24,14 +24,13 @@ pub(crate) mod usage;
 mod wsl;
 
 use super::chat_approval::Mode;
-use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
+use super::runtime::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
 use super::turn_loop::{persist_and_publish, TurnEvents, UnsavedText};
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
-use tauri::Emitter;
 use tokio::sync::watch;
 
 pub(crate) const NAMESPACE: &str = "claude-local-v1";
@@ -49,7 +48,9 @@ pub(crate) fn selected(overrides: &Value) -> WorkbenchResult<bool> {
     match overrides.get("runtime") {
         None => Ok(false),
         Some(Value::String(value)) if value == "codex" => Ok(false),
-        Some(Value::String(value)) if value == "claude" => Ok(true),
+        Some(Value::String(value)) if matches!(value.as_str(), "claude" | "claude-code-api") => {
+            Ok(true)
+        }
         _ => Err(WorkbenchError::invalid(
             "Choose ChatGPT or Claude Code for this conversation",
         )),
@@ -72,6 +73,7 @@ pub(super) struct Turn {
     pub id: String,
     pub binding: String,
     pub model: Option<String>,
+    pub auth_mode: crate::agent_runtime::claude::AuthMode,
     pub approval_root: Option<String>,
     pub unsaved: UnsavedText,
 }
@@ -92,7 +94,7 @@ impl Turn {
         self.emit(app, NormalizedEvent::ItemCompleted {
             epoch: self.epoch, thread_id: self.thread.clone(), turn_id: self.id.clone(),
             item_id: item_id.clone(), item_kind: kind.into(),
-            item: json!({"id":item_id,"type":kind,"text":text,"runtime":"claude","model":self.model}),
+            item: json!({"id":item_id,"type":kind,"text":text,"runtime":self.auth_mode.runtime(),"model":self.model}),
         }).await
     }
 
@@ -103,7 +105,7 @@ impl Turn {
             if text.trim().is_empty() {
                 continue;
             }
-            let item = json!({"id":item_id,"type":"agentMessage","text":text,"runtime":"claude","model":self.model,"phase":"incomplete"});
+            let item = json!({"id":item_id,"type":"agentMessage","text":text,"runtime":self.auth_mode.runtime(),"model":self.model,"phase":"incomplete"});
             let event = NormalizedEvent::ItemCompleted {
                 epoch: self.epoch,
                 thread_id: self.thread.clone(),
@@ -117,6 +119,8 @@ impl Turn {
     }
 }
 
+// This provider boundary carries the prepared harness and explicit turn authority.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn submit(
     app: tauri::AppHandle,
     request: SendTurnRequest,
@@ -124,6 +128,7 @@ pub(crate) async fn submit(
     prepared: PreparedHarness,
     automated: bool,
     approval_mode: Mode,
+    auth_mode: crate::agent_runtime::claude::AuthMode,
     control: super::submission::Control,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
     let session = request.session_id.clone();
@@ -182,7 +187,7 @@ pub(crate) async fn submit(
     // CLI auth, configuration and handshake all finish before sending a prompt.
     let mut process = control
         .preflight(async {
-            transport::Process::start_in(&args, sandbox.as_ref(), working, wsl)
+            transport::Process::start_in(auth_mode, &args, sandbox.as_ref(), working, wsl)
                 .await
                 .map_err(error)
         })
@@ -233,6 +238,7 @@ pub(crate) async fn submit(
         id: id.clone(),
         binding: bound.id,
         model: request.model,
+        auth_mode,
         approval_root,
         unsaved: UnsavedText::default(),
     };
@@ -241,7 +247,7 @@ pub(crate) async fn submit(
     turn.item(&app, "user", "userMessage", &request.text)
         .await
         .map_err(error)?;
-    super::commands::accept_local_turn(epoch, &thread, &id);
+    super::runtime::accept_local_turn(epoch, &thread, &id);
     let (cancel, receiver) = watch::channel(false);
     *running().lock().unwrap_or_else(|e| e.into_inner()) = Some(Running {
         thread: thread.clone(),
@@ -267,23 +273,14 @@ pub(crate) async fn submit(
         if result.is_err() {
             task_turn.save_unfinished(&app).await;
         }
-        let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
-        super::conversation_tools::report_capture(&app, epoch, capture);
-        let cleanup_thread = thread.clone();
-        let cleanup_turn = id.clone();
-        let _ = run_store(move |store| {
-            super::research::cancel_executions_for_provider_turn(
-                &store,
-                &cleanup_thread,
-                &cleanup_turn,
-            )
-        })
-        .await;
-        let (status, detail) = match result {
-            Ok(()) => ("completed", None),
-            Err(message) if message == "interrupted" => ("interrupted", None),
-            Err(message) => ("failed", Some(message)),
+        let completion = super::runtime::finalization::LocalCompletion {
+            epoch,
+            thread: &thread,
+            turn: &id,
+            binding: &task_turn.binding,
         };
+        completion.capture(&app).await;
+        let (status, detail) = super::runtime::finalization::outcome(result);
         if let Some(message) = detail.as_deref() {
             let _ = task_turn
                 .item(
@@ -301,17 +298,15 @@ pub(crate) async fn submit(
             status: status.into(),
             turn: json!({"id":id,"status":status,"error":detail}),
         };
-        if task_turn.emit(&app, event.clone()).await.is_err() {
-            let _ = app.emit("workbench:event", event);
-        }
-        *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
-        super::commands::finish_local_turn(epoch, &thread, &id);
-        // The terminal event above went out while this turn still held the permit.
-        super::commands::announce_active_turn(&app, None);
+        completion
+            .publish(&app, event, || {
+                *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
+            })
+            .await;
         if status == "completed" {
-            super::commands::spawn_title_generation(
+            super::runtime::spawn_title_generation(
                 app,
-                super::commands::TitleRuntime::Claude { epoch },
+                super::runtime::TitleRuntime::Claude { epoch, auth_mode },
                 thread,
                 id,
             );
@@ -323,7 +318,7 @@ pub(crate) async fn submit(
         let session = request.session_id;
         let submission = request.client_submission_id;
         run_store(move |store| {
-            super::commands::clear_sent_draft(&store, &session, &original, &submission)
+            super::runtime::clear_sent_draft(&store, &session, &original, &submission)
         })
         .await
         .unwrap_or(false)
@@ -382,7 +377,7 @@ pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> 
     };
     // Submission records the turn before installing its process owner. Check
     // setup after the snapshot so a newly recorded turn cannot look abandoned.
-    if super::commands::turn_setup_in_progress() {
+    if super::runtime::turn_setup_in_progress() {
         return Ok(true);
     }
     for turn in snapshot

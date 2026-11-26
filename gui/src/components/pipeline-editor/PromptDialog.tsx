@@ -65,8 +65,7 @@ function PromptDialog({
               if (value.trim()) onSubmit(value.trim());
             }}
             disabled={!value.trim()}
-            className="py-1.5 px-3 text-sm font-medium text-white bg-gray-900 dark:bg-gray-100 dark:text-gray-900 rounded-lg
-                       hover:bg-gray-800 dark:hover:bg-gray-200 disabled:bg-gray-300 dark:disabled:bg-gray-600 transition-colors"
+            className="ui-button ui-button--primary"
           >
             OK
           </button>

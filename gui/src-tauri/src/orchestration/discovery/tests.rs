@@ -3,6 +3,7 @@ use crate::orchestration::{definition::*, state::Progress};
 use std::io::Read as _;
 
 mod claim_benchmarks;
+mod listing;
 mod manuscript_assessments;
 mod repair;
 
@@ -573,7 +574,7 @@ fn coordinator(temp: &tempfile::TempDir) -> Arc<Coordinator> {
 fn started(c: &Coordinator) -> (crate::workbench::store::Store, Portfolio) {
     let w = crate::orchestration::tests::disposable_workspace();
     let operation = store::id();
-    let session = workspace::source(&w, &operation, "Lost turns", false).unwrap();
+    let session = workspace::legacy_source(&w, &operation, "Lost turns", false).unwrap();
     let b = crate::workbench::tasks::binding(&w, &session).unwrap();
     let mut p = fixture(Mode::Unsupervised, 50);
     p.run.workspace_id = b.workspace_id.clone().unwrap();
@@ -748,7 +749,7 @@ async fn a_turn_still_stopping_is_waited_for_and_never_ends_the_run() {
     let (w, mut p, child, thread) = author_turn(&c, "codex-app-server-v1");
     after_restart(&c, &mut p);
     let count = |id: &str| storage::events(&c.store, id, 0).unwrap().len();
-    crate::workbench::commands::accept_local_turn(1, &thread, "turn-1");
+    crate::workbench::runtime::accept_local_turn(1, &thread, "turn-1");
     let result = tick(&c).await;
     let settling = storage::load(&c.store, &p.run.id).unwrap();
     let events = count(&p.run.id);
@@ -763,7 +764,7 @@ async fn a_turn_still_stopping_is_waited_for_and_never_ends_the_run() {
         )
         .unwrap();
     let repeat = tick(&c).await;
-    crate::workbench::commands::finish_local_turn(1, &thread, "turn-1");
+    crate::workbench::runtime::finish_local_turn(1, &thread, "turn-1");
     result.unwrap();
     repeat.unwrap();
     let again = storage::load(&c.store, &p.run.id).unwrap();
@@ -791,9 +792,9 @@ async fn a_turn_that_never_stops_needs_attention_after_the_wait() {
             rusqlite::params![child.id, now() - SETTLE_SECS - 1],
         )
         .unwrap();
-    crate::workbench::commands::accept_local_turn(1, &thread, "turn-1");
+    crate::workbench::runtime::accept_local_turn(1, &thread, "turn-1");
     let result = tick(&c).await;
-    crate::workbench::commands::finish_local_turn(1, &thread, "turn-1");
+    crate::workbench::runtime::finish_local_turn(1, &thread, "turn-1");
     result.unwrap();
     let p = storage::load(&c.store, &p.run.id).unwrap();
     assert_eq!(p.run.state, "attention");

@@ -193,7 +193,7 @@ describe("ProjectIssueLedgerPanel", () => {
     await screen.findByText("Identification assumption is unstated");
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Issue review type filter" }),
+      screen.getByRole("combobox", { name: "Finding review design filter" }),
       "code-review",
     );
     expect(screen.getByText("Retry loop has no bound")).toBeVisible();
@@ -202,10 +202,10 @@ describe("ProjectIssueLedgerPanel", () => {
     ).not.toBeInTheDocument();
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Issue report filter" }),
+      screen.getByRole("combobox", { name: "Finding report filter" }),
       "run_paper",
     );
-    expect(screen.getByText("No issues match these filters.")).toBeVisible();
+    expect(screen.getByText("No findings match these filters.")).toBeVisible();
   });
 
   it("shows the merged note on the target and keeps it on the next lifecycle change", async () => {
@@ -385,7 +385,7 @@ describe("ProjectIssueLedgerPanel", () => {
       />,
     );
     await screen.findByText("Sync failed");
-    expect(screen.queryByText(/No structured issues/)).toBeNull();
+    expect(screen.queryByText(/No structured findings/)).toBeNull();
   });
 
   it("starts each collection with every filter cleared", async () => {
@@ -400,8 +400,8 @@ describe("ProjectIssueLedgerPanel", () => {
     const page = render(view(project.id));
     await screen.findByText("Identification assumption is unstated");
     const severity = () =>
-      screen.getByRole("combobox", { name: "Issue severity filter" });
-    const search = () => screen.getByLabelText("Search collection issues");
+      screen.getByRole("combobox", { name: "Finding severity filter" });
+    const search = () => screen.getByLabelText("Search collection findings");
     await user.selectOptions(severity(), "high");
     await user.type(search(), "retry");
 

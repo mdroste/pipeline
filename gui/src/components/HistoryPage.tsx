@@ -1,4 +1,7 @@
 import { selectHistoryRuns } from "./history-page/selectors";
+import WorkspaceMenu from "./WorkspaceMenu";
+import { MenuItem, MenuSeparator } from "../ui/Menu";
+import "../ui/page.css";
 import {
   isRunning,
   RUNNING_TITLE,
@@ -331,7 +334,7 @@ export default function HistoryPage({
   const filterSummary = [
     statusFilter !== "all" && `Status: ${statusFilter}`,
     providerFilter !== "all" && `Provider: ${providerFilter}`,
-    profileFilter !== "all" && `Workflow: ${profileFilter}`,
+    profileFilter !== "all" && `Review design: ${profileFilter}`,
     projectFilter !== "all" &&
       `Collection: ${projects.find((project) => project.id === projectFilter)?.name ?? projectFilter}`,
     dateFilter !== "all" &&
@@ -339,12 +342,13 @@ export default function HistoryPage({
   ].filter(Boolean);
   // ── List view ──
   return (
-    <div ref={scroll.rootRef} className="flex flex-col h-full">
-      <header className="shrink-0 space-y-3 border-b border-line bg-surface px-[var(--ui-page-gutter)] py-4">
+    <div
+      ref={scroll.rootRef}
+      className="ui-layout-workspace flex flex-col h-full"
+    >
+      <header className="ui-workspace-header space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="mr-auto text-xl font-semibold tracking-tight text-ink">
-            Review history
-          </h2>
+          <h2 className="ui-workspace-title mr-auto">Review history</h2>
           <div
             className="flex flex-wrap items-center gap-2"
             role="group"
@@ -383,7 +387,7 @@ export default function HistoryPage({
             aria-label="Filter report history"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by name, profile, tag…"
+            placeholder="Filter by name, review design, tag…"
             className="ui-input min-w-0 flex-[1_1_12rem]"
           />
           <button
@@ -490,12 +494,12 @@ export default function HistoryPage({
             ))}
           </select>
           <select
-            aria-label="Filter by workflow"
+            aria-label="Filter by review design"
             value={profileFilter}
             onChange={(event) => setProfileFilter(event.target.value)}
             className="max-w-full sm:max-w-56"
           >
-            <option value="all">All workflows</option>
+            <option value="all">All review designs</option>
             {profiles.map((profile) => (
               <option key={profile} value={profile}>
                 {profile}
@@ -607,7 +611,7 @@ export default function HistoryPage({
                     <div className="flex gap-2">
                       <button
                         onClick={() => saveEdit(r.run_id)}
-                        className="px-2 py-1 text-xs rounded bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 hover:opacity-90"
+                        className="ui-button ui-button--primary ui-button--sm"
                       >
                         Save
                       </button>
@@ -676,7 +680,7 @@ export default function HistoryPage({
                               {fmtTokens(freshInputTokens(r))} fresh
                             </span>
                             {(r.cached_input_tokens ?? 0) > 0 && (
-                              <span className="text-ink dark:text-green-400">
+                              <span className="text-success">
                                 {" "}
                                 + {fmtTokens(r.cached_input_tokens)} cache read
                               </span>
@@ -699,7 +703,7 @@ export default function HistoryPage({
                           </span>
                         )}
                         {r.failed_steps.length > 0 && (
-                          <span className="text-amber-700 dark:text-amber-300">
+                          <span className="text-warning">
                             {r.failed_steps.length} failed
                           </span>
                         )}
@@ -720,7 +724,7 @@ export default function HistoryPage({
                         <button
                           onClick={() => onRerun(r.run_id, true)}
                           disabled={runInProgress}
-                          className="rounded px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40 disabled:opacity-40"
+                          className="rounded px-2 py-1 text-xs text-warning hover:bg-warning-soft disabled:opacity-40"
                           title={
                             runInProgress
                               ? "A report is already being generated"
@@ -731,42 +735,30 @@ export default function HistoryPage({
                         </button>
                       )}
                       {!isRunning(r) && (
-                        <details className="relative">
-                          <summary
-                            aria-label={`More actions for ${r.title || r.input_name}`}
-                            className="cursor-pointer list-none rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-                          >
-                            •••
-                          </summary>
-                          <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                            {onRerun && (
-                              <button
-                                onClick={() => onRerun(r.run_id, false)}
-                                disabled={runInProgress}
-                                className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-40"
-                                title={
-                                  runInProgress
-                                    ? "A report is already being generated"
-                                    : `Run ${r.profile_name || "this run's review design"} again using the saved document and document bundle preparation.`
-                                }
-                              >
-                                Regenerate
-                              </button>
-                            )}
-                            <button
-                              onClick={() => startEdit(r)}
-                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                        <WorkspaceMenu
+                          label={`More actions for ${r.title || r.input_name}`}
+                        >
+                          {onRerun && (
+                            <MenuItem
+                              onSelect={() => onRerun(r.run_id, false)}
+                              disabled={runInProgress}
+                              description={
+                                runInProgress
+                                  ? "A report is already being generated"
+                                  : `Run ${r.profile_name || "this run's review design"} again using the saved document and document bundle preparation.`
+                              }
                             >
-                              Rename and tag
-                            </button>
-                            <button
-                              onClick={() => deleteRun(r)}
-                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                            >
-                              Move to Trash
-                            </button>
-                          </div>
-                        </details>
+                              Regenerate
+                            </MenuItem>
+                          )}
+                          <MenuItem onSelect={() => startEdit(r)}>
+                            Rename and tag
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem onSelect={() => void deleteRun(r)} danger>
+                            Move to Trash
+                          </MenuItem>
+                        </WorkspaceMenu>
                       )}
                     </div>
                   </div>

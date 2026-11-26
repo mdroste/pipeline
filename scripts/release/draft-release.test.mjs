@@ -6,6 +6,7 @@ import os from "node:os";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { manageDraft, requireDraft, verifyTag, installerNames } from "./draft-release.mjs";
 import { updatePackages, updateManifest, updaterPublicKey, verifyUpdateSignature } from "./update-manifest.mjs";
+import { gpuRuntimeManifest, gpuRuntimeName, gpuRuntimeManifestName } from "./gpu-runtime.mjs";
 
 // A minisign keypair and signatures in the format Tauri writes.
 function updaterKeys() {
@@ -53,6 +54,15 @@ function completeDraft(keys, version = "1.2.3") {
     assets.set(name, Buffer.from(name));
     assets.set(`${name}.sig`, Buffer.from(keys.sign(Buffer.from(name), version)));
   }
+  const archive = Buffer.from("GPU runtime fixture");
+  const runtimeVersion = JSON.parse(fs.readFileSync(new URL("./llama-vulkan-lock.json", import.meta.url))).version;
+  const inventory = Buffer.from(JSON.stringify({ entries: [{ path: "runtime/llama-server.exe", sha256: "a".repeat(64) }] }));
+  const manifest = Buffer.from(JSON.stringify(gpuRuntimeManifest(version, runtimeVersion, archive, inventory)));
+  for (const [name, bytes] of [[gpuRuntimeName(version), archive], [gpuRuntimeManifestName(version), manifest]]) {
+    assets.set(name, bytes);
+    assets.set(`${name}.sha256`, Buffer.from(`${createHash("sha256").update(bytes).digest("hex")}  ${name}\n`));
+  }
+  assets.set(`${gpuRuntimeManifestName(version)}.sig`, Buffer.from(keys.sign(manifest, version)));
   return assets;
 }
 
@@ -128,6 +138,22 @@ test("a draft with a package the app would reject cannot pass", () => {
   assert.throws(() => manageDraft("verify", "v1.2.3", undefined, gh, keys.publicKey), /doesn't match its signature/);
   assets.set(name, Buffer.from(name));
   assert.throws(() => manageDraft("verify", "v1.2.3", undefined, gh, updaterKeys().publicKey), /doesn't match its signature/);
+});
+
+test("draft verification requires an intact signed optional GPU runtime", () => {
+  const keys = updaterKeys();
+  const assets = completeDraft(keys);
+  const gh = fakeDraft(assets);
+  manageDraft("manifest", "v1.2.3", undefined, gh, keys.publicKey);
+  const name = gpuRuntimeName("1.2.3");
+  const archive = assets.get(name);
+  assets.delete(name);
+  assert.throws(() => manageDraft("verify", "v1.2.3", undefined, gh, keys.publicKey), /missing asset/);
+  // Recomputing the public checksum cannot substitute for the signed metadata.
+  assets.set(name, Buffer.from("changed"));
+  assets.set(`${name}.sha256`, Buffer.from(`${createHash("sha256").update("changed").digest("hex")}  ${name}\n`));
+  assert.throws(() => manageDraft("verify", "v1.2.3", undefined, gh, keys.publicKey), /signed release manifest/);
+  assets.set(name, archive);
 });
 
 test("uploads accept update packages and signatures but nothing else", () => {

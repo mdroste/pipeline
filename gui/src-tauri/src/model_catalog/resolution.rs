@@ -179,7 +179,11 @@ pub async fn discover_connection(
             }
         }
     }
-    let key = discovery_key(provider, transport, settings);
+    let mut key = discovery_key(provider, transport, settings);
+    // Never coalesce subscription and Console account probes.
+    if connection == crate::connections::ConnectionId::ClaudeCodeApi {
+        key.credential_fingerprint.push_str("-claude-code-api");
+    }
     let settings = settings.clone();
     single_flight_discovery(key, move || async move {
         discover_uncached(connection, &settings).await
@@ -198,7 +202,12 @@ async fn discover_uncached(
     let live = if connection.transport(settings) == crate::connections::Transport::CodexAppServer {
         super::chatgpt::chatgpt_catalog().await
     } else if transport == "cli" {
-        cli_catalog(provider).await
+        let mode = if connection == crate::connections::ConnectionId::ClaudeCodeApi {
+            crate::agent_runtime::claude::AuthMode::Api
+        } else {
+            crate::agent_runtime::claude::AuthMode::Subscription
+        };
+        cli_catalog(provider, mode).await
     } else {
         api_catalog(provider, settings).await
     };

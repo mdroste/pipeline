@@ -29,6 +29,7 @@ export default function useFileChanges({
 }) {
   const running = useRef(false);
   useEffect(() => {
+    let live = true;
     const stat = adapter.stat;
     if (!stat) return;
     const check = async () => {
@@ -47,10 +48,39 @@ export default function useFileChanges({
         const stamps = await stat(
           open.slice(0, MAX_PATHS).map((b) => b.file.path),
         );
-        for (const { path, stamp } of stamps) {
+        if (!live) return;
+        const changed = stamps.filter(({ path, stamp, unavailable }) => {
+          const buffer = latest.current[path];
+          return (
+            buffer &&
+            (unavailable ||
+              buffer.missing ||
+              stamp !== buffer.file.stamp ||
+              /^This file (is temporarily unavailable|could not be read consistently)/.test(
+                buffer.status ?? "",
+              ))
+          );
+        });
+        if (!changed.length) return;
+        // Sync clients often replace a file in several steps. Let the burst settle.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        if (!live) return;
+        const settled = await stat(changed.map((item) => item.path));
+        for (const { path, stamp, unavailable } of settled) {
           try {
+            if (!live) return;
             const buffer = latest.current[path];
             if (!buffer) continue;
+            if (unavailable) {
+              update(path, (old) => ({
+                ...old,
+                status:
+                  "This file is temporarily unavailable. Make cloud files available offline; your open text is preserved.",
+              }));
+              continue;
+            }
+            const first = stamps.find((item) => item.path === path);
+            if (!first || first.unavailable || first.stamp !== stamp) continue;
             if (stamp === null) {
               if (!buffer.missing)
                 update(path, (old) => ({
@@ -63,8 +93,20 @@ export default function useFileChanges({
               continue;
             }
             // A file that returns can bring back the stamp it left with.
-            if (buffer.file.stamp === stamp && !buffer.missing) continue;
+            if (buffer.file.stamp === stamp && !buffer.missing) {
+              if (
+                /^This file (is temporarily unavailable|could not be read consistently)/.test(
+                  buffer.status ?? "",
+                )
+              )
+                update(path, (old) => ({ ...old, status: "" }));
+              continue;
+            }
             const current = await adapter.read(path);
+            if (!live) {
+              release(current);
+              return;
+            }
             // Typing can land during that read, so decide from the buffer as it
             // is now. Whatever the disk holds, a draft stays.
             const now = latest.current[path];
@@ -94,7 +136,12 @@ export default function useFileChanges({
               await load(path, true, current);
             }
           } catch {
-            /* One unreadable file waits for the next check; the rest go on. */
+            if (live && latest.current[path])
+              update(path, (old) => ({
+                ...old,
+                status:
+                  "This file could not be read consistently. Your open text is preserved; Pipeline will retry.",
+              }));
           }
         }
       } catch {
@@ -107,6 +154,7 @@ export default function useFileChanges({
     const focus = () => void check();
     window.addEventListener("focus", focus);
     return () => {
+      live = false;
       clearInterval(timer);
       window.removeEventListener("focus", focus);
     };

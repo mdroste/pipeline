@@ -1,32 +1,21 @@
+import { useProjectEnvironment } from "../lib/projectEnvironment";
 import { useEffect, useRef, useState } from "react";
 import { reviewCollectionClient } from "../lib/reviewCollectionClient";
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { studioClient } from "../lib/studioClient";
-import type {
-  BuildReceipt,
-  BuildRecord,
-  ResponseRecord,
-} from "../lib/studioClient";
 import { taskClient } from "../lib/taskClient";
 import { listProjectReviewLinks } from "../lib/workbench/releaseClient";
 import { repositoryClient } from "../lib/repositoryClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import { NO_SIGNALS } from "../lib/project-overview/types";
+import {
+  NO_SIGNALS,
+  type ProjectSignals,
+  type SignalSource,
+  type SignalState,
+} from "../lib/project-overview/types";
 import { reviewsForProject } from "../lib/project-overview/projectPaths";
-import type { ProjectSignals } from "../lib/project-overview/types";
 
-/** A background data refresh reloads derived state only when it is older than this. */
-const FRESH_MS = 120_000;
-/** Returning to the overview reloads it unless it was loaded moments ago. */
-const RETURN_FRESH_MS = 10_000;
-/** Ledgers are synced for at most this many linked review collections. */
-const LEDGER_LIMIT = 3;
-
-/**
- * Loads the overview's derived state after first paint. Every source settles
- * on its own: a slow or failing one leaves its rows out instead of blocking
- * or breaking the page.
- */
+/** Independently refreshable sources; failed refreshes preserve the last known value. */
 export default function useProjectSignals({
   workspaceId,
   root,
@@ -37,129 +26,228 @@ export default function useProjectSignals({
   workspaceId: string;
   root: string | null;
   sessionIds: string[];
-  /** False for projects with nothing to derive, and while the overview is hidden. */
   enabled: boolean;
-  /** Changes whenever project data was refreshed; triggers a throttled reload. */
   stamp: unknown;
-}): {
-  signals: ProjectSignals;
-  loading: boolean;
-  reload: () => void;
-  /** Asks the Git remote for new commits; rejects with a readable message. */
-  checkRemote: () => Promise<void>;
-} {
+}) {
+  const { signals: suppliedSignals } = useProjectEnvironment();
   const [signals, setSignals] = useState<ProjectSignals>(NO_SIGNALS);
-  const [pending, setPending] = useState(0);
-  const [request, setRequest] = useState(0);
+  const [request, setRequest] = useState<{ id: number; source?: SignalSource }>(
+    { id: 0 },
+  );
   const loaded = useRef({ at: 0, request: -1, key: "" });
   const sessions = useRef(sessionIds);
   sessions.current = sessionIds;
-  // A load outlives the effect run that started it (a data refresh re-runs the
-  // effect without reloading), so staleness is tracked per load, not per run.
-  const generation = useRef(0);
+  const generations = useRef<Record<string, number>>({});
   const mounted = useRef(true);
+  const currentKey = `${workspaceId}\n${root ?? ""}`;
+  const keyRef = useRef(currentKey);
+  keyRef.current = currentKey;
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
-
-  const wasEnabled = useRef(false);
+  const previousStamp = useRef(stamp);
   useEffect(() => {
-    const returned = enabled && !wasEnabled.current;
-    wasEnabled.current = enabled;
-    if (!enabled) return;
-    const key = `${workspaceId}\n${root ?? ""}`;
-    const forced =
-      loaded.current.request !== request || loaded.current.key !== key;
-    if (
-      !forced &&
-      Date.now() - loaded.current.at < (returned ? RETURN_FRESH_MS : FRESH_MS)
-    )
-      return;
-    loaded.current = { at: Date.now(), request, key };
-    const mine = ++generation.current;
-    const live = () => mounted.current && generation.current === mine;
-    const load = <T>(source: () => Promise<T>, apply: (value: T) => void) => {
-      setPending((count) => count + 1);
-      let work: Promise<T>;
-      try {
-        work = source();
-      } catch (cause) {
-        work = Promise.reject(cause);
-      }
-      void work
+    if (previousStamp.current === stamp) return;
+    previousStamp.current = stamp;
+    if (!enabled || suppliedSignals) return;
+    const timer = setTimeout(
+      () => setRequest((old) => ({ id: old.id + 1 })),
+      250,
+    );
+    return () => clearTimeout(timer);
+  }, [stamp, enabled, suppliedSignals]);
+  useEffect(() => {
+    if (!enabled || suppliedSignals) return;
+    const changedProject = loaded.current.key !== currentKey;
+    const forced = changedProject || loaded.current.request !== request.id;
+    if (!forced && Date.now() - loaded.current.at < 10_000) return;
+    if (changedProject) setSignals(NO_SIGNALS);
+    loaded.current = { at: Date.now(), request: request.id, key: currentKey };
+    const only = !changedProject && forced ? request.source : undefined;
+    const load = <T>(
+      name: SignalSource,
+      scope: string,
+      source: () => Promise<T>,
+      apply: (value: T) => Partial<ProjectSignals>,
+      completeness: (
+        value: T,
+      ) => Pick<SignalState, "complete" | "error"> = () => ({ complete: true }),
+    ) => {
+      if (only && only !== name) return;
+      const generation = (generations.current[name] ?? 0) + 1;
+      generations.current[name] = generation;
+      const live = () =>
+        mounted.current &&
+        keyRef.current === currentKey &&
+        generations.current[name] === generation;
+      setSignals((old) => ({
+        ...old,
+        sources: {
+          ...old.sources,
+          [name]: {
+            ...old.sources?.[name],
+            state: "loading",
+            fetchedAt: old.sources?.[name]?.fetchedAt ?? null,
+            complete: old.sources?.[name]?.complete ?? false,
+            scope,
+          },
+        },
+      }));
+      void Promise.resolve()
+        .then(source)
         .then((value) => {
-          if (live()) apply(value);
+          if (live())
+            setSignals((old) => ({
+              ...old,
+              ...apply(value),
+              sources: {
+                ...old.sources,
+                [name]: {
+                  state:
+                    name === "repository" && value === null
+                      ? "not-applicable"
+                      : "ready",
+                  fetchedAt: new Date().toISOString(),
+                  scope,
+                  ...completeness(value),
+                },
+              },
+            }));
         })
-        .catch(() => undefined)
-        .finally(() => {
-          if (mounted.current) setPending((count) => count - 1);
+        .catch((error) => {
+          if (live())
+            setSignals((old) => ({
+              ...old,
+              sources: {
+                ...old.sources,
+                [name]: {
+                  state: "error",
+                  fetchedAt: old.sources?.[name]?.fetchedAt ?? null,
+                  complete: false,
+                  scope,
+                  error: workbenchErrorMessage(error),
+                },
+              },
+            }));
         });
     };
-    const set =
-      <K extends keyof ProjectSignals>(name: K) =>
-      (value: ProjectSignals[K]) =>
-        setSignals((current) => ({ ...current, [name]: value }));
-
     load(
-      () =>
-        studioClient.records<BuildRecord | BuildReceipt>(workspaceId, "build"),
-      set("builds"),
+      "builds",
+      "Build receipts in this project; document identity shown where known",
+      () => studioClient.records(workspaceId, "build"),
+      (builds) => ({ builds }),
     );
     load(
-      () => studioClient.records<ResponseRecord>(workspaceId, "response"),
-      set("responses"),
+      "responses",
+      "Response records in this project",
+      () => studioClient.records(workspaceId, "response"),
+      (responses) => ({ responses }),
     );
-    load(async () => {
-      const tasks = await taskClient.projectActivity(sessions.current);
-      const own = new Set(sessions.current);
-      return tasks.filter((task) => task.sessionId && own.has(task.sessionId));
-    }, set("automations"));
+    load(
+      "automations",
+      "Automation activity in project conversations",
+      async () => {
+        const tasks = await taskClient.projectActivity(sessions.current),
+          own = new Set(sessions.current);
+        return tasks.filter(
+          (task) => task.sessionId && own.has(task.sessionId),
+        );
+      },
+      (automations) => ({ automations }),
+    );
     if (root)
-      load(() => repositoryClient.status(workspaceId), set("repository"));
-    // Reviews are scoped the way the project's Reviews page scopes them: runs
-    // whose input lies under the attached folder, and collections holding them.
-    load(async () => {
-      const [runs, collections, links] = await Promise.all([
-        reviewHistoryClient.list(),
-        reviewCollectionClient.list(),
-        listProjectReviewLinks(workspaceId),
-      ]);
-      const own = reviewsForProject(runs, root, links);
-      const ids = new Set(own.map((run) => run.run_id));
-      if (live()) set("runs")(own);
-      const ledgers = await Promise.allSettled(
-        collections.projects
-          .filter((collection) => collection.run_ids.some((id) => ids.has(id)))
-          .slice(0, LEDGER_LIMIT)
-          .map((collection) =>
-            reviewCollectionClient.syncLedger({
-              projectId: collection.id,
-            }),
-          ),
+      load(
+        "repository",
+        "Local Git status; remote freshness is reported separately",
+        () => repositoryClient.status(workspaceId),
+        (repository) => ({ repository }),
       );
-      return ledgers.flatMap((result) =>
-        result.status === "fulfilled" ? [result.value] : [],
-      );
-    }, set("ledgers"));
-  }, [enabled, workspaceId, root, request, stamp]);
-
+    else
+      setSignals((old) => ({
+        ...old,
+        repository: null,
+        sources: {
+          ...old.sources,
+          repository: {
+            state: "not-applicable",
+            fetchedAt: null,
+            complete: true,
+            scope: "No folder attached",
+          },
+        },
+      }));
+    load(
+      "reviews",
+      "Linked review collections across this project",
+      async () => {
+        const [allRuns, collections, reviewLinks] = await Promise.all([
+          reviewHistoryClient.list(),
+          reviewCollectionClient.list(),
+          listProjectReviewLinks(workspaceId),
+        ]);
+        const runs = reviewsForProject(allRuns, root, reviewLinks),
+          ids = new Set(runs.map((run) => run.run_id));
+        const linked = collections.projects.filter((collection) =>
+          collection.run_ids.some((id) => ids.has(id)),
+        );
+        const ledgers: NonNullable<ProjectSignals["ledgers"]> = [],
+          failures: string[] = [];
+        // Read every linked collection, with bounded concurrency rather than a silent cap.
+        for (let start = 0; start < linked.length; start += 3) {
+          const batch = linked.slice(start, start + 3);
+          const results = await Promise.allSettled(
+            batch.map((collection) =>
+              reviewCollectionClient.syncLedger({ projectId: collection.id }),
+            ),
+          );
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled") ledgers.push(result.value);
+            else
+              failures.push(
+                `${batch[index].name}: ${workbenchErrorMessage(result.reason)}`,
+              );
+          });
+        }
+        return {
+          runs,
+          ledgers,
+          reviewLinks,
+          failed: failures.length,
+          total: linked.length,
+          warnings: collections.warnings ?? [],
+          failures,
+        };
+      },
+      ({ runs, ledgers, reviewLinks }) => ({ runs, ledgers, reviewLinks }),
+      (value) => ({
+        complete: !value.failed && !value.warnings.length,
+        error:
+          value.failed || value.warnings.length
+            ? `${value.total - value.failed} of ${value.total} collections loaded. ${value.failures.join("; ")}${value.warnings.length ? " Collection listing has warnings." : ""}`
+            : undefined,
+      }),
+    );
+  }, [enabled, workspaceId, root, request, suppliedSignals]);
+  const visible = suppliedSignals ?? signals;
   return {
-    signals,
-    loading: pending > 0,
-    reload: () => setRequest((value) => value + 1),
+    signals: visible,
+    loading: Object.values(visible.sources ?? {}).some(
+      (source) => source.state === "loading",
+    ),
+    reload: (source?: SignalSource) =>
+      setRequest((old) => ({ id: old.id + 1, source })),
     checkRemote: async () => {
-      setPending((count) => count + 1);
+      if (suppliedSignals) return;
+      const key = currentKey;
       try {
         const repository = await repositoryClient.fetch(workspaceId);
-        if (mounted.current)
-          setSignals((current) => ({ ...current, repository }));
+        if (mounted.current && keyRef.current === key)
+          setSignals((old) => ({ ...old, repository }));
       } catch (cause) {
         throw new Error(workbenchErrorMessage(cause));
-      } finally {
-        if (mounted.current) setPending((count) => count - 1);
       }
     },
   };

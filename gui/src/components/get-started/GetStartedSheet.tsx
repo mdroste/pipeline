@@ -127,7 +127,7 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
                     <span className="mt-2 block text-ui-label text-ink-muted">
                       {goal === "review"
                         ? "Get feedback on a paper, proposal, or presentation."
-                        : "Keep files, chats, and notes together."}
+                        : "Keep files, conversations, and notes together."}
                     </span>
                   </button>
                 ))}

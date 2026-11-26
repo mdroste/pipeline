@@ -150,6 +150,43 @@ fn download_client(https_only: bool) -> Result<reqwest::Client, String> {
         .map_err(|error| format!("Could not set up the download connection: {error}"))
 }
 
+/// Small metadata is untrusted until the caller verifies its signature. Keep
+/// the response bounded even when a CDN omits Content-Length.
+#[cfg(not(all(windows, debug_assertions)))]
+pub(super) async fn fetch_engine_metadata(url: &str, limit: usize) -> Result<Vec<u8>, String> {
+    let mut response = await_install_operation(
+        download_client(true)?
+            .get(url)
+            .timeout(Duration::from_secs(30))
+            .send(),
+    )
+    .await?
+    .map_err(|error| describe_error(source_host(url), error))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Engine metadata request failed: HTTP {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|bytes| bytes > limit as u64)
+    {
+        return Err("Engine metadata exceeds its size limit".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = await_install_operation(response.chunk())
+        .await?
+        .map_err(|error| describe_error(source_host(url), error))?
+    {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
+            return Err("Engine metadata exceeds its size limit".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 /// Download an artifact from the first source that supplies the pinned bytes.
 pub(super) async fn download_verified(
     app: &crate::emit::EventBus,

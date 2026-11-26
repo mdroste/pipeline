@@ -145,11 +145,19 @@ it("defaults an import to a new separate project and records conflicts for revie
   expect(screen.getByLabelText("New project name")).toHaveValue(
     "Coauthor (imported)",
   );
+  expect(screen.getByText("Preview import")).toBeDisabled();
+  mocks.open.mockResolvedValueOnce("/papers/coauthor");
+  fireEvent.click(screen.getByText("Choose project folder…"));
+  await screen.findByText("/papers/coauthor");
   fireEvent.click(screen.getByText("Preview import"));
   await waitFor(() =>
     expect(mocks.previewProjectExchangeImport).toHaveBeenCalledWith(
       "/tmp/coauthor.pwex",
-      { kind: "newWorkspace", name: "Coauthor (imported)", root: null },
+      {
+        kind: "newWorkspace",
+        name: "Coauthor (imported)",
+        root: "/papers/coauthor",
+      },
     ),
   );
   fireEvent.click(screen.getByText("Import"));
@@ -376,6 +384,9 @@ it("imports only into the target that was previewed", async () => {
   });
   render(<WorkspaceExchangePanel {...props()} />);
   fireEvent.click(await screen.findByText("Inspect package…"));
+  mocks.open.mockResolvedValueOnce("/papers/coauthor");
+  fireEvent.click(await screen.findByText("Choose project folder…"));
+  await screen.findByText("/papers/coauthor");
   fireEvent.click(await screen.findByText("Preview import"));
   await screen.findByText(/2 new/);
   expect(screen.getByText("Import")).toBeEnabled();

@@ -142,7 +142,7 @@ fn configured_child_owns_a_dedicated_process_group() {
     let pid = child.id();
     let process_group = unsafe { libc::getpgid(pid as i32) };
     assert_eq!(process_group, pid as i32);
-    crate::commands::kill_process(pid);
+    crate::process_tree::kill_process(pid);
     let _ = child.wait();
 }
 
@@ -479,57 +479,6 @@ fn forked_write_calls_keep_their_write_root_editable_and_lock_the_shared_workspa
     assert!(read_only.iter().any(|d| d == "Edit"));
 }
 
-#[tokio::test]
-async fn review_runs_check_the_claude_subscription_once() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    use super::claude_cli::verify_subscription_once_per_run as once_per_run;
-    use crate::deps::ResolvedCommand;
-
-    let checks = Arc::new(AtomicUsize::new(0));
-    let check = |succeed: bool| {
-        let checks = checks.clone();
-        move || async move {
-            checks.fetch_add(1, Ordering::SeqCst);
-            // Let concurrent first calls queue behind this check.
-            tokio::task::yield_now().await;
-            if succeed {
-                Ok(ResolvedCommand::direct("/opt/claude".into()))
-            } else {
-                Err("signed out".to_string())
-            }
-        }
-    };
-
-    let run = crate::run_scope::ActiveScope::begin("claude-subscription-once");
-    crate::run_scope::scoped(run.scope().clone(), async {
-        // A failed check is not remembered; the run's next call checks again.
-        assert!(once_per_run(check(false)).await.is_err());
-        let (first, second) = tokio::join!(once_per_run(check(true)), once_per_run(check(true)));
-        assert_eq!(
-            first.unwrap().program(),
-            std::path::Path::new("/opt/claude")
-        );
-        second.unwrap();
-        once_per_run(check(true)).await.unwrap();
-    })
-    .await;
-    assert_eq!(checks.load(Ordering::SeqCst), 2);
-
-    // Another run checks for itself.
-    let other = crate::run_scope::ActiveScope::begin("claude-subscription-other");
-    crate::run_scope::scoped(other.scope().clone(), once_per_run(check(true)))
-        .await
-        .unwrap();
-    assert_eq!(checks.load(Ordering::SeqCst), 3);
-
-    // Outside a run every call checks.
-    once_per_run(check(true)).await.unwrap();
-    once_per_run(check(true)).await.unwrap();
-    assert_eq!(checks.load(Ordering::SeqCst), 5);
-}
-
 /// The call supervisor's deadline kills a forked call. The researcher must be
 /// told it timed out, and no self-contained fallback may start in the cleanup
 /// window. The script stands in for the Claude CLI and logs each start.
@@ -545,7 +494,7 @@ async fn a_deadline_killed_fork_reports_a_timeout_and_starts_no_fallback() {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\ncase \"$*\" in\n  *--fork-session*) echo fork >> '{calls}'; exec sleep 30 ;;\n  *--resume*) echo fallback >> '{calls}'; exec sleep 30 ;;\n  *\"Context prepared\"*) echo warm-up >> '{calls}'; printf '%s\\n' '{{\"type\":\"result\",\"result\":\"Context prepared.\"}}' ;;\n  *) echo fallback >> '{calls}'; exec sleep 30 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$*\" in\n  *\"auth status\"*) printf '%s\\n' '{{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"forcedLoginMethod\":\"claudeai\",\"subscriptionType\":\"max\"}}'; exit 0 ;;\n  *--fork-session*) echo fork >> '{calls}'; exec sleep 30 ;;\n  *--resume*) echo fallback >> '{calls}'; exec sleep 30 ;;\n  *\"Context prepared\"*) echo warm-up >> '{calls}'; printf '%s\\n' '{{\"type\":\"result\",\"result\":\"Context prepared.\"}}' ;;\n  *) echo fallback >> '{calls}'; exec sleep 30 ;;\nesac\n",
             calls = calls.display()
         ),
     )
@@ -554,7 +503,7 @@ async fn a_deadline_killed_fork_reports_a_timeout_and_starts_no_fallback() {
 
     let run = crate::run_scope::ActiveScope::begin("claude-deadline-fork-test");
     run.scope()
-        .claude_subscription()
+        .claude_command()
         .set(crate::deps::ResolvedCommand::direct(script))
         .unwrap();
     let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
@@ -579,4 +528,17 @@ async fn a_deadline_killed_fork_reports_a_timeout_and_starts_no_fallback() {
     assert!(error.contains("timed out after 2s"), "{error}");
     let started = std::fs::read_to_string(&calls).unwrap();
     assert_eq!(started.lines().collect::<Vec<_>>(), ["warm-up", "fork"]);
+}
+
+#[test]
+fn authentication_failures_never_retry_or_use_any_fallback() {
+    let error = "[claude-auth] subscription limit; sign in with the selected billing mode";
+    assert!(!super::claude_cli::fork_failure_uses_fallback(error));
+    let failure = crate::pipeline::provider_error::Failure::from_legacy(error);
+    assert_eq!(
+        failure.kind,
+        crate::pipeline::provider_error::FailureKind::Authentication
+    );
+    assert!(failure.stops_retries());
+    assert!(!failure.permits_fallback());
 }

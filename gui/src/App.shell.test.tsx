@@ -3,6 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { router } from "./lib/router";
+import { THEME_STORAGE_KEY } from "./lib/theme";
 import { queuedRun } from "./test/queuedRunFixture";
 import {
   createAppTestFixture,
@@ -236,7 +237,7 @@ describe("App shell", () => {
     await user.click(
       await screen.findByRole("button", { name: "Use light theme" }),
     );
-    expect(localStorage.getItem("theme")).toBe("light");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
     expect(document.documentElement).not.toHaveClass("dark");
     expect(setWindowTheme).toHaveBeenLastCalledWith("light");
 
@@ -250,7 +251,7 @@ describe("App shell", () => {
     await user.click(
       await screen.findByRole("button", { name: "Use system theme" }),
     );
-    expect(localStorage.getItem("theme")).toBe("system");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
     expect(setWindowTheme).toHaveBeenLastCalledWith(null);
     expect(document.documentElement).toHaveClass("dark");
 
@@ -288,6 +289,14 @@ describe("App shell", () => {
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: "config-test",
+        runParallelOverrides: {
+          review: { provider: "claude", model: "", effort: "" },
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+          clear_settings_exceptions: true,
+          override_workflow_pins: true,
+        },
         diff: false,
         paperPath: "/tmp/test-paper.pdf",
         inputInterpretation: "document",
@@ -300,6 +309,14 @@ describe("App shell", () => {
         variables: null,
         extraInputs: null,
         expectedProfileSnapshotId: "snapshot-test",
+        runParallelOverrides: {
+          review: { provider: "claude", model: "", effort: "" },
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+          clear_settings_exceptions: true,
+          override_workflow_pins: true,
+        },
       });
       expect(enqueue).toHaveBeenCalledTimes(1);
     });

@@ -1,6 +1,6 @@
 //! Shared types and the tool-use loop for direct API calls.
 
-use crate::commands::await_or_cancel;
+use crate::cancellation::await_or_cancel;
 use serde::Serialize;
 
 /// Maximum tool-call round-trips before giving up.

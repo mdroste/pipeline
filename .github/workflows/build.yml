@@ -183,7 +183,7 @@ jobs:
         shell: bash
         run: |
           bash scripts/release/bundle-poppler.sh windows
-          cygpath -w "$PWD/gui/src-tauri/resources/poppler" >> "$GITHUB_PATH"
+          cygpath -w "$PWD/gui/src-tauri/resources/poppler/Library/bin" >> "$GITHUB_PATH"
       - name: Install Poppler for macOS PDF tests
         if: runner.os == 'macOS'
         run: brew install poppler
@@ -211,7 +211,7 @@ jobs:
           cargo build --locked --bin pipeline-gui
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             # Git Bash prepends its own tools ahead of GITHUB_PATH entries.
-            export PATH="$PWD/resources/poppler:$PATH"
+            export PATH="$PWD/resources/poppler/Library/bin:$PATH"
             pdftotext -v
             export PIPELINE_TEST_PDF_EXECUTABLE="$(cygpath -w "$PWD/target/debug/pipeline-gui.exe")"
           else

@@ -1,6 +1,6 @@
 // One open file: its toolbar and the viewer its kind selects. Heavy viewers are
 // lazy, so opening a text file never loads PDF, table or notebook code.
-import { lazy, Suspense, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { FileAdapter } from "../../lib/fileWorkspaceClient";
 import { fetchRange, streamUrl } from "../../lib/fileWorkspaceClient";
 import type { FileLocation } from "../../lib/fileLinks";
@@ -74,6 +74,27 @@ function splitPath(path: string): [string, string] {
 }
 function byteOffset(text: string, index: number) {
   return new TextEncoder().encode(text.slice(0, index)).length;
+}
+/** How long typing pauses before the preview beside the editor catches up. */
+export const SPLIT_PREVIEW_DELAY_MS = 200;
+/**
+ * The text a preview shows. Beside the editor it follows a pause in typing,
+ * because rendering a report on every keystroke makes typing lag. It starts
+ * from the current text whenever the split opens, and elsewhere it is current.
+ */
+function usePreviewText(text: string, beside: boolean) {
+  const [settled, setSettled] = useState(text);
+  const [wasBeside, setWasBeside] = useState(beside);
+  if (beside !== wasBeside) {
+    setWasBeside(beside);
+    if (beside) setSettled(text);
+  }
+  useEffect(() => {
+    if (!beside) return;
+    const timer = setTimeout(() => setSettled(text), SPLIT_PREVIEW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [text, beside]);
+  return beside ? settled : text;
 }
 export default function FilePane({
   adapter,
@@ -168,13 +189,14 @@ export default function FilePane({
     [stream],
   );
   const svgPreview = file.mime === "image/svg+xml" && file.text !== null;
+  const previewText = usePreviewText(buffer.draft, mode === "split");
   const renderedPreview = svgPreview ? (
     <img
       alt={file.path}
-      src={`data:${file.mime};charset=utf-8,${encodeURIComponent(buffer.draft)}`}
+      src={`data:${file.mime};charset=utf-8,${encodeURIComponent(previewText)}`}
     />
   ) : (
-    <ReportViewer markdown={buffer.draft} />
+    <ReportViewer markdown={previewText} />
   );
   const editor = (
     <SourceEditor

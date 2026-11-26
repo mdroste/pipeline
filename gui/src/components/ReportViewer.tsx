@@ -1,3 +1,5 @@
+import { Icon } from "../ui/icons";
+import IconButton from "../ui/IconButton";
 import { prepareReportMarkdown } from "../lib/legacyMathMarkdown";
 import PagedReport from "./report-viewer/PagedReport";
 import { REPORT_CHUNK_CHARS } from "../lib/reportChunks";
@@ -120,7 +122,7 @@ const ReportMarkdown = memo(function ReportMarkdown({
       {(fallback) => (
         <>
           {fallback && (
-            <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            <div className="mb-4 rounded border border-warning bg-warning-soft px-3 py-2 text-sm text-warning">
               Some math in this report could not be rendered — formulas are
               shown as raw LaTeX notation.
             </div>
@@ -194,6 +196,27 @@ function ReportViewerContent({
     [markdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
+  // The find bar mutates the rendered DOM (wrapping matches in <mark>), and
+  // React must never diff against a mutated tree: that throws or shows stale
+  // text. A content change therefore remounts the subtree when the find bar
+  // has highlighted it since it mounted, and otherwise updates it in place, so
+  // editing beside a live preview does not rebuild the whole report. The key
+  // is derived during render so the remount lands in the same commit as the
+  // new content.
+  const [mount, setMount] = useState({
+    markdown: normalizedMarkdown,
+    key: 0,
+    mutations: find.mutations,
+  });
+  let contentKey = mount.key;
+  if (mount.markdown !== normalizedMarkdown) {
+    contentKey = find.mutations === mount.mutations ? mount.key : mount.key + 1;
+    setMount({
+      markdown: normalizedMarkdown,
+      key: contentKey,
+      mutations: find.mutations,
+    });
+  }
   useEffect(() => {
     if (findRequest) {
       find.setOpen(true);
@@ -315,14 +338,14 @@ function ReportViewerContent({
           >
             ↓
           </button>
-          <button
-            aria-label="Close find"
+          <IconButton
+            label="Close find"
             onClick={find.close}
-            className="px-1 text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
-            title="Close (Esc)"
+
+            tooltip="Close (Esc)"
           >
-            ✕
-          </button>
+            <Icon name="close" className="h-4 w-4" />
+          </IconButton>
         </div>
       )}
       <ReportContents
@@ -384,12 +407,10 @@ function ReportViewerContent({
             {relaxedLeading ? "Compact lines" : "Relaxed lines"}
           </button>
         </div>
-        {/* Key on the content so a change fully remounts this subtree. The
-            find bar mutates these DOM nodes (wrapping matches in <mark>); a
-            remount lets React discard the mutated tree wholesale instead of
-            diffing against it, which otherwise throws or shows stale text. */}
+        {/* A new key remounts this subtree after a find-bar mutation; see
+            contentKey above. */}
         <div
-          key={normalizedMarkdown}
+          key={contentKey}
           className="report-content"
           ref={contentRef}
           style={
@@ -402,7 +423,7 @@ function ReportViewerContent({
           }
         >
           {truncationNotice && (
-            <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+            <div className="mb-4 rounded border border-warning bg-warning-soft px-3 py-2 text-sm text-warning">
               {truncationNotice}
             </div>
           )}

@@ -28,6 +28,7 @@ import {
 } from "./shared";
 
 interface Props extends SurfaceApi {
+  selectedCheckpointId?: string;
   onConversation: (text: string, checkpoint?: string) => Promise<void>;
 }
 
@@ -183,11 +184,7 @@ function AcceptanceHistory({
             {label(a.body)} · {a.body.files.length} file
             {a.body.files.length === 1 ? "" : "s"}
           </p>
-          {a.body.error && (
-            <p className="my-2 text-red-700 dark:text-red-300">
-              {a.body.error}
-            </p>
-          )}
+          {a.body.error && <p className="my-2 text-danger">{a.body.error}</p>}
           <ul className={`my-2 list-inside list-disc ${muted}`}>
             {a.body.files.map((f) => (
               <li key={f.path}>
@@ -441,6 +438,9 @@ export default function ProjectEdits(props: Props) {
   const [selectedId, setSelectedId] = useState<string>(
     data.changes[0]?.id ?? "",
   );
+  useEffect(() => {
+    if (props.selectedCheckpointId) setSelectedId(props.selectedCheckpointId);
+  }, [props.selectedCheckpointId]);
   const selected =
     data.changes.find((c) => c.id === selectedId) ?? data.changes[0];
   const paths = useMemo(

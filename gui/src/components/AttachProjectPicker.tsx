@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { Workspace } from "../lib/workbench/sessionTypes";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -18,6 +19,7 @@ export default function AttachProjectPicker({
   const [projects, setProjects] = useState<Workspace[]>([]);
   const [target, setTarget] = useState("");
   const [name, setName] = useState("");
+  const [folder, setFolder] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export default function AttachProjectPicker({
     };
   }, [attempt]);
   const proceed = async (create: boolean) => {
-    if (busyRef.current || (create ? !name.trim() : !target)) return;
+    if (busyRef.current || (create ? !name.trim() || !folder : !target)) return;
     busyRef.current = true;
     setBusy(true);
     onBusy(true);
@@ -63,6 +65,7 @@ export default function AttachProjectPicker({
       if (create) {
         const { record } = await workspaceClient.createWorkspace({
           name: name.trim(),
+          root: folder!,
           operationId: `attach-project-${crypto.randomUUID()}`,
         });
         setProjects((old) => [record, ...old]);
@@ -72,7 +75,9 @@ export default function AttachProjectPicker({
         id = record.id;
       }
       if (!(await onMove(id)))
-        setError("Couldn't move this chat. Choose the project and try again.");
+        setError(
+          "Couldn't move this conversation. Choose the project and try again.",
+        );
     } catch (cause) {
       setError(workbenchErrorMessage(cause));
     } finally {
@@ -116,7 +121,7 @@ export default function AttachProjectPicker({
             disabled={busy || !target}
             onClick={() => void proceed(false)}
           >
-            {busy ? "Moving chat…" : "Move chat and continue"}
+            {busy ? "Moving conversation…" : "Move conversation and continue"}
           </Button>
           <div className="border-t border-line pt-3">
             <label className="block">
@@ -129,9 +134,26 @@ export default function AttachProjectPicker({
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
+            <div className="mt-2">
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  void open({ directory: true, multiple: false })
+                    .then((selected) => {
+                      if (typeof selected === "string") setFolder(selected);
+                    })
+                    .catch((cause) => setError(workbenchErrorMessage(cause)));
+                }}
+              >
+                Choose folder…
+              </Button>
+              <p className="mt-1 break-words text-ink-muted">
+                {folder ?? "A folder is required for the new project."}
+              </p>
+            </div>
             <Button
               className="mt-2"
-              disabled={busy || !name.trim()}
+              disabled={busy || !name.trim() || !folder}
               onClick={() => void proceed(true)}
             >
               Create project and continue

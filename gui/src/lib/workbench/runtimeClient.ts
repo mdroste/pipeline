@@ -40,8 +40,11 @@ export const runtimeClient = {
       runtime,
     });
   },
-  claudeModelCatalog() {
-    return invoke<WorkspaceModelCatalog>("workbench_claude_model_catalog");
+  claudeModelCatalog(runtime?: "claude-code-api") {
+    return invoke<WorkspaceModelCatalog>(
+      "workbench_claude_model_catalog",
+      runtime ? { runtime } : undefined,
+    );
   },
   validateModelSelection(model: string, effort: string | null) {
     return invoke<WorkspaceModel>("workbench_codex_validate_model_selection", {

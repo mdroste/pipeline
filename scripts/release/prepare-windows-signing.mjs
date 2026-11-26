@@ -4,15 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const LLAMA_VULKAN_RESOURCES = "resources/llama-vulkan/**/*";
-
 export function windowsSigningConfig(root, baseResources) {
   return {
     bundle: {
       createUpdaterArtifacts: true,
-      // Tauri replaces arrays when it merges a configuration. The Vulkan bundle
-      // is Windows-only, so it joins the shared list here.
-      resources: [...baseResources, LLAMA_VULKAN_RESOURCES],
+      // GPU recognition is a separately signed engine download.
+      resources: [...baseResources],
       windows: {
         signCommand: {
           cmd: "pwsh",

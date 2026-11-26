@@ -113,10 +113,26 @@ async fn declaude_dispatch_retries_invalid_quotes_and_incomplete_verification() 
         let config: PipelineConfig = profile.into();
         let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
         let empty = Default::default();
-        let result = crate::pipeline::executor::execute_steps(
-            &app, &config, survey.to_str().unwrap(), &brief, paper.to_str().unwrap(), "", "", "", "",
-            &empty, &empty, &empty, &Default::default(), Some(artifacts.to_str().unwrap()), &settings, None,
-        ).await.unwrap();
+        let result = crate::pipeline::executor::execute_steps(crate::pipeline::executor::ExecutionRequest {
+ app: &app,
+ config: &config,
+ variables: &empty,
+ extra_inputs: &empty,
+ extra_input_sources: &empty,
+ preloaded: &Default::default(),
+ write_dir: Some(artifacts.to_str().unwrap()),
+ settings: &settings,
+ author_note: None,
+ sources: crate::pipeline::executor::ExecutionSources {
+ orientation_path: survey.to_str().unwrap(),
+ orientation_value: &brief,
+ paper_text_path: paper.to_str().unwrap(),
+ document_bundle_path: "",
+ source_path: "",
+ paper_type: "",
+ survey_hint: "",
+ }
+}).await.unwrap();
         assert!(result.failed_steps.is_empty(), "{:?}", result.failed_steps);
         let proposal = result.outputs.iter().find(|output| output.step_id == "declaude_referee_1").unwrap();
         let final_output = result.outputs.iter().find(|output| output.step_id == "declaude_report").unwrap();

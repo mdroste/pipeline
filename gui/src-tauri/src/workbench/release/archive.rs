@@ -13,6 +13,7 @@ mod format;
 mod inspection;
 mod omissions;
 mod portable;
+mod project_copies;
 mod restore;
 mod transcripts;
 

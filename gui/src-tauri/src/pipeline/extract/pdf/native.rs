@@ -24,7 +24,7 @@ pub(crate) fn extract_pdftotext(path: &Path) -> Result<String, String> {
     let output = run_bounded_output(
         command,
         "pdftotext",
-        std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
+        std::time::Duration::from_secs(crate::settings::load().pdf_extraction_timeout_secs),
         crate::pipeline::claude::MAX_STDOUT_BYTES,
         None,
     )?;

@@ -8,7 +8,13 @@ export interface SelectOption<T extends string = string> {
   value: T;
   label: string;
   description?: string;
+  /** Short tag shown beside the label, such as "Default". */
+  badge?: string;
   disabled?: boolean;
+}
+
+function OptionBadge({ text }: { text?: string }) {
+  return text ? <span className="ui-select-badge">{text}</span> : null;
 }
 
 /**
@@ -86,10 +92,13 @@ export default function Select<T extends string = string>({
         }}
         className={`ui-select-trigger flex min-w-0 items-center justify-between gap-2 text-left ${className}`}
       >
-        <span
-          className={`min-w-0 truncate ${selected ? "" : "text-ink-muted"}`}
-        >
-          {selected?.label ?? (value || placeholder)}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span
+            className={`min-w-0 truncate ${selected ? "" : "text-ink-muted"}`}
+          >
+            {selected?.label ?? (value || placeholder)}
+          </span>
+          <OptionBadge text={selected?.badge} />
         </span>
         <Icon
           name="chevron-down"
@@ -125,7 +134,10 @@ export default function Select<T extends string = string>({
             }`}
           >
             <span className="min-w-0 flex-1">
-              <span className="block truncate">{option.label}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">{option.label}</span>
+                <OptionBadge text={option.badge} />
+              </span>
               {option.description && (
                 <span className="mt-0.5 block text-ui-meta text-ink-muted">
                   {option.description}

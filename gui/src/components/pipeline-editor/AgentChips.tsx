@@ -47,7 +47,7 @@ function AgentChips({
               }}
               className={`px-3 py-1 text-xs rounded-full border transition-colors ${
                 active
-                  ? "bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 border-gray-900 dark:border-gray-100"
+                  ? "ui-selected"
                   : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500"
               }`}
             >

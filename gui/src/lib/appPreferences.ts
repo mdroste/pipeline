@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from "react";
 import { restoreRoute, type AppRoute } from "./router";
+import { typefaceOption, type Typeface } from "./typefaces";
 
 /** Device presentation preferences. Never part of a Review or conversation runtime. */
 export interface AppPreferences {
   version: 1;
   interfaceScale: number;
   reportScale: number;
+  typeface: Typeface;
   editorFontSize: number;
   editorWrap: boolean;
   density: "comfortable" | "compact";
@@ -24,6 +26,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   version: 1,
   interfaceScale: 100,
   reportScale: 100,
+  typeface: "inter",
   editorFontSize: 13,
   editorWrap: false,
   density: "comfortable",
@@ -65,6 +68,7 @@ export function parsePreferences(raw: string | null): AppPreferences {
     if (typeof value[key] === "number" && Number.isFinite(value[key]))
       next[key] = Math.max(min, Math.min(max, Math.round(value[key])));
   if (value.density === "compact") next.density = "compact";
+  next.typeface = typefaceOption(value.typeface).value;
   if (value.sendShortcut === "mod-enter") next.sendShortcut = "mod-enter";
   if (value.startup === "restore") next.startup = "restore";
   return next;

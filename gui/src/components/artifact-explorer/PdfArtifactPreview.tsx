@@ -111,8 +111,8 @@ export function PdfView({
         {previewError ? (
           <div
             role="alert"
-            className="mx-auto mt-8 max-w-lg rounded-lg border border-red-200 bg-red-50 p-4
-                                       text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+            className="mx-auto mt-8 max-w-lg rounded-lg border border-danger bg-danger-soft p-4
+                                       text-sm text-danger   "
           >
             <p className="font-medium">
               Could not render this PDF in Pipeline.
@@ -124,8 +124,8 @@ export function PdfView({
                 previewCache.current.delete(page);
                 setAttempt((value) => value + 1);
               }}
-              className="mt-3 rounded border border-red-300 px-2 py-1 text-xs hover:bg-red-100
-                         dark:border-red-800 dark:hover:bg-red-900/40"
+              className="mt-3 rounded border border-danger px-2 py-1 text-xs hover:bg-danger-soft
+                          "
             >
               Retry
             </button>

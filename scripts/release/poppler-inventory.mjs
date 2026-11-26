@@ -5,6 +5,11 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const filename = "BUNDLE_INVENTORY.json";
+export function popplerBinary(root, tool, windows = process.platform === "win32") {
+  const name = tool + (windows ? ".exe" : "");
+  const directories = windows ? ["Library/bin", "bin", ""] : [""];
+  return directories.map(directory => path.join(root, directory, name)).find(file => fs.existsSync(file)) ?? path.join(root, name);
+}
 export function inventoryFiles(root) {
   const files = [];
   function walk(folder) {
@@ -28,7 +33,7 @@ export function verifyInventory(root) {
   return recorded;
 }
 export function writeInventory(root, platform = process.platform) {
-  const binary = path.join(root, platform === "windows" || platform === "win32" ? "pdftotext.exe" : "pdftotext");
+  const binary = popplerBinary(root, "pdftotext", platform === "windows" || platform === "win32");
   const child = spawnSync(binary, ["-v"], { encoding: "utf8", timeout: 15000, maxBuffer: 65536 });
   if (child.error || child.status !== 0) throw new Error(`Cannot identify bundled Poppler: ${child.error || child.stderr}`);
   return writeObservedInventory(root, platform, `${child.stdout}\n${child.stderr}`);

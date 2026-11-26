@@ -1,4 +1,5 @@
 use super::*;
+mod context;
 mod file_operations;
 mod ignored_paths;
 #[cfg(unix)]
@@ -175,7 +176,7 @@ fn editor_saves_are_conflict_aware_reversible_and_task_scoped() {
         .unwrap()
         .records
         .is_empty());
-    let copies = fs::read_dir(f.root.join(".pipeline-tasks"))
+    let copies = fs::read_dir(f.store.root_path().join("project-copies").join(&f.ws))
         .map(|entries| {
             entries
                 .flatten()
@@ -567,7 +568,7 @@ async fn durable_job_does_not_hold_database_workers_and_cancels_descendants() {
         let ws = f.ws.clone();
         tokio::time::timeout(
             Duration::from_secs(1),
-            crate::workbench::commands::run_store_owned(store, move |store| store.workspace(&ws)),
+            crate::workbench::runtime::run_store_owned(store, move |store| store.workspace(&ws)),
         )
         .await
         .unwrap()
@@ -898,4 +899,29 @@ fn build_configuration_belongs_to_one_document() {
     let separate = save_build(&f.store, &f.ws, None, 0, config).unwrap();
     assert_ne!(saved.id, separate.id);
     assert_eq!(separate.body["config"]["documentId"], conference.paper.id);
+}
+
+#[test]
+fn shared_studio_contract_fixture_matches_native_actions_and_unchanged_save() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../../tests/fixtures/workbench/studio-contracts-v1.json"
+    ))
+    .unwrap();
+    for key in ["saveText", "saveBuild", "saveResponse"] {
+        let action: super::StudioAction = serde_json::from_value(fixture[key].clone()).unwrap();
+        assert_eq!(serde_json::to_value(action).unwrap(), fixture[key]);
+    }
+    let f = crate::workbench::project::test_support::fixture();
+    std::fs::write(f.root.join("main.tex"), "Draft\n").unwrap();
+    let action: super::StudioAction = serde_json::from_value(fixture["saveText"].clone()).unwrap();
+    let result = super::studio_mutate(
+        &f.store,
+        super::StudioMutation {
+            workspace_id: f.ws,
+            operation_id: "fixture-save".into(),
+            action,
+        },
+    )
+    .unwrap();
+    assert_eq!(result, fixture["unchanged"]);
 }

@@ -1,8 +1,9 @@
-use super::codex::{
-    close_abandoned_turns, open_thread, refuse_unsupported_request, stop_codex, BridgeEvents,
-};
 use super::*;
 use crate::agent_runtime::events::NormalizedEvent;
+use crate::workbench::runtime::codex::{
+    close_abandoned_turns, refuse_unsupported_request, stop_codex, BridgeEvents,
+};
+use crate::workbench::runtime::submission::open_thread;
 use crate::workbench::store::SessionBinding;
 use crate::workbench::store::{
     CreateSessionRequest, DeleteSessionRequest, MoveSessionRequest, Store, UpdateSessionRequest,
@@ -97,11 +98,20 @@ fn approval_card_epoch_is_claimed_once_even_when_ids_are_reused() {
         result: Some(json!({"decision":"accept"})),
         decline_message: None,
     };
-    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_err());
+    assert!(
+        crate::workbench::runtime::codex::claim_pending_request(&mut registry, &response, 8)
+            .is_err()
+    );
     assert_eq!(registry.len(), 1);
     response.epoch = 8;
-    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_ok());
-    assert!(codex::claim_pending_request(&mut registry, &response, 8).is_err());
+    assert!(
+        crate::workbench::runtime::codex::claim_pending_request(&mut registry, &response, 8)
+            .is_ok()
+    );
+    assert!(
+        crate::workbench::runtime::codex::claim_pending_request(&mut registry, &response, 8)
+            .is_err()
+    );
 }
 
 #[test]
@@ -131,12 +141,13 @@ fn lag_recovery_requires_the_exact_terminal_turn() {
         {"id":"current","status":"inProgress","items":[],"itemsView":"notLoaded"},
         {"id":"old","status":"completed","items":[],"itemsView":"notLoaded"}
     ]});
-    assert!(codex::recovered_terminal(&recent, "current").is_none());
-    assert!(codex::recovered_terminal(&recent, "missing").is_none());
-    assert!(codex::recovered_terminal(&json!({}), "current").is_none());
+    assert!(crate::workbench::runtime::codex::recovered_terminal(&recent, "current").is_none());
+    assert!(crate::workbench::runtime::codex::recovered_terminal(&recent, "missing").is_none());
+    assert!(crate::workbench::runtime::codex::recovered_terminal(&json!({}), "current").is_none());
     let complete = json!({"data":[{"id":"current","status":"interrupted","items":[]}]});
     assert_eq!(
-        codex::recovered_terminal(&complete, "current").unwrap()["status"],
+        crate::workbench::runtime::codex::recovered_terminal(&complete, "current").unwrap()
+            ["status"],
         "interrupted"
     );
 }

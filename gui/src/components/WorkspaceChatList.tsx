@@ -12,6 +12,8 @@ import useModalDialog from "../hooks/useModalDialog";
 import type { WorkbenchSession } from "../lib/workbench/sessionTypes";
 import { ConversationMenu } from "./WorkspaceConversationActions";
 import Badge from "../ui/Badge";
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 
 export const ProjectChatsContext = createContext<ReactNode>(null);
 export function ProjectChatsOutlet({ fallback }: { fallback: ReactNode }) {
@@ -36,15 +38,15 @@ export function UnfiledChatsDialog({
         ref={ref}
         role="dialog"
         aria-modal="true"
-        aria-label="Unfiled chats"
+        aria-label="Unfiled conversations"
         tabIndex={-1}
         className="workspace-tool-picker"
       >
         <div className="workspace-picker-heading">
           <h2>No project</h2>
-          <button type="button" aria-label="Close chats" onClick={onClose}>
-            ×
-          </button>
+          <IconButton label="Close conversations" onClick={onClose}>
+            <Icon name="close" />
+          </IconButton>
         </div>
         {children}
       </div>
@@ -88,10 +90,10 @@ export default function WorkspaceChatList({
       s.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
   );
   return (
-    <section aria-label="Chats" className="focused-page">
+    <section aria-label="Conversations" className="focused-page">
       <header>
         <div>
-          <h1>Chats</h1>
+          <h1>Conversations</h1>
           <p>Conversations and their working drafts.</p>
         </div>
         {onCreateSession && (
@@ -101,20 +103,24 @@ export default function WorkspaceChatList({
             disabled={disabled}
             onClick={onCreateSession}
           >
-            New chat
+            New conversation
           </button>
         )}
       </header>
       <input
         className="focused-search"
         type="search"
-        aria-label="Find a chat"
-        placeholder="Find a chat…"
+        aria-label="Find a conversation"
+        placeholder="Find a conversation…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
       {onArchived && (
-        <div className="focused-tabs" role="group" aria-label="Show chats">
+        <div
+          className="focused-tabs"
+          role="group"
+          aria-label="Show conversations"
+        >
           {["Current", "Archived"].map((label, i) => (
             <button
               type="button"
@@ -141,7 +147,7 @@ export default function WorkspaceChatList({
               <strong>{session.title}</strong>
               <small>
                 {[
-                  session.id === sessionId ? "Current chat" : null,
+                  session.id === sessionId ? "Current conversation" : null,
                   session.draft ? "Unsent draft" : null,
                 ]
                   .filter(Boolean)
@@ -169,9 +175,9 @@ export default function WorkspaceChatList({
       {!listed.length && (
         <p role="status">
           {query
-            ? "No matching chats on these pages."
+            ? "No matching conversations on these pages."
             : showArchived
-              ? "No archived chats on these pages."
+              ? "No archived conversations on these pages."
               : "No conversations yet."}
         </p>
       )}

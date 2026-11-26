@@ -115,24 +115,26 @@ async fn review(note: &str, cached: bool) -> Vec<String> {
             variables: vec![],
         };
         let empty = Default::default();
-        let result = execute_steps(
-            &app,
-            &config,
-            "",
-            &Value::Null,
-            paper.to_str().unwrap(),
-            "",
-            "",
-            "",
-            "",
-            &empty,
-            &empty,
-            &empty,
-            &Default::default(),
-            None,
-            &settings,
-            Some(note),
-        )
+        let result = execute_steps(crate::pipeline::executor::ExecutionRequest {
+            app: &app,
+            config: &config,
+            variables: &empty,
+            extra_inputs: &empty,
+            extra_input_sources: &empty,
+            preloaded: &Default::default(),
+            write_dir: None,
+            settings: &settings,
+            author_note: Some(note),
+            sources: crate::pipeline::executor::ExecutionSources {
+                orientation_path: "",
+                orientation_value: &Value::Null,
+                paper_text_path: paper.to_str().unwrap(),
+                document_bundle_path: "",
+                source_path: "",
+                paper_type: "",
+                survey_hint: "",
+            },
+        })
         .await
         .unwrap();
         assert!(result.failed_steps.is_empty(), "{:?}", result.failed_steps);

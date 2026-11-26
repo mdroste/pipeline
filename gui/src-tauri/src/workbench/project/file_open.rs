@@ -207,16 +207,94 @@ pub fn open_workspace_file(
     if request.revision_id.is_some() {
         return captured_preview(store, request);
     }
-    if request.checkpoint_id.is_some() && request.path.is_empty() {
-        return Err(WorkbenchError::invalid("Choose a file"));
+    WorkspaceOpen::prepare(store, request)?
+        .read()?
+        .finish(store)
+}
+
+/// Pin the authorized directory before yielding database capacity. Reads use
+/// this descriptor; final validation refuses moved/replaced or withdrawn scopes.
+pub(crate) struct WorkspaceOpen {
+    request: FileReadRequest,
+    folder: PathBuf,
+    identity: String,
+    safe: SafeRoot,
+}
+pub(crate) struct OpenedWorkspaceFile {
+    scope: WorkspaceOpen,
+    preview: Option<FilePreview>,
+}
+impl WorkspaceOpen {
+    pub(crate) fn prepare(store: &Store, request: FileReadRequest) -> WorkbenchResult<Self> {
+        scope(store, &request.workspace_id)?;
+        if request.revision_id.is_some() {
+            return Err(WorkbenchError::invalid("Expected a working file"));
+        }
+        if request.checkpoint_id.is_some() && request.path.is_empty() {
+            return Err(WorkbenchError::invalid("Choose a file"));
+        }
+        files::relative(&request.path)?;
+        let folder = base(
+            store,
+            &request.workspace_id,
+            request.checkpoint_id.as_deref(),
+        )?;
+        let identity = crate::workbench::store::root_identity(&folder)?;
+        let safe = SafeRoot::open(&folder)?;
+        Ok(Self {
+            request,
+            folder,
+            identity,
+            safe,
+        })
     }
-    files::relative(&request.path)?;
-    let folder = base(
-        store,
-        &request.workspace_id,
-        request.checkpoint_id.as_deref(),
-    )?;
-    open_scoped_file(folder, request.path, true)
+    pub(crate) fn read(self) -> WorkbenchResult<OpenedWorkspaceFile> {
+        if crate::workbench::store::root_identity(&self.folder)? != self.identity {
+            return Err(WorkbenchError::conflict(
+                "Project folder changed while opening the file",
+            ));
+        }
+        let preview = open_scoped_file_at(
+            self.folder.clone(),
+            self.request.path.clone(),
+            true,
+            &self.safe,
+        )?;
+        Ok(OpenedWorkspaceFile {
+            scope: self,
+            preview: Some(preview),
+        })
+    }
+}
+impl OpenedWorkspaceFile {
+    pub(crate) fn finish(mut self, store: &Store) -> WorkbenchResult<FilePreview> {
+        scope(store, &self.scope.request.workspace_id)?;
+        let folder = base(
+            store,
+            &self.scope.request.workspace_id,
+            self.scope.request.checkpoint_id.as_deref(),
+        )?;
+        if folder != self.scope.folder
+            || crate::workbench::store::root_identity(&folder)? != self.scope.identity
+        {
+            return Err(WorkbenchError::conflict(
+                "Project folder changed while opening the file",
+            ));
+        }
+        Ok(self.preview.take().expect("prepared preview"))
+    }
+}
+impl Drop for OpenedWorkspaceFile {
+    fn drop(&mut self) {
+        // Cancelled callers and failed final validation never receive the token.
+        if let Some(token) = self
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.stream_token.as_ref())
+        {
+            file_stream::revoke(token);
+        }
+    }
 }
 
 /// Conversation files use the same viewers but resolve against the runtime
@@ -274,11 +352,22 @@ fn open_scoped_file(
     path: String,
     allow_edit: bool,
 ) -> WorkbenchResult<FilePreview> {
-    let (mut file, stat) = SafeRoot::open(&folder)?.open_read(&path)?.ok_or_else(|| {
+    let safe = SafeRoot::open(&folder)?;
+    open_scoped_file_at(folder, path, allow_edit, &safe)
+}
+
+fn open_scoped_file_at(
+    folder: PathBuf,
+    path: String,
+    allow_edit: bool,
+    safe: &SafeRoot,
+) -> WorkbenchResult<FilePreview> {
+    let (mut file, stat) = safe.open_read(&path)?.ok_or_else(|| {
         let mut error = WorkbenchError::invalid(format!("Missing file: {path}"));
         error.code = "file_missing".into();
         error
     })?;
+    files::ensure_available(&file)?;
     let mut head = Vec::new();
     Read::by_ref(&mut file)
         .take(HEAD)
@@ -297,6 +386,15 @@ fn open_scoped_file(
             Ok::<_, WorkbenchError>(bytes)
         })
         .transpose()?;
+    if safe.stat(&path)?.as_ref().map(|entry| entry.stamp()) != Some(stat.stamp())
+        || whole
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() as u64 != stat.size)
+    {
+        return Err(WorkbenchError::conflict(
+            "File changed while opening; retry when synchronization finishes",
+        ));
+    }
     let hash = whole.as_deref().map_or_else(|| stat.stamp(), hash);
     let (text, truncated, lossy, text_bytes) = if !textual {
         (None, false, false, None)
@@ -328,6 +426,11 @@ fn open_scoped_file(
         _ => None,
     };
     let streamed = presentation.is_some() && found.mime != "image/svg+xml";
+    if safe.stat(&path)?.as_ref().map(|entry| entry.stamp()) != Some(stat.stamp()) {
+        return Err(WorkbenchError::conflict(
+            "File changed while reading its preview; retry after synchronization settles",
+        ));
+    }
     let stream_token = streamed
         .then(|| {
             file_stream::issue(
@@ -373,6 +476,88 @@ fn open_scoped_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abandoned_and_withdrawn_scope_previews_revoke_their_unpublished_tokens() {
+        let f = super::super::test_support::fixture();
+        fs::write(f.root.join("page.html"), "<html>preview</html>").unwrap();
+        let open = || {
+            WorkspaceOpen::prepare(
+                &f.store,
+                FileReadRequest {
+                    workspace_id: f.ws.clone(),
+                    path: "page.html".into(),
+                    checkpoint_id: None,
+                    revision_id: None,
+                },
+            )
+            .unwrap()
+            .read()
+            .unwrap()
+        };
+        let opened = open();
+        let token = opened
+            .preview
+            .as_ref()
+            .unwrap()
+            .stream_token
+            .clone()
+            .unwrap();
+        drop(opened);
+        let gone = |token: &str| {
+            let request = tauri::http::Request::builder()
+                .uri(format!("pipeline-file://localhost/{token}"))
+                .body(Vec::new())
+                .unwrap();
+            assert_eq!(
+                file_stream::handle(&request, true, None).status(),
+                tauri::http::StatusCode::GONE
+            );
+        };
+        gone(&token);
+        let opened = open();
+        let token = opened
+            .preview
+            .as_ref()
+            .unwrap()
+            .stream_token
+            .clone()
+            .unwrap();
+        f.store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE workspaces SET archived_at='now' WHERE id=?1",
+                [&f.ws],
+            )
+            .unwrap();
+        assert!(opened.finish(&f.store).is_err());
+        gone(&token);
+    }
+
+    #[test]
+    fn staged_working_file_read_keeps_the_same_preview_and_hash() {
+        let f = super::super::test_support::fixture();
+        let source = "Résumé 😀\r\n".repeat(1000);
+        fs::write(f.root.join("paper.txt"), &source).unwrap();
+        let request = FileReadRequest {
+            workspace_id: f.ws.clone(),
+            path: "paper.txt".into(),
+            checkpoint_id: None,
+            revision_id: None,
+        };
+        let actual = WorkspaceOpen::prepare(&f.store, request)
+            .unwrap()
+            .read()
+            .unwrap()
+            .finish(&f.store)
+            .unwrap();
+        assert_eq!(actual.text.as_deref(), Some(source.as_str()));
+        assert_eq!(actual.bytes, source.len());
+        assert_eq!(actual.hash, hash(source.as_bytes()));
+        assert!(!actual.truncated);
+        assert!(!actual.approximate_text);
+    }
 
     #[test]
     fn bytes_win_over_names() {

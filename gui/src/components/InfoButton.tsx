@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import { useId, useRef, useState } from "react";
 import IconButton from "../ui/IconButton";
 import Popover from "../ui/Popover";
@@ -27,18 +28,7 @@ export default function InfoButton({ label, children }: Props) {
         aria-controls={dialogId}
         onClick={() => setOpen((value) => !value)}
       >
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          className="h-3.5 w-3.5"
-        >
-          <path
-            fillRule="evenodd"
-            d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-10.75a.75.75 0 00-1.5 0v.1a.75.75 0 001.5 0v-.1zm0 2.75a.75.75 0 00-1.5 0v3a.75.75 0 001.5 0v-3z"
-            clipRule="evenodd"
-          />
-        </svg>
+        <Icon name="info" className="h-3.5 w-3.5" />
       </IconButton>
       <Popover
         id={dialogId}

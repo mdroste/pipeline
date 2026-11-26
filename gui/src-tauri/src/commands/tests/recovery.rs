@@ -92,26 +92,29 @@ async fn resume_reuses_a_pipeline_check_and_the_steps_that_read_it() {
     let no_values = std::collections::HashMap::new();
     let mut analyzer_only = config.clone();
     analyzer_only.steps.truncate(1);
-    let result = crate::pipeline::executor::execute_steps(
-        &bus,
-        &analyzer_only,
-        "",
-        &serde_json::Value::Null,
-        paper.to_str().unwrap(),
-        "",
-        paper.to_str().unwrap(),
-        "",
-        "",
-        &no_values,
-        &no_values,
-        &no_values,
-        &Default::default(),
-        None,
-        &crate::settings::Settings::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let result =
+        crate::pipeline::executor::execute_steps(crate::pipeline::executor::ExecutionRequest {
+            app: &bus,
+            config: &analyzer_only,
+            variables: &no_values,
+            extra_inputs: &no_values,
+            extra_input_sources: &no_values,
+            preloaded: &Default::default(),
+            write_dir: None,
+            settings: &crate::settings::Settings::default(),
+            author_note: None,
+            sources: crate::pipeline::executor::ExecutionSources {
+                orientation_path: "",
+                orientation_value: &serde_json::Value::Null,
+                paper_text_path: paper.to_str().unwrap(),
+                document_bundle_path: "",
+                source_path: paper.to_str().unwrap(),
+                paper_type: "",
+                survey_hint: "",
+            },
+        })
+        .await
+        .unwrap();
     assert!(result.failed_steps.is_empty(), "{:?}", result.failed_steps);
 
     let mut outputs = result.outputs;

@@ -56,11 +56,11 @@ pub fn model_price(model: &str) -> Option<(f64, f64)> {
         .map(|(_, i, o)| (*i, *o))
 }
 
-/// Whether a provider ran through a direct API (metered) rather than a
-/// subscription CLI. Both transports receive a labelled API-list-price
-/// estimate, but only the direct API amount approximates token-metered spend.
+/// Whether the selected connection uses API billing, including native Claude
+/// Code Console login. List-price estimates remain estimates of token spend.
 pub(super) fn provider_in_api_mode(settings: &Settings, provider: &str) -> bool {
     settings.model_transport(provider) == "api"
+        || (matches!(provider, "claude" | "") && settings.claude_access_mode == "code_api")
 }
 
 /// Cache-token list prices when Pipeline can identify the provider family.
@@ -489,9 +489,22 @@ pub(super) fn render_run_summary(report: &PipelineReport, settings: &Settings) -
     }
     if any_cost {
         md.push_str(
-            "*Cost is an estimate at published API list prices for steps run through a direct API. \
+            "*Cost is an estimate at published API list prices for API-billed steps. \
              It does not reflect subscription-plan billing.*\n\n",
         );
     }
     Some(md)
+}
+
+#[cfg(test)]
+#[test]
+fn native_claude_console_usage_is_api_billed_in_reports() {
+    let mut settings = Settings {
+        anthropic_api_key: "stored-key".into(),
+        ..Default::default()
+    };
+    assert!(!provider_in_api_mode(&settings, "claude"));
+    settings.claude_access_mode = "code_api".into();
+    assert!(provider_in_api_mode(&settings, "claude"));
+    assert_eq!(settings.model_transport("claude"), "cli");
 }

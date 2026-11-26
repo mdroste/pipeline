@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { confirmDialog } from "../components/DialogService";
 
 export interface RestartWork {
   unsavedChanges: boolean;
@@ -30,13 +29,17 @@ export function restartWarning(work: RestartWork): string | null {
 /** Ask before a restart that would interrupt work. */
 export async function confirmUpdateRestart(
   work: Omit<RestartWork, "automations">,
+  confirmRestart: (
+    message: string,
+    options: { title: string; confirmLabel: string; destructive: boolean },
+  ) => Promise<boolean>,
 ): Promise<boolean> {
   const automations = await invoke<number>("update_running_automations").catch(
     () => 0,
   );
   const warning = restartWarning({ ...work, automations: automations > 0 });
   if (!warning) return true;
-  return confirmDialog(warning, {
+  return confirmRestart(warning, {
     title: "Restart Pipeline now?",
     confirmLabel: "Restart now",
     destructive: true,

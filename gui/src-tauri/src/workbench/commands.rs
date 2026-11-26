@@ -1,97 +1,25 @@
 //! Thin asynchronous Tauri facade for the blocking Workbench research store.
 
 use super::store::{ReconcileResult, WorkbenchError, WorkbenchResult};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex as StdMutex;
-use tauri::Emitter;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeCommandError {
-    code: String,
-    message: String,
-    retryable: bool,
-    recovery: Option<String>,
-}
-
-impl From<WorkbenchError> for RuntimeCommandError {
-    fn from(error: WorkbenchError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            retryable: error.retryable,
-            recovery: error.recovery,
-        }
-    }
-}
-
-impl From<super::codex::RequestError> for RuntimeCommandError {
-    fn from(error: super::codex::RequestError) -> Self {
-        Self {
-            code: error.code,
-            message: error.message,
-            retryable: error.retryable,
-            recovery: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SendTurnRequest {
-    pub(crate) session_id: String,
-    pub(crate) text: String,
-    pub(crate) client_submission_id: String,
-    pub(crate) model: Option<String>,
-    pub(crate) effort: Option<String>,
-}
-
-impl SendTurnRequest {
-    // Explicit automation model choices do not inherit another model's effort.
-    fn inherit_selection(&mut self, overrides: &Value) {
-        if self.model.is_none() {
-            self.model = overrides["model"].as_str().map(str::to_owned);
-            if self.effort.is_none() {
-                self.effort = overrides["effort"].as_str().map(str::to_owned);
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SendTurnResult {
-    pub(crate) epoch: u64,
-    pub(crate) thread_id: String,
-    pub(crate) turn_id: String,
-    pub(crate) draft_cleared: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolveServerRequest {
-    epoch: u64,
-    request_id: Value,
-    method: String,
-    result: Option<Value>,
-    decline_message: Option<String>,
-}
-
 mod active_turn;
-mod chat_approval;
 pub(crate) mod codex;
 mod desk;
 mod project;
+mod project_integrations;
 mod research;
 mod sessions;
-mod storage_gate;
 mod tasks;
 mod titles;
 mod version_control;
@@ -104,36 +32,39 @@ mod tests;
 #[cfg(test)]
 use crate::agent_runtime::codex::is_safe_auth_url;
 #[cfg(test)]
-use active_turn::ActiveTurnState;
-use codex::validate_pending_request;
+use crate::workbench::runtime::admission::ActiveTurnState;
 #[cfg(test)]
-use codex::validate_server_response;
+use crate::workbench::runtime::codex::validate_pending_request;
+#[cfg(test)]
+use crate::workbench::runtime::codex::validate_server_response;
 
 use super::transcript_text::transcript_text;
 pub use active_turn::*;
-use active_turn::{
-    active_turn_state, close_active_connection, complete_active_turn, turn_queue, TurnOrigin,
-};
-pub(crate) use chat_approval::has_saved_chat_approval;
-use codex::ensure_event_bridge;
 pub use codex::*;
 pub use desk::*;
 pub use project::*;
+pub use project_integrations::*;
 pub use research::*;
 pub use version_control::*;
 
-pub(crate) use sessions::clear_sent_draft;
+#[cfg(test)]
+use sessions::default_session_overrides;
 pub use sessions::*;
-#[cfg(test)]
-use sessions::{clear_sent_draft_with, default_session_overrides};
 use sessions::{conversation_turn_permit, ensure_session_idle};
-use storage_gate::{run_storage_maintenance, run_store_exclusive};
-pub(crate) use storage_gate::{run_store, run_store_owned};
-#[cfg(test)]
-use storage_gate::{storage_turn_permit, DATABASE_GATE, DATABASE_WORKER_LIMIT};
-pub(crate) use tasks::{deliver_task, task_pending_request};
+pub(crate) use tasks::deliver_task;
 pub use titles::*;
-pub(crate) use titles::{spawn_title_generation, TitleRuntime};
 pub use workspaces::*;
 
-pub(crate) use active_turn::research_team_permit;
+#[cfg(test)]
+use crate::workbench::runtime::{
+    accept_local_turn, clear_sent_draft, clear_sent_draft_with, complete_active_turn,
+    finish_local_turn, run_store_owned, storage_turn_permit, ResolveServerRequest, DATABASE_GATE,
+    DATABASE_WORKER_LIMIT,
+};
+use crate::workbench::runtime::{
+    active_turn_state, run_storage_maintenance, run_store, run_store_exclusive, turn_queue,
+    ActiveTurn, RuntimeCommandError, SendTurnRequest, SendTurnResult,
+};
+
+#[cfg(test)]
+use crate::workbench::runtime::turn_has_live_owner;

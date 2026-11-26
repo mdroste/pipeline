@@ -1,3 +1,4 @@
+import "../ui/page.css";
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { reportExportClient } from "../lib/reportExportClient";
 import { artifactClient } from "../lib/artifactClient";
@@ -47,9 +48,9 @@ function DiffBlock({ ops }: { ops: DiffOp[] }) {
           key={i}
           className={`block ${
             op.type === "add"
-              ? "bg-green-50 dark:bg-green-950 text-green-800 dark:text-green-300"
+              ? "bg-success-soft text-success"
               : op.type === "del"
-                ? "bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-300"
+                ? "bg-danger-soft text-danger"
                 : "text-gray-600 dark:text-gray-400"
           }`}
         >
@@ -205,17 +206,15 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
     });
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-3 px-6 py-2.5 border-b border-line bg-surface shrink-0">
+    <div className="ui-layout-workspace flex flex-col h-full">
+      <div className="ui-workspace-header flex flex-wrap items-center gap-3">
         <button
           onClick={onBack}
-          className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+          className="ui-button ui-button--link ui-button--sm"
         >
           ← Back
         </button>
-        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-          Compare reports
-        </span>
+        <h1 className="ui-workspace-title">Compare reports</h1>
         <button
           onClick={() => void exportDiff()}
           disabled={loading || !canExport}
@@ -235,7 +234,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
 
       <div className="flex-1 overflow-auto p-4 space-y-3">
         {error && (
-          <div className="p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
+          <div className="p-3 bg-danger-soft border border-danger rounded text-sm text-danger">
             {error}
           </div>
         )}
@@ -251,18 +250,8 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
             <div className="grid gap-3 sm:grid-cols-2">
               {(
                 [
-                  [
-                    "Older report",
-                    runA,
-                    manifestA,
-                    "border-red-200 dark:border-red-900",
-                  ],
-                  [
-                    "Newer report",
-                    runB,
-                    manifestB,
-                    "border-green-200 dark:border-green-900",
-                  ],
+                  ["Older report", runA, manifestA, "border-danger"],
+                  ["Newer report", runB, manifestB, "border-success"],
                 ] as const
               ).map(([label, id, manifest, tone]) => (
                 <section
@@ -309,15 +298,10 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
               added · {comparisonSummary.removed} removed ·{" "}
               {comparisonSummary.unchanged} unchanged.
               <span className="ml-2 text-ink-muted">
-                Diffs show{" "}
-                <span className="text-red-700 dark:text-red-400">− older</span>{" "}
-                and{" "}
-                <span className="text-green-700 dark:text-green-400">
-                  + newer
-                </span>{" "}
-                lines. AI comparison sends both reports and the listed
-                model-generated files to the selected model. This uses one
-                additional call.
+                Diffs show <span className="text-danger">− older</span> and{" "}
+                <span className="text-success">+ newer</span> lines. AI
+                comparison sends both reports and the listed model-generated
+                files to the selected model. This uses one additional call.
               </span>
             </div>
 
@@ -350,17 +334,17 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                       {label}
                     </span>
                     {!a && (
-                      <span className="text-[0.625rem] text-green-700 dark:text-green-400">
+                      <span className="text-[0.625rem] text-success">
                         only in newer
                       </span>
                     )}
                     {!b && (
-                      <span className="text-[0.625rem] text-red-700 dark:text-red-400">
+                      <span className="text-[0.625rem] text-danger">
                         only in older
                       </span>
                     )}
                     <span
-                      className={`ml-auto text-xs ${changed ? "text-amber-700 dark:text-amber-300" : "text-ink-muted"}`}
+                      className={`ml-auto text-xs ${changed ? "text-warning" : "text-ink-muted"}`}
                     >
                       {changed ? "changed" : "unchanged"}
                     </span>

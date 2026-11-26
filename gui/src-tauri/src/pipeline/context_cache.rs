@@ -11,6 +11,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 type SharedSlot = Arc<Mutex<Option<String>>>;
+type InputSlot = Arc<std::sync::OnceLock<Result<Arc<PreparedContext>, String>>>;
+type InputSlots = std::sync::Mutex<HashMap<(Option<String>, String), InputSlot>>;
 
 pub struct PreparedContext {
     key: String,
@@ -24,11 +26,12 @@ pub struct PreparedContext {
 /// run. Provider cache/session state lives on [`PreparedContext`], so merely
 /// recomputing an identical digest for every parallel unit is not sufficient:
 /// those units must share the same `Arc`.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PreparedContextPool {
     author_note: Option<String>,
-    contexts: std::sync::Mutex<HashMap<String, Arc<PreparedContext>>>,
-    document_index: std::sync::OnceLock<Result<(tempfile::TempDir, String), String>>,
+    contexts: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedContext>>>>,
+    document_index: Arc<std::sync::OnceLock<Result<(tempfile::TempDir, String), String>>>,
+    inputs: Arc<InputSlots>,
 }
 
 impl std::fmt::Debug for PreparedContext {
@@ -170,6 +173,32 @@ impl PreparedContext {
 }
 
 impl PreparedContextPool {
+    /// Captured run inputs are immutable. Key by the original input identity,
+    /// not a unit's temporary staging path, and initialize each selection once.
+    /// The per-key slot also coalesces concurrent preparation without holding
+    /// the registry lock during file reads or context construction.
+    pub fn prepare_captured_input(
+        &self,
+        source: Option<&str>,
+        orientation: &serde_json::Value,
+        read_text: impl FnOnce() -> Result<String, String>,
+    ) -> Result<Arc<PreparedContext>, String> {
+        let survey = serde_json::to_string(orientation).map_err(|error| error.to_string())?;
+        let key = (
+            source.map(str::to_string),
+            format!("{:x}", Sha256::digest(survey.as_bytes())),
+        );
+        let slot = self
+            .inputs
+            .lock()
+            .map_err(|_| "Shared-context input lock was poisoned".to_string())?
+            .entry(key)
+            .or_default()
+            .clone();
+        slot.get_or_init(|| self.prepare(&read_text()?, orientation))
+            .clone()
+    }
+
     pub fn with_author_note(note: Option<&str>) -> Self {
         Self {
             author_note: note.map(str::to_string),
@@ -259,6 +288,60 @@ pub fn new_session_id() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn captured_selections_are_initialized_once_across_threads_and_pool_clones() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pool = PreparedContextPool::default();
+        let reads = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    let pool = pool.clone();
+                    let reads = &reads;
+                    scope.spawn(move || {
+                        pool.prepare_captured_input(
+                            Some("captured.md"),
+                            &serde_json::Value::Null,
+                            || {
+                                reads.fetch_add(1, Ordering::SeqCst);
+                                Ok("paper body".into())
+                            },
+                        )
+                        .unwrap()
+                    })
+                })
+                .collect();
+            let contexts: Vec<_> = handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect();
+            assert!(contexts
+                .iter()
+                .all(|context| Arc::ptr_eq(context, &contexts[0])));
+        });
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        let survey = serde_json::json!({"sections": ["intro"]});
+        let selected = pool
+            .prepare_captured_input(Some("captured.md"), &survey, || Ok("paper body".into()))
+            .unwrap();
+        let survey_only = pool
+            .prepare_captured_input(None, &survey, || Ok(String::new()))
+            .unwrap();
+        assert!(selected.content().contains("paper body"));
+        assert!(!survey_only.content().contains("paper body"));
+        assert_ne!(selected.key(), survey_only.key());
+        assert!(pool
+            .prepare_captured_input(Some("unreadable"), &survey, || Err("missing".into()))
+            .is_err());
+        assert_eq!(
+            pool.prepare_captured_input(Some("unreadable"), &survey, || panic!(
+                "failed immutable input should be cached"
+            ))
+            .unwrap_err(),
+            "missing"
+        );
+    }
 
     #[test]
     fn author_note_changes_cache_identity_and_survives_fallback_once() {

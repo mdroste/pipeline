@@ -12,10 +12,24 @@ export interface CalibrationDraft {
   rejected_count: number;
 }
 
+// Keep the standard review workflows first in every workflow picker.
+const profileOrder = new Map([
+  ["auto-paper-review", 0],
+  ["auto-paper-review-fast", 1],
+  ["slide-review", 2],
+]);
+
 export const workflowProfileClient = {
   calibration: () => invoke<CalibrationDraft>("draft_calibration"),
   config: () => invoke<PipelineConfig>("get_pipeline_config"),
-  profiles: () => invoke<ProfileSummary[]>("list_profiles"),
+  profiles: async () => {
+    const profiles = await invoke<ProfileSummary[]>("list_profiles");
+    return [...profiles].sort(
+      (a, b) =>
+        (profileOrder.get(a.id) ?? profileOrder.size) -
+        (profileOrder.get(b.id) ?? profileOrder.size),
+    );
+  },
   active: () => invoke<string>("get_active_profile"),
   switch: (args: { id: string }) =>
     invoke<PipelineConfig>("switch_profile", args),

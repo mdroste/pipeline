@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
+import { popplerBinary } from "./poppler-inventory.mjs";
 
 function makePdf(text) {
   const stream = `BT /F1 18 Tf 72 720 Td (${text.replace(/[()\\]/g, "\\$&")}) Tj ET\n`;
@@ -29,9 +30,8 @@ function makePdf(text) {
 }
 
 function main(resourceDir) {
-  const suffix = process.platform === "win32" ? ".exe" : "";
-  const pdftotext = path.join(resourceDir, `pdftotext${suffix}`);
-  const pdftoppm = path.join(resourceDir, `pdftoppm${suffix}`);
+  const pdftotext = popplerBinary(resourceDir, "pdftotext");
+  const pdftoppm = popplerBinary(resourceDir, "pdftoppm");
   for (const executable of [pdftotext, pdftoppm]) {
     if (!fs.existsSync(executable)) throw new Error(`missing ${executable}`);
   }

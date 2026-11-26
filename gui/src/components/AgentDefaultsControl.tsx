@@ -1,6 +1,11 @@
 import type { ReactNode } from "react";
 import { providerAvailability } from "../lib/connections";
-import { unsetEffortLabel } from "../lib/modelChoice";
+import {
+  unsetEffortLabel,
+  unsetEffortOption,
+  unsetModelSummary,
+  withoutDefaultModel,
+} from "../lib/modelChoice";
 import type { DepsReport, Settings } from "../lib/settingsTypes";
 import type { ModelCatalog, ModelSelection } from "../lib/reviewModelTypes";
 import {
@@ -39,8 +44,7 @@ interface Props {
 
 const chipClass =
   "rounded-full border px-2.5 py-1 text-[0.8125rem] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
-const chipOn =
-  "border-gray-900 bg-gray-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950";
+const chipOn = "ui-selected";
 const chipMissing =
   "border-dashed border-gray-300 bg-transparent text-gray-400 hover:border-gray-500 dark:border-neutral-700 dark:text-neutral-500 dark:hover:border-neutral-500";
 const chipOff =
@@ -178,6 +182,10 @@ export default function AgentDefaultsControl({
               ? "inherit"
               : encodeModelSelection(selection);
           const catalog = catalogs[provider];
+          const modelSettings =
+            selection?.mode === "automatic"
+              ? withoutDefaultModel(settings)
+              : settings;
           const known =
             value === "inherit" ||
             catalog?.models.some((model) => value === `pinned:${model.id}`);
@@ -203,16 +211,16 @@ export default function AgentDefaultsControl({
               className={
                 stacked
                   ? "grid grid-cols-1 gap-2"
-                  : "grid grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)] items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800"
+                  : "flex flex-wrap items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800"
               }
             >
               {(!stacked || multi) && (
-                <span className="truncate text-ui-label font-medium text-ink">
+                <span className="min-w-16 truncate text-ui-label font-medium text-ink">
                   {PROVIDER_LABELS[provider]}
                 </span>
               )}
               <div
-                className={`grid gap-1.5 ${efforts.length && !stacked ? "grid-cols-2" : "grid-cols-1"}`}
+                className={`grid min-w-0 flex-1 basis-64 gap-1.5 ${efforts.length && !stacked ? "grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))]" : "grid-cols-1"}`}
               >
                 <label
                   className={
@@ -224,6 +232,12 @@ export default function AgentDefaultsControl({
                   {stacked && <span>Model</span>}
                   <select
                     aria-label={`${label} ${PROVIDER_LABELS[provider]} model`}
+                    title={
+                      selection?.mode === "pinned"
+                        ? selection.model
+                        : (savedRole?.model ??
+                          unsetModelSummary(modelSettings, provider, catalog))
+                    }
                     value={value}
                     disabled={disabled}
                     onChange={(event) =>
@@ -236,7 +250,7 @@ export default function AgentDefaultsControl({
                     }
                   >
                     <option value="inherit">
-                      {inheritedModelLabel(settings, provider, catalog)}
+                      {inheritedModelLabel(modelSettings, provider, catalog)}
                     </option>
                     {!!catalog?.models.length && (
                       <optgroup label="Exact model">
@@ -271,6 +285,11 @@ export default function AgentDefaultsControl({
                     {stacked && <span>Thinking</span>}
                     <select
                       aria-label={`${label} ${PROVIDER_LABELS[provider]} thinking`}
+                      title={
+                        effortOverrides[key] ||
+                        effortOverrides[provider] ||
+                        unsetEffortLabel(settings, provider, catalog, selection)
+                      }
                       value={
                         effortOverrides[key] ?? effortOverrides[provider] ?? ""
                       }
@@ -285,7 +304,12 @@ export default function AgentDefaultsControl({
                       }
                     >
                       <option value="">
-                        {unsetEffortLabel(settings, provider)}
+                        {unsetEffortOption(
+                          settings,
+                          provider,
+                          catalog,
+                          selection,
+                        )}
                       </option>
                       {efforts.map((effort) => (
                         <option key={effort} value={effort}>
@@ -297,7 +321,7 @@ export default function AgentDefaultsControl({
                 )}
               </div>
               {notConnected(provider) && (
-                <p className="col-span-full text-xs text-amber-700 dark:text-amber-300">
+                <p className="col-span-full text-xs text-warning">
                   Not connected. Connect it in Settings → Models.
                 </p>
               )}

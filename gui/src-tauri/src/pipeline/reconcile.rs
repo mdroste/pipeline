@@ -122,7 +122,7 @@ What is the most important remaining issue?]"#
         request.settings = std::sync::Arc::new(settings.clone());
         let raw = match execute_text(request).await {
             Ok(raw) => raw,
-            Err(error) if crate::commands::is_pipeline_cancellation_error(&error) => {
+            Err(error) if crate::cancellation::is_pipeline_cancellation_error(&error) => {
                 return Err(error)
             }
             Err(error) if super::provider_error::is_usage_limit_error(&error) => return Err(error),

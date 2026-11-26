@@ -12,7 +12,9 @@ use std::time::Duration;
 const THROTTLE_RETRY_WAIT_SECS: [u64; 2] = [60, 120];
 
 fn throttle_retry_wait(error: &str, attempt: u32, max_retries: u32) -> Option<Duration> {
-    if attempt >= max_retries || !crate::pipeline::provider_error::is_throttling_error(error) {
+    if attempt >= max_retries
+        || !crate::pipeline::provider_error::Failure::from_legacy(error).is_throttled()
+    {
         return None;
     }
     let index = (attempt as usize).min(THROTTLE_RETRY_WAIT_SECS.len() - 1);
@@ -20,13 +22,13 @@ fn throttle_retry_wait(error: &str, attempt: u32, max_retries: u32) -> Option<Du
 }
 
 pub(super) fn is_cancellation_error(error: &str) -> bool {
-    crate::commands::is_pipeline_cancellation_error(error)
+    crate::pipeline::provider_error::Failure::from_legacy(error).is_cancelled()
 }
 
 pub(super) fn cancellation_error(pass_key: &str) -> Option<String> {
-    if crate::commands::is_cancelled() {
+    if crate::cancellation::is_cancelled() {
         Some("Pipeline cancelled".to_string())
-    } else if crate::commands::is_pass_cancelled(pass_key) {
+    } else if crate::cancellation::is_pass_cancelled(pass_key) {
         Some(format!("Pass '{pass_key}' cancelled"))
     } else {
         None
@@ -487,8 +489,7 @@ async fn run_step_call_attempts(
                         }
                     }
                 } else {
-                    if crate::pipeline::provider_error::is_usage_limit_error(&error)
-                        || crate::pipeline::provider_error::is_non_retryable_error(&error)
+                    if crate::pipeline::provider_error::Failure::from_legacy(&error).stops_retries()
                     {
                         return Err(error);
                     }
@@ -501,7 +502,7 @@ async fn run_step_call_attempts(
                                 wait.as_secs(),
                             )}),
                         );
-                        crate::commands::await_or_cancel(
+                        crate::cancellation::await_or_cancel(
                             tokio::time::sleep(wait),
                             Some(request.pass_key),
                         )

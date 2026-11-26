@@ -11,6 +11,7 @@ import {
 import { MathErrorBoundary } from "./report-viewer/RenderBoundaries";
 import WorkspaceMessageActions from "./WorkspaceMessageActions";
 import WorkspaceIcon from "./WorkspaceIcon";
+import RememberDecision from "./RememberDecision";
 import { normalizeMathDelimiters } from "../lib/mathMarkdown";
 import {
   rehypeValidateMath,
@@ -69,11 +70,15 @@ const TranscriptMessage = memo(function TranscriptMessage({
   text,
   role,
   selected,
+  workspaceId,
+  conversationId,
 }: {
   id: string;
   text: string;
   role: string;
   selected: boolean;
+  workspaceId?: string;
+  conversationId?: string;
 }) {
   const user = role === "You";
   return (
@@ -98,6 +103,14 @@ const TranscriptMessage = memo(function TranscriptMessage({
         text={text}
         label={user ? "prompt" : "response"}
       />
+      {workspaceId && conversationId && (
+        <RememberDecision
+          workspaceId={workspaceId}
+          conversationId={conversationId}
+          messageId={id}
+          text={text}
+        />
+      )}
     </article>
   );
 });

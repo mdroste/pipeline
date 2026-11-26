@@ -26,8 +26,9 @@ pub(super) struct Connection {
 pub(super) fn config(launcher: &Path) -> String {
     // JSON string escaping is also valid for these TOML basic strings.
     let launcher = serde_json::to_string(&launcher.to_string_lossy()).unwrap();
+    let platform = crate::agent_runtime::codex::process::platform_config();
     format!(
-        r#"cli_auth_credentials_store = "ephemeral"
+        r#"{platform}cli_auth_credentials_store = "ephemeral"
 model_provider = "openai"
 project_doc_max_bytes = 0
 web_search = "disabled"
@@ -195,29 +196,6 @@ pub async fn workflow_codex_status() -> Result<ConnectionStatus, String> {
         epoch: c.native.client.epoch(),
         home: c.home.display().to_string(),
     })
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkflowLoginStart {
-    pub login_id: String,
-    pub epoch: u64,
-}
-
-#[tauri::command]
-pub async fn workflow_codex_login_start(
-    app: tauri::AppHandle,
-) -> Result<WorkflowLoginStart, String> {
-    let login = chatgpt::chatgpt_login_start(app).await?;
-    Ok(WorkflowLoginStart {
-        login_id: login.login_id,
-        epoch: login.epoch,
-    })
-}
-
-#[tauri::command]
-pub async fn workflow_codex_login_cancel(login_id: String, epoch: u64) -> Result<bool, String> {
-    chatgpt::chatgpt_login_cancel(login_id, epoch).await
 }
 
 /// Explicit user acknowledgement; never called from an automatic retry path.

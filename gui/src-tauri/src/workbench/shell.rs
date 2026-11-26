@@ -104,7 +104,7 @@ pub(crate) async fn call(session: &str, input: Value) -> WorkbenchResult<Value> 
         .ok_or_else(|| WorkbenchError::invalid("Provide a command through 32 KiB"))?
         .to_owned();
     let session = session.to_owned();
-    let (cwd, access, network) = super::commands::run_store(move |store| {
+    let (cwd, access, network) = super::runtime::run_store(move |store| {
         let effective = super::research::resolve_harness(&store, &session)?;
         Ok((
             store.runtime_root(&session)?,

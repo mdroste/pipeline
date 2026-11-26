@@ -142,7 +142,7 @@ export default function ProjectReviews({
 
   if (error)
     return (
-      <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+      <p role="alert" className="text-sm text-danger">
         Reviews could not be loaded: {error}
         <ReportIssueLink />
       </p>
@@ -196,7 +196,7 @@ export default function ProjectReviews({
             Track findings
           </Button>
           {trackError && (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+            <p role="alert" className="text-sm text-danger">
               {trackError}
               <ReportIssueLink />
             </p>
@@ -254,8 +254,8 @@ export default function ProjectReviews({
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[0.6875rem] font-medium ${
                     runFinished(run.status)
-                      ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                      : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                      ? "bg-success-soft text-success"
+                      : "bg-warning-soft text-warning"
                   }`}
                 >
                   {listedRunStatus(run.status)}

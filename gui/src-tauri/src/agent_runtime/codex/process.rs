@@ -7,6 +7,18 @@ use std::time::Duration;
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 
+/// These profiles restrict reads as well as writes. Windows' legacy default
+/// cannot enforce that boundary; require MXC and fail closed if unavailable.
+/// Each invocation already names its project root. Ancestor discovery would
+/// inspect folders outside those grants; local project instructions still load.
+pub(crate) fn platform_config() -> &'static str {
+    if cfg!(windows) {
+        "windows.sandbox = \"mxc\"\nproject_root_markers = []\n"
+    } else {
+        ""
+    }
+}
+
 pub(crate) const SECRET_ENVIRONMENT_KEYS: &[&str] = &[
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
@@ -48,7 +60,7 @@ impl OwnedProcess {
             .id()
             .filter(|pid| *pid > 0)
             .ok_or("Codex App Server did not report a process id")?;
-        crate::commands::lifecycle::register_independent_child_pid(pid);
+        crate::process_tree::register_independent_child_pid(pid);
         let pipes = ProcessPipes {
             stdin: child.stdin.take().ok_or("Codex App Server has no stdin")?,
             stdout: child
@@ -90,16 +102,16 @@ impl OwnedProcess {
         if !self.running.swap(false, Ordering::AcqRel) {
             return;
         }
-        crate::commands::lifecycle::kill_independent_process(self.pid);
+        crate::process_tree::kill_independent_process(self.pid);
         let mut child = self.child.lock().await;
         let _ = child.kill().await;
         let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
-        crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+        crate::process_tree::unregister_independent_child_pid(self.pid);
     }
 
     fn finish_tracking(&self) {
         if self.running.swap(false, Ordering::AcqRel) {
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
         }
     }
 }
@@ -107,8 +119,8 @@ impl OwnedProcess {
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
         if self.running.swap(false, Ordering::AcqRel) {
-            crate::commands::lifecycle::kill_independent_process(self.pid);
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::kill_independent_process(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
         }
     }
 }

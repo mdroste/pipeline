@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use zip::write::SimpleFileOptions;
 
+mod project_folders;
 mod record_authority;
 
 fn fixture() -> (tempfile::TempDir, Store, String, PathBuf) {
@@ -24,6 +25,12 @@ fn fixture() -> (tempfile::TempDir, Store, String, PathBuf) {
         .record
         .id;
     (temp, store, ws, root)
+}
+
+fn import_folder(path: &Path) -> Option<String> {
+    let root = path.parent().unwrap().join("imported-project");
+    fs::create_dir_all(&root).unwrap();
+    Some(root.to_string_lossy().into_owned())
 }
 fn populate(store: &Store, ws: &str, root: &Path) -> (String, String, String) {
     fs::write(root.join("main.md"), "The effect is 0.13 log points.").unwrap();
@@ -192,7 +199,7 @@ fn import_into_nonempty_store_remaps_is_idempotent_and_records_conflicts() {
     .unwrap();
     let target = ExchangeTarget::NewWorkspace {
         name: "Coauthor copy".into(),
-        root: None,
+        root: import_folder(&path),
     };
     let preview = preview_import(&store, &path.to_string_lossy(), &target).unwrap();
     assert_eq!(preview.remapped, 4);
@@ -409,7 +416,7 @@ fn reimporting_a_ledger_package_is_identical_not_conflicting() {
     .unwrap();
     let target = ExchangeTarget::NewWorkspace {
         name: "Coauthor copy".into(),
-        root: None,
+        root: import_folder(&path),
     };
     let report = import_exchange(
         &store,
@@ -558,7 +565,7 @@ fn import_new(store: &Store, path: &Path, operation: &str) -> ImportReport {
             path: path.to_string_lossy().into_owned(),
             target: ExchangeTarget::NewWorkspace {
                 name: "Coauthor copy".into(),
-                root: None,
+                root: import_folder(path),
             },
             operation_id: operation.into(),
         },
@@ -1031,7 +1038,7 @@ fn a_failed_import_into_a_new_project_leaves_no_project() {
                 path: path.to_string_lossy().into_owned(),
                 target: ExchangeTarget::NewWorkspace {
                     name: "Coauthor copy".into(),
-                    root: None,
+                    root: import_folder(path),
                 },
                 operation_id: "import".into(),
             },

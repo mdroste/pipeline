@@ -458,3 +458,42 @@ fn generated_program_inputs_stay_out_of_the_file_tools() {
     // The program's own writes start below the reserved name.
     write_program_input(&directory, "figure.json", b"{}").unwrap();
 }
+
+#[test]
+fn a_task_copy_file_opens_as_an_immutable_snapshot() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    fs::write(f.root.join("notes.md"), "draft\n").unwrap();
+    let checkpoint = copy(&f, &["notes.md"]);
+    let task_root = session_task_root(&f.store, &f.ws, &checkpoint.id).unwrap();
+    fs::write(task_root.join("notes.md"), "model edit\n").unwrap();
+    let request = FileReadRequest {
+        workspace_id: f.ws.clone(),
+        path: "notes.md".into(),
+        checkpoint_id: Some(checkpoint.id.clone()),
+        revision_id: None,
+    };
+    let opened = external_target(&f.store, &request).unwrap();
+    assert!(!opened.starts_with(&task_root), "{}", opened.display());
+    assert_eq!(fs::read_to_string(&opened).unwrap(), "model edit\n");
+    assert_eq!(
+        fs::metadata(&opened).unwrap().permissions().mode() & 0o777,
+        0o400
+    );
+    // A change after the check never reaches what the system opens.
+    fs::write(task_root.join("notes.md"), "changed after the check\n").unwrap();
+    assert_eq!(fs::read_to_string(&opened).unwrap(), "model edit\n");
+    let editor = editor_external_path(&f.store, &f.ws, Some(&checkpoint.id), "notes.md").unwrap();
+    assert!(!Path::new(&editor).starts_with(&task_root), "{editor}");
+    // The project's own working folder still opens its live file.
+    fs::write(f.root.join("live.md"), "live\n").unwrap();
+    let live = FileReadRequest {
+        workspace_id: f.ws.clone(),
+        path: "live.md".into(),
+        checkpoint_id: None,
+        revision_id: None,
+    };
+    assert!(external_target(&f.store, &live)
+        .unwrap()
+        .ends_with("live.md"));
+}

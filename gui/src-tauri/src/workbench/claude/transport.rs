@@ -30,16 +30,18 @@ impl Process {
     /// offers the Bash tool. `working` replaces the process's temporary
     /// working directory when Bash may write in a lasting root.
     pub async fn start(
+        mode: crate::agent_runtime::claude::AuthMode,
         args: &[String],
         sandbox: Option<&Value>,
         working: Option<&std::path::Path>,
     ) -> Result<Self, String> {
         let wsl = super::wsl::detect_async().await.environment()?;
-        Self::start_in(args, sandbox, working, wsl).await
+        Self::start_in(mode, args, sandbox, working, wsl).await
     }
 
     /// `start` for a turn that already asked whether WSL is available.
     pub async fn start_in(
+        mode: crate::agent_runtime::claude::AuthMode,
         args: &[String],
         sandbox: Option<&Value>,
         working: Option<&std::path::Path>,
@@ -64,17 +66,23 @@ impl Process {
             let directory = directory.path().to_owned();
             let working = working.map(std::path::Path::to_owned);
             let (command, status, group) = tokio::task::spawn_blocking(move || {
-                environment.prepare(sandbox.as_ref(), &args, &directory, working.as_deref())
+                environment.prepare(
+                    mode,
+                    sandbox.as_ref(),
+                    &args,
+                    &directory,
+                    working.as_deref(),
+                )
             })
             .await
             .map_err(|e| e.to_string())??;
             (command, status, Some(group))
         } else {
             let (resolved, status) =
-                crate::agent_runtime::claude::verified_subscription_with_status().await?;
+                crate::agent_runtime::claude::verified_auth_with_status(mode).await?;
             (
-                crate::agent_runtime::claude::verified_sandboxed_command(
-                    &resolved, sandbox, &args, cwd,
+                crate::agent_runtime::claude::verified_auth_command(
+                    &resolved, mode, sandbox, &args, cwd,
                 ),
                 status,
                 None,
@@ -99,7 +107,7 @@ impl Process {
         let pid = child
             .id()
             .ok_or("Claude Code did not report a process ID")?;
-        crate::commands::lifecycle::register_independent_child_pid(pid);
+        crate::process_tree::register_independent_child_pid(pid);
         let stdin = child
             .stdin
             .take()
@@ -154,7 +162,7 @@ impl Process {
     /// One frame and its size on the wire, which a turn counts against its budget.
     async fn read_sized(&mut self) -> Result<(Value, usize), String> {
         let line = crate::pipeline::logging::next_bounded_line(&mut self.stdout, OUTPUT_FRAME_LIMIT).await.map_err(|e| e.to_string())?
-            .ok_or("Claude Code closed its output before completing the turn. Check its subscription sign-in and CLI version.")?;
+            .ok_or("Claude Code closed its output before completing the turn. Check its selected sign-in and CLI version.")?;
         if line.truncated {
             return Err("Claude output exceeded its frame limit".into());
         }
@@ -196,10 +204,10 @@ impl Process {
         }
         let _ = self.stdin.shutdown().await;
         if self.pid > 0 {
-            crate::commands::lifecycle::kill_independent_process(self.pid);
+            crate::process_tree::kill_independent_process(self.pid);
             let _ = self.child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
             self.pid = 0;
         }
     }
@@ -211,9 +219,9 @@ impl Drop for Process {
             group.stop();
         }
         if self.pid > 0 {
-            crate::commands::lifecycle::kill_independent_process(self.pid);
+            crate::process_tree::kill_independent_process(self.pid);
             let _ = self.child.start_kill();
-            crate::commands::lifecycle::unregister_independent_child_pid(self.pid);
+            crate::process_tree::unregister_independent_child_pid(self.pid);
         }
     }
 }
@@ -372,6 +380,7 @@ pub(super) async fn drive_within(
 
 #[tauri::command]
 pub async fn workbench_claude_model_catalog(
+    runtime: Option<String>,
 ) -> Result<crate::connections::models::ModelCatalog, String> {
     let args = [
         "-p",
@@ -386,7 +395,10 @@ pub async fn workbench_claude_model_catalog(
         "--no-session-persistence",
     ]
     .map(str::to_owned);
-    let mut process = Process::start(&args, None, None).await?;
+    let mode = crate::agent_runtime::claude::AuthMode::from_runtime(
+        runtime.as_deref().unwrap_or("claude"),
+    )?;
+    let mut process = Process::start(mode, &args, None, None).await?;
     let result = process.initialize(&[]).await;
     process.stop().await;
     let initialization = result?;

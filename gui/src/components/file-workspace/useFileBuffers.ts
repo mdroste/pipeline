@@ -1,4 +1,14 @@
+import { legacyManuscriptPaths } from "../../lib/manuscriptDraftStorage";
 import { useDraftFlush } from "../../hooks/useDraftFlush";
+import {
+  readFileDraft,
+  writeFileDraft,
+  subscribeFileDrafts,
+  fileDraftKey,
+  listFileDraftPaths,
+  removeFileDraft,
+  moveFileDrafts,
+} from "../../lib/sharedFileDrafts";
 // Open files and their drafts. Unsaved text survives tab switches, restarts and
 // eviction from memory; a clean file can always be read again.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -19,29 +29,21 @@ const RETAINED_CLEAN = 12;
 export const isDirty = (buffer: Buffer) =>
   buffer.file.editable && buffer.draft !== buffer.file.text;
 
-const draftPrefix = (adapterId: string) => `pipeline.files.draft.${adapterId}.`;
-
-function pathsAfter(prefix: string) {
+/** Retained drafts are owned by the shared repository, including memory fallback. */
+export const unsavedDraftPaths = (adapterId: string) => {
   try {
-    return Array.from({ length: localStorage.length }, (_, index) =>
-      localStorage.key(index),
-    ).flatMap((key) =>
-      key?.startsWith(prefix) ? [key.slice(prefix.length)] : [],
-    );
+    return listFileDraftPaths(adapterId);
   } catch {
     return [];
   }
-}
-
-/** Files with an unsaved draft. Read from where drafts are kept, because the
- * pages that need to know don't share these buffers. */
-export const unsavedDraftPaths = (adapterId: string) =>
-  pathsAfter(draftPrefix(adapterId));
-
-/** Working files with an unsaved draft in Write, which keeps its drafts apart
- * from Files, by project and by working copy. */
-export const unsavedManuscriptPaths = (workspaceId: string) =>
-  pathsAfter(`pipeline.manuscriptDraft.${workspaceId}.working.`);
+};
+export const unsavedManuscriptPaths = (workspaceId: string) => {
+  try {
+    return legacyManuscriptPaths(workspaceId);
+  } catch {
+    return [];
+  }
+};
 
 export function useFileBuffers({
   adapter,
@@ -57,6 +59,27 @@ export function useFileBuffers({
   const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
   const latest = useRef(buffers);
   latest.current = buffers;
+  const owner = useRef({});
+  useEffect(
+    () =>
+      subscribeFileDrafts(adapter.id, (value, source) => {
+        if (source === owner.current) return;
+        const old = latest.current[value.file.path];
+        if (!old || !old.file.editable) return;
+        const next = {
+          ...latest.current,
+          [value.file.path]: {
+            ...old,
+            file: { ...old.file, ...value.file },
+            draft: value.draft,
+            status: "",
+          },
+        };
+        latest.current = next;
+        setBuffers(next);
+      }),
+    [adapter.id],
+  );
   const [saving, setSaving] = useState<string | null>(null);
   const pending = useRef(new Map<string, Promise<void>>());
   const retainTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,7 +98,7 @@ export function useFileBuffers({
     };
   }, [release]);
   const draftKey = useCallback(
-    (path: string) => `${draftPrefix(adapter.id)}${path}`,
+    (path: string) => fileDraftKey(adapter.id, path),
     [adapter.id],
   );
   const load = useCallback(
@@ -98,9 +121,7 @@ export function useFileBuffers({
         let status = "";
         if (!reload && file.editable) {
           try {
-            const retained = JSON.parse(
-              localStorage.getItem(draftKey(path)) ?? "null",
-            );
+            const retained = readFileDraft(adapter.id, path);
             if (
               typeof retained?.draft === "string" &&
               retained.draft !== file.text &&
@@ -160,6 +181,7 @@ export function useFileBuffers({
   const persisted = useRef(new WeakMap<Buffer, string>());
   const retain = useCallback(
     (values: Record<string, Buffer>, force = false) => {
+      if (values !== latest.current) return true;
       let retained = true;
       for (const [path, buffer] of Object.entries(values)) {
         if (
@@ -168,15 +190,18 @@ export function useFileBuffers({
         )
           continue;
         try {
-          if (buffer.draft !== buffer.file.text)
-            localStorage.setItem(
-              draftKey(path),
-              JSON.stringify({
-                file: { path, hash: buffer.file.hash, text: buffer.file.text },
-                draft: buffer.draft,
-              }),
-            );
-          else localStorage.removeItem(draftKey(path));
+          writeFileDraft(
+            adapter.id,
+            {
+              file: {
+                path,
+                hash: buffer.file.hash,
+                text: buffer.file.text ?? "",
+              },
+              draft: buffer.draft,
+            },
+            owner.current,
+          );
           persisted.current.set(buffer, draftKey(path));
         } catch {
           if (!isDirty(buffer)) continue;
@@ -189,7 +214,7 @@ export function useFileBuffers({
       }
       return retained;
     },
-    [draftKey, setError],
+    [adapter.id, draftKey, setError],
   );
   useEffect(() => {
     const timer = setTimeout(() => retain(buffers), 250);
@@ -218,11 +243,15 @@ export function useFileBuffers({
     [release],
   );
   const update = useCallback(
-    (path: string, change: (buffer: Buffer) => Buffer) =>
-      setBuffers((old) =>
-        old[path] ? { ...old, [path]: change(old[path]) } : old,
-      ),
-    [],
+    (path: string, change: (buffer: Buffer) => Buffer) => {
+      const current = latest.current[path];
+      if (!current) return;
+      const next = { ...latest.current, [path]: change(current) };
+      latest.current = next;
+      setBuffers(next);
+      retain(next);
+    },
+    [retain],
   );
   const save = async (path: string, replacement?: string) => {
     const buffer = latest.current[path];
@@ -307,40 +336,15 @@ export function useFileBuffers({
   /** Tabs not read since a restart hold their drafts only in storage. */
   const moveRetainedDrafts = useCallback(
     (from: string, to: string) => {
-      const prefix = draftKey("");
       try {
-        const keys = Array.from({ length: localStorage.length }, (_, index) =>
-          localStorage.key(index),
-        );
-        for (const key of keys) {
-          if (!key?.startsWith(prefix)) continue;
-          const path = key.slice(prefix.length);
-          const target = movedPath(path, from, to);
-          if (!target) continue;
-          let retained;
-          try {
-            retained = JSON.parse(localStorage.getItem(key) ?? "null");
-          } catch {
-            continue; // Invalid draft ignored.
-          }
-          // The prefix can also match an adapter whose id extends this one.
-          if (retained?.file?.path !== path) continue;
-          localStorage.setItem(
-            draftKey(target),
-            JSON.stringify({
-              ...retained,
-              file: { ...retained.file, path: target },
-            }),
-          );
-          localStorage.removeItem(key);
-        }
+        moveFileDrafts(adapter.id, from, to);
       } catch {
         setError(
           "Draft storage is full. Save your files before closing Pipeline.",
         );
       }
     },
-    [draftKey, setError],
+    [adapter.id, setError],
   );
   /** Carry open files, and their drafts, across a rename or move. */
   const remap = useCallback(
@@ -355,7 +359,7 @@ export function useFileBuffers({
       recent.current = recent.current.map((p) => movedPath(p, from, to) ?? p);
       for (const [path] of moved) {
         try {
-          localStorage.removeItem(draftKey(path));
+          removeFileDraft(adapter.id, path);
         } catch {
           /* The next retain rewrites the draft under its new path. */
         }

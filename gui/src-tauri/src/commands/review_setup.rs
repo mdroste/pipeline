@@ -181,6 +181,10 @@ pub async fn get_execution_plan(
     )?;
     let mut planning_config = snapshot.config.clone();
     pipeline_config::apply_agent_defaults(&mut planning_config, &snapshot.settings);
+    // Show a design the run would refuse here, before anything is billed.
+    if !crate::auto_review::uses_auto_review_contract(&planning_config) {
+        crate::pipeline_config::validate_runtime_config(&planning_config)?;
+    }
     let merge_agent = (planning_config.merge.enabled
         && planning_config.steps.iter().any(|step| {
             step.enabled

@@ -1,3 +1,4 @@
+import { createSubmissionIntents } from "./submissionIntents";
 import {
   conversationProvider,
   type ConversationProvider,
@@ -43,7 +44,7 @@ import type {
 const readActiveTurn = () => runtimeClient.activeTurn();
 
 /** One identity owner for hydration, submission acknowledgement and terminal events. */
-export function useWorkspaceConversationRuntime(
+function useConversationState(
   sessionId: string | null,
   setSessions: Dispatch<SetStateAction<WorkbenchSession[]>>,
 ) {
@@ -261,7 +262,61 @@ export function useWorkspaceConversationRuntime(
         : mergeSessionSnapshot(old, next),
     );
   }, []);
-  return {
+  const reconcileSelection = useCallback(
+    (onSelected: () => void) => {
+      // Errors speak for the conversation that was on screen, and warnings too.
+      // One this conversation raised while it was left waits here.
+      const missed = sessionId
+        ? missedProblemsRef.current.get(sessionId)
+        : null;
+      if (sessionId) missedProblemsRef.current.delete(sessionId);
+      setError(missed ?? null);
+      setWarnings([]);
+      if (!sessionId) {
+        // Hydration resets these for a conversation; with none selected, a
+        // response running elsewhere must not stay on this page. Its submission
+        // stays, so the background notice can still point to it.
+        activeRef.current = null;
+        setActive(null);
+        setPendingUser(null);
+        setSubmitting(false);
+        clearStream();
+        setSnapshot(null);
+        return;
+      }
+      onSelected();
+      setNotice(null);
+      // A slow reconcile for a conversation the user has already left must
+      // neither report its error here nor start a load.
+      let cancelled = false;
+      const current = () => !cancelled && sessionRef.current === sessionId;
+      void runtimeClient
+        .reconcileSession(sessionId)
+        .catch((cause) => {
+          if (current())
+            setError(
+              `Could not refresh the conversation. Showing the saved transcript: ${workbenchErrorMessage(cause)}`,
+            );
+        })
+        .finally(() => {
+          if (current()) void hydrate(sessionId);
+        });
+      return () => {
+        cancelled = true;
+      };
+    },
+    [hydrate, sessionId],
+  );
+  const navigateTo = (selected: string | null) => {
+    hydrationGeneration.current++;
+    setSnapshot(null);
+    snapshotRef.current = null;
+    setDraft("");
+    sessionRef.current = selected;
+  };
+  const state = {
+    reconcileSelection,
+    navigateTo,
     sessionId,
     snapshot,
     setSnapshot,
@@ -318,6 +373,17 @@ export function useWorkspaceConversationRuntime(
     refreshSessionRecord,
     acceptSnapshot,
   };
+  return state;
+}
+export type WorkspaceConversationState = ReturnType<
+  typeof useConversationState
+>;
+export function useWorkspaceConversationRuntime(
+  sessionId: string | null,
+  setSessions: Dispatch<SetStateAction<WorkbenchSession[]>>,
+) {
+  const state = useConversationState(sessionId, setSessions);
+  return { ...state, submission: createSubmissionIntents(state) };
 }
 export type WorkspaceConversationRuntime = ReturnType<
   typeof useWorkspaceConversationRuntime

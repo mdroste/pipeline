@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import ReviewPdfOptions from "./ReviewPdfOptions";
@@ -12,15 +12,20 @@ const props = {
   onChange: vi.fn(),
   onBusy: vi.fn(),
 };
+const overrides = {
+  agents: [],
+  model_overrides: {},
+  effort_overrides: {},
+};
 beforeEach(() => {
   vi.clearAllMocks();
   invoke.mockResolvedValue({ method: "paddleocr-vl-full" });
 });
-it("shows the default PDF method without offering a page preview", async () => {
+it("shows the default PDF method by name with a Default tag", async () => {
   render(<ReviewPdfOptions {...props} />);
-  expect(
-    await screen.findByRole("option", { name: /Workflow default · PaddleOCR/ }),
-  ).toBeInTheDocument();
+  const picker = screen.getByRole("combobox", { name: "Read this PDF with" });
+  await waitFor(() => expect(picker).toHaveTextContent("PaddleOCRDefault"));
+  expect(picker).not.toHaveTextContent(/Workflow default|local/);
   expect(screen.queryByText("Check a sample page")).not.toBeInTheDocument();
   expect(invoke.mock.calls).toEqual([
     ["review_pdf_options", { runParallelOverrides: null }],
@@ -29,11 +34,36 @@ it("shows the default PDF method without offering a page preview", async () => {
 it("changes this review's method without saving global settings", async () => {
   const user = userEvent.setup();
   render(<ReviewPdfOptions {...props} />);
-  await user.selectOptions(screen.getByRole("combobox"), "pdftotext");
+  const picker = screen.getByRole("combobox");
+  await waitFor(() => expect(picker).toHaveTextContent("PaddleOCR"));
+  await user.click(picker);
+  await user.click(screen.getByRole("option", { name: /Text layer/ }));
   expect(props.onChange).toHaveBeenCalledWith(
     expect.objectContaining({ extraction_method: "pdftotext" }),
   );
   expect(invoke).not.toHaveBeenCalledWith("save_settings", expect.anything());
+});
+it("keeps the Default tag on the workflow's method after an override", async () => {
+  const user = userEvent.setup();
+  render(
+    <ReviewPdfOptions
+      {...props}
+      value={{ ...overrides, extraction_method: "llm" }}
+    />,
+  );
+  const picker = screen.getByRole("combobox");
+  expect(picker).toHaveTextContent("AI model");
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("review_pdf_options", {
+      runParallelOverrides: null,
+    }),
+  );
+  await user.click(picker);
+  expect(
+    await screen.findByRole("option", { name: /PaddleOCR\s*Default/ }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("option", { name: /PaddleOCR/ }));
+  expect(props.onChange).toHaveBeenCalledWith(null);
 });
 it("ignores options for an earlier document", async () => {
   let resolve!: (value: unknown) => void;
@@ -45,9 +75,8 @@ it("ignores options for an earlier document", async () => {
   );
   const { rerender } = render(<ReviewPdfOptions {...props} />);
   rerender(<ReviewPdfOptions {...props} path="/new.pdf" />);
-  await screen.findByRole("option", { name: /Workflow default · PaddleOCR/ });
+  const picker = screen.getByRole("combobox");
+  await waitFor(() => expect(picker).toHaveTextContent("PaddleOCR"));
   await act(async () => resolve({ method: "pdftotext" }));
-  expect(
-    screen.getByRole("option", { name: /Workflow default · PaddleOCR/ }),
-  ).toBeInTheDocument();
+  expect(picker).toHaveTextContent("PaddleOCRDefault");
 });

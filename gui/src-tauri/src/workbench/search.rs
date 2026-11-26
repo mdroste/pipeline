@@ -203,15 +203,25 @@ pub fn status(store: &Store, ws: &str) -> WorkbenchResult<IndexStatus> {
     .map_err(err)?;
     c.query_row("SELECT generation,complete,cursor,byte_offset FROM research_index_state WHERE workspace_id=?1",[ws],|r|Ok(IndexStatus{generation:r.get(0)?,complete:r.get(1)?,cursor:r.get(2)?,byte_offset:r.get::<_,i64>(3)? as usize})).map_err(err)
 }
+/// The order sources are indexed in: papers, sources and notes before
+/// conversation messages, artifacts and records, so a search reaches the
+/// project's research material first. The cursor saves this key.
+const INDEX_ORDER: &str = "SELECT (CASE WHEN kind IN ('paper','source','note') THEN '0' ELSE '1' END)||object_key AS sort_key,kind,id,revision,title,body,text_reference,provenance,access,completeness FROM research_search_sources WHERE workspace_id=?1";
+
 /// Each call advances at most twelve sources / 256 KiB per source. Mutations
 /// invalidate the generation atomically; mixed-generation results are never shown.
 pub fn advance(store: &Store, ws: &str) -> WorkbenchResult<IndexStatus> {
-    let state = status(store, ws)?;
+    let mut state = status(store, ws)?;
     if state.complete {
         return Ok(state);
     }
+    // Earlier builds saved a bare object key, which never compares with the
+    // ranked order. Restart such an index once instead of skipping sources.
+    if !state.cursor.is_empty() && !state.cursor.starts_with(&['0', '1'][..]) {
+        state = rebuild(store, ws)?;
+    }
     let c = store.connection()?;
-    let mut q=c.prepare(&format!("SELECT {COLS} FROM research_search_sources WHERE workspace_id=?1 AND (object_key>?2 OR (object_key=?2 AND ?3>0)) ORDER BY object_key LIMIT ?4")).map_err(err)?;
+    let mut q=c.prepare(&format!("SELECT * FROM ({INDEX_ORDER}) WHERE sort_key>?2 OR (sort_key=?2 AND ?3>0) ORDER BY sort_key LIMIT ?4")).map_err(err)?;
     let sources = q
         .query_map(
             params![ws, state.cursor, state.byte_offset as i64, BATCH as i64],
@@ -319,6 +329,23 @@ pub fn advance(store: &Store, ws: &str) -> WorkbenchResult<IndexStatus> {
     tx.execute("UPDATE research_index_state SET cursor=?2,byte_offset=?3,complete=?4 WHERE workspace_id=?1",params![ws,cursor,offset as i64,count<BATCH && offset==0]).map_err(err)?;
     tx.commit().map_err(err)?;
     status(store, ws)
+}
+
+/// Advance until the index is complete or `budget` has passed. Any message or
+/// record resets a project's index, so one batch per search would rarely get
+/// past the first sources.
+pub fn advance_within(
+    store: &Store,
+    ws: &str,
+    budget: std::time::Duration,
+) -> WorkbenchResult<IndexStatus> {
+    let started = std::time::Instant::now();
+    loop {
+        let state = advance(store, ws)?;
+        if state.complete || started.elapsed() >= budget {
+            return Ok(state);
+        }
+    }
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

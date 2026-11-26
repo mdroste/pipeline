@@ -116,7 +116,7 @@ pub struct AppServerSupervisor {
 
 impl AppServerSupervisor {
     pub async fn launch(epoch: u64) -> Result<Self, RequestError> {
-        let codex_home = crate::workbench::commands::run_store(|store| Ok(store.codex_home_path()))
+        let codex_home = crate::workbench::runtime::run_store(|store| Ok(store.codex_home_path()))
             .await
             .map_err(|error| RequestError::unavailable(error.message))?;
         let account = crate::agent_runtime::codex::chatgpt::connect()
@@ -597,7 +597,7 @@ impl AppServerSupervisor {
                         };
                         let ended = matches!(event, NormalizedEvent::TurnCompleted { .. });
                         let event_binding_id = binding_id.clone();
-                        let result = crate::workbench::commands::run_store(move |store| {
+                        let result = crate::workbench::runtime::run_store(move |store| {
                             store.project_codex_event(&event_binding_id, &event)
                         })
                         .await;
@@ -804,7 +804,7 @@ async fn bind_session_projection(
     runtime_namespace: String,
     provider_thread_id: String,
 ) -> Result<crate::workbench::store::SessionBinding, RequestError> {
-    crate::workbench::commands::run_store(move |store| {
+    crate::workbench::runtime::run_store(move |store| {
         store.bind_session(&session_id, &runtime_namespace, &provider_thread_id)
     })
     .await
@@ -816,7 +816,7 @@ async fn record_turn_projection(
     client_submission_id: String,
     provider_turn_id: String,
 ) -> Result<(), RequestError> {
-    crate::workbench::commands::run_store(move |store| {
+    crate::workbench::runtime::run_store(move |store| {
         store.record_turn_submission(&binding_id, &client_submission_id, &provider_turn_id)
     })
     .await

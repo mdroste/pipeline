@@ -41,6 +41,7 @@ export interface FileListing {
   truncated: boolean;
 }
 export interface FileStamp {
+  unavailable?: string | null;
   path: string;
   kind: FileListEntry["kind"] | null;
   stamp: string | null;
@@ -191,7 +192,7 @@ export function workspaceFileAdapter(scope: WorkspaceFileScope): FileAdapter {
     path,
   });
   const mutate = (action: Parameters<typeof studioClient.mutate>[1]) =>
-    studioClient.mutate<unknown>(workspaceId, action).then(() => undefined);
+    studioClient.mutate(workspaceId, action).then(() => undefined);
   return {
     id: `workspace:${workspaceId}:${scope.revisionId ?? checkpointId ?? "working"}`,
     read: (path) =>
@@ -203,7 +204,7 @@ export function workspaceFileAdapter(scope: WorkspaceFileScope): FileAdapter {
       ? {
           save: async (file: FilePreview, content: string) =>
             (
-              await studioClient.mutate<{ hash: string }>(workspaceId, {
+              await studioClient.mutate(workspaceId, {
                 action: "saveText",
                 checkpointId,
                 path: file.path,
@@ -280,6 +281,32 @@ export function workspaceFileAdapter(scope: WorkspaceFileScope): FileAdapter {
       : {}),
   };
 }
+export const UNRETAINED_ARTIFACT =
+  "This file was not retained in the run's artifact manifest.";
+function artifactMime(kind: string, path: string) {
+  const suffix = path.split(".").pop()?.toLowerCase();
+  return kind === "pdf"
+    ? "application/pdf"
+    : kind === "image"
+      ? ({
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          svg: "image/svg+xml",
+          webp: "image/webp",
+          gif: "image/gif",
+        }[suffix ?? ""] ?? "image/png")
+      : "text/plain";
+}
+/**
+ * A `data:` URL for an image retained by a run. No stream token is opened:
+ * the bytes are inline, so nothing would use or release one.
+ */
+export async function readArtifactImage(runId: string, path: string) {
+  const content = await artifactClient.read(runId, path);
+  if (content.kind !== "image" || !content.base64)
+    throw new Error("Image not retained in this run");
+  return `data:${artifactMime(content.kind, path)};base64,${content.base64}`;
+}
 export function artifactFileAdapter(
   runId: string,
   paths: string[],
@@ -288,24 +315,9 @@ export function artifactFileAdapter(
   return {
     id: `run:${runId}`,
     read: async (path) => {
-      if (!allowed.has(path))
-        throw new Error(
-          "This file was not retained in the run's artifact manifest.",
-        );
+      if (!allowed.has(path)) throw new Error(UNRETAINED_ARTIFACT);
       const content = await artifactClient.read(runId, path);
-      const suffix = path.split(".").pop()?.toLowerCase();
-      const mime =
-        content.kind === "pdf"
-          ? "application/pdf"
-          : content.kind === "image"
-            ? ({
-                jpg: "image/jpeg",
-                jpeg: "image/jpeg",
-                svg: "image/svg+xml",
-                webp: "image/webp",
-                gif: "image/gif",
-              }[suffix ?? ""] ?? "image/png")
-            : "text/plain";
+      const mime = artifactMime(content.kind, path);
       const viewable = content.kind === "pdf" || content.kind === "image";
       const streamToken = viewable
         ? await artifactClient.stream(runId, path).catch(() => null)

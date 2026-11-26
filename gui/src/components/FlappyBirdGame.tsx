@@ -1,3 +1,5 @@
+import { Icon } from "../ui/icons";
+import IconButton from "../ui/IconButton";
 import { useCallback, useEffect, useRef, useState } from "react";
 import useModalDialog from "../hooks/useModalDialog";
 import {
@@ -574,14 +576,13 @@ export default function FlappyBirdGame({ onClose }: Props) {
                 </span>
               </div>
             </div>
-            <button
+            <IconButton
               type="button"
               onClick={onClose}
-              aria-label="Close Flappy Pipeline"
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
+              label="Close Flappy Pipeline"
             >
-              ✕
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
         </header>
 

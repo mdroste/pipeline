@@ -355,6 +355,14 @@ describe("App launch", () => {
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: "config-test",
+        runParallelOverrides: {
+          review: { provider: "claude", model: "", effort: "" },
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+          clear_settings_exceptions: true,
+          override_workflow_pins: true,
+        },
       }),
     );
     // Each document is its own queued review in Activity; the first opens.
@@ -376,6 +384,15 @@ describe("App launch", () => {
   it("defers exact DOCX readiness checks until the user reviews the report", async () => {
     invoke.mockImplementation(
       (command: string, args?: { paperPath?: string | null }) => {
+        if (command === "get_settings")
+          return Promise.resolve({
+            settings: {
+              preferred_provider: "claude",
+              default_model: "",
+              default_effort: "",
+            },
+            warnings: [],
+          });
         if (command === "mark_smoke_ready") return Promise.resolve(true);
         if (command === "app_close_hides") return Promise.resolve(false);
         if (
@@ -581,6 +598,15 @@ describe("App launch", () => {
       stages: never[];
     }) => void;
     invoke.mockImplementation((command: string) => {
+      if (command === "get_settings")
+        return Promise.resolve({
+          settings: {
+            preferred_provider: "claude",
+            default_model: "",
+            default_effort: "",
+          },
+          warnings: [],
+        });
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "app_close_hides") return Promise.resolve(false);
       if (command === "set_app_close_guard" || command === "complete_app_close")
@@ -635,6 +661,15 @@ describe("App launch", () => {
 
   it("opens PDF extraction settings from a missing PaddleOCR dependency", async () => {
     invoke.mockImplementation((command: string) => {
+      if (command === "get_settings")
+        return Promise.resolve({
+          settings: {
+            preferred_provider: "claude",
+            default_model: "",
+            default_effort: "",
+          },
+          warnings: [],
+        });
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "app_close_hides") return Promise.resolve(false);
       if (command === "set_app_close_guard" || command === "complete_app_close")
@@ -692,6 +727,15 @@ describe("App launch", () => {
   it("fails closed when fresh profile readiness reports a secondary provider missing", async () => {
     let checks = 0;
     invoke.mockImplementation((command: string) => {
+      if (command === "get_settings")
+        return Promise.resolve({
+          settings: {
+            preferred_provider: "claude",
+            default_model: "",
+            default_effort: "",
+          },
+          warnings: [],
+        });
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "app_close_hides") return Promise.resolve(false);
       if (command === "set_app_close_guard" || command === "complete_app_close")
@@ -753,6 +797,15 @@ describe("App launch", () => {
   it("rejects setup when the active profile changes before launch", async () => {
     let plans = 0;
     invoke.mockImplementation((command: string) => {
+      if (command === "get_settings")
+        return Promise.resolve({
+          settings: {
+            preferred_provider: "claude",
+            default_model: "",
+            default_effort: "",
+          },
+          warnings: [],
+        });
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "app_close_hides") return Promise.resolve(false);
       if (command === "set_app_close_guard" || command === "complete_app_close")

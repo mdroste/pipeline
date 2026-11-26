@@ -87,6 +87,9 @@ fn find_poppler(bases: impl IntoIterator<Item = PathBuf>, windows: bool) -> Opti
     bases
         .into_iter()
         .flat_map(|base| [base.join("resources/poppler"), base.join("poppler"), base])
+        // Windows Poppler resolves ../../share/poppler from Library/bin.
+        // Preserve the upstream layout, with legacy flat bundles supported.
+        .flat_map(|base| [base.join("Library/bin"), base.join("bin"), base])
         .find(|dir| dir.join(bin).is_file())
         .and_then(|dir| dir.canonicalize().ok())
 }
@@ -108,9 +111,17 @@ pub fn bundled_poppler_dir() -> Option<&'static Path> {
         })
 }
 
-/// The signed llama.cpp Vulkan server Windows installers place beside Poppler.
+/// Compatibility with older Windows installers that bundled the signed server.
 pub fn bundled_gpu_server() -> Option<PathBuf> {
-    bundled_poppler_dir()?
+    let poppler = bundled_poppler_dir()?;
+    let poppler = if poppler.ends_with("Library/bin") {
+        poppler.parent()?.parent()?
+    } else if poppler.file_name().is_some_and(|name| name == "bin") {
+        poppler.parent()?
+    } else {
+        poppler
+    };
+    poppler
         .parent()
         .map(|resources| resources.join("llama-vulkan").join("llama-server.exe"))
         .filter(|server| server.is_file())

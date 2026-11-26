@@ -1,0 +1,19 @@
+/* Keep both the real dialog and its guide reachable when they cannot sit side by side. */
+@media (max-width: 1160px) {
+  .project-tutorial [data-project-tour="create"] {
+    align-items: flex-start;
+  }
+  .project-tutorial [data-project-tour="create"] form,
+  .project-tutorial .overview-dialog {
+    max-height: max(
+      8rem,
+      calc(100dvh - var(--tutorial-coach-height, 20rem) - 3rem)
+    );
+  }
+  .project-tutorial .review-tutorial-screen {
+    scroll-padding-bottom: calc(var(--tutorial-coach-height, 20rem) + 2rem);
+  }
+  .project-tutorial .project-page {
+    padding-bottom: calc(var(--tutorial-coach-height, 20rem) + 2rem);
+  }
+}

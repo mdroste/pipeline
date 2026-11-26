@@ -340,7 +340,7 @@ async fn build_indexed_orientation_map(
     } else {
         settings.orientation_effort(&provider)
     };
-    let timeout = (settings.step_timeout_secs / 2).max(60);
+    let timeout = settings.step_timeout_secs.max(60);
     let mut initial = None;
     let mut targeted_files = None;
     for attempt in 0..=MAX_RETRIES + 1 {
@@ -394,8 +394,8 @@ async fn build_indexed_orientation_map(
                 // transport failure on this single required call must not
                 // discard the (possibly long) extraction that preceded it —
                 // retry the identical prompt like any step call would.
-                if crate::commands::is_cancelled()
-                    || crate::commands::is_pass_cancelled("orientation")
+                if crate::cancellation::is_cancelled()
+                    || crate::cancellation::is_pass_cancelled("orientation")
                 {
                     return Err(error);
                 }

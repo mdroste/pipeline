@@ -62,7 +62,7 @@ pub(super) fn capture_git(
     crate::process::configure_isolation(&mut command);
     let mut child = command.spawn().map_err(err)?;
     let pid = child.id();
-    crate::commands::lifecycle::register_independent_child_pid(pid);
+    crate::process_tree::register_independent_child_pid(pid);
     let started = Instant::now();
     let mut wait = Duration::from_millis(1);
     let result = loop {
@@ -99,9 +99,9 @@ pub(super) fn capture_git(
         }
     };
     // Reap descendants even after leader exit.
-    crate::commands::lifecycle::kill_independent_process(pid);
+    crate::process_tree::kill_independent_process(pid);
     let _ = child.wait();
-    crate::commands::lifecycle::unregister_independent_child_pid(pid);
+    crate::process_tree::unregister_independent_child_pid(pid);
     use std::io::{Seek, SeekFrom};
     let mut out = out;
     let mut error = error;

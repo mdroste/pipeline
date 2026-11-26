@@ -102,6 +102,11 @@ export function useFindBar(
   const [count, setCount] = useState(0);
   const [capped, setCapped] = useState(false);
   const [current, setCurrent] = useState(0);
+  // Highlighting replaces text nodes the owner rendered, and clearing merges
+  // them into new nodes, so the owner's references stay stale even after the
+  // marks are gone. Counting each mutation lets an owner that keeps its content
+  // mounted remount it only when this has happened since it last mounted.
+  const [mutations, setMutations] = useState(0);
   const marksRef = useRef<HTMLElement[]>([]);
 
   const focusMark = useCallback((i: number) => {
@@ -127,6 +132,7 @@ export function useFindBar(
       return;
     }
     const { marks, capped: hitCap } = applyHighlights(container, query);
+    if (marks.length > 0) setMutations((value) => value + 1);
     marksRef.current = marks;
     setCount(marks.length);
     setCapped(hitCap);
@@ -192,5 +198,6 @@ export function useFindBar(
     next,
     prev,
     close,
+    mutations,
   };
 }

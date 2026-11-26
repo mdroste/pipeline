@@ -172,7 +172,7 @@ pub(super) fn render_pdf_pages_with_profile(
     let output = match run_bounded_output(
         command,
         "pdftoppm",
-        std::time::Duration::from_secs(crate::settings::load().step_timeout_secs.max(60)),
+        std::time::Duration::from_secs(crate::settings::load().pdf_extraction_timeout_secs),
         1_000_000,
         Some(out_dir),
     ) {

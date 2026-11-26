@@ -13,9 +13,7 @@ mod journal;
 pub mod probe;
 mod tools;
 
-pub use connection::{
-    shutdown, workflow_codex_login_cancel, workflow_codex_login_start, workflow_codex_status,
-};
+pub use connection::{shutdown, workflow_codex_status};
 pub use invocation::call_codex;
 
 #[cfg(test)]

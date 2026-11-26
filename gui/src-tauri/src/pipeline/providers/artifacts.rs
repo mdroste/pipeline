@@ -116,8 +116,8 @@ pub(in crate::pipeline) async fn supervise_artifact_writes(
             // The researcher cancelled nothing, so the pass stays uncancelled
             // and this error is the one the step reports.
             match &pass_key {
-                Some(key) => crate::commands::kill_pass_children(key),
-                None => crate::commands::kill_all_children(),
+                Some(key) => crate::process_tree::kill_pass_children(key),
+                None => crate::process_tree::kill_all_children(),
             }
             return Err(artifact_limit_error(error));
         }
@@ -126,7 +126,7 @@ pub(in crate::pipeline) async fn supervise_artifact_writes(
 
 /// A stop noticed during the scan stays a cancellation.
 fn artifact_limit_error(error: String) -> String {
-    if crate::commands::is_pipeline_cancellation_error(&error) {
+    if crate::cancellation::is_pipeline_cancellation_error(&error) {
         error
     } else {
         format!(
@@ -167,7 +167,7 @@ mod tests {
         assert!(crate::pipeline::provider_error::is_non_retryable_error(
             &error
         ));
-        assert!(!crate::commands::is_pipeline_cancellation_error(&error));
+        assert!(!crate::cancellation::is_pipeline_cancellation_error(&error));
         assert!(!run.scope().is_pass_cancelled("audit"));
     }
 

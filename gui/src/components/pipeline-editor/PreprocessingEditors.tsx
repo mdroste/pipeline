@@ -261,7 +261,7 @@ function OrientationEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-green-700 dark:bg-gray-800 dark:text-gray-300">
+          <span className="rounded bg-success-soft px-1.5 py-0.5 text-[0.625rem] font-medium text-success dark:bg-gray-800 dark:text-gray-300">
             Required
           </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">

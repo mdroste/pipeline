@@ -3,7 +3,7 @@ use crate::orchestration::{
     definition::{Action, Chain, Step},
     store::{err, Result, Scope},
 };
-use crate::workbench::{commands::run_store, tasks};
+use crate::workbench::{runtime::run_store, tasks};
 use serde_json::Value;
 
 pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> Result<Scope> {
@@ -251,7 +251,7 @@ pub fn task_binding(scope: &Scope) -> Result<tasks::TaskBinding> {
 pub fn available(action: &Action, scope: &Scope) -> bool {
     match action {
         Action::Workspace { .. } | Action::Check { .. } | Action::CapturedCheck { .. } => {
-            crate::workbench::commands::task_turn_available()
+            crate::workbench::runtime::task_turn_available()
                 && !scope
                     .workspace_id
                     .as_deref()

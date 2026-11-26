@@ -16,6 +16,8 @@ pub enum ConnectionId {
     Chatgpt,
     #[serde(rename = "claude")]
     ClaudeCode,
+    #[serde(rename = "claude-code-api")]
+    ClaudeCodeApi,
     #[serde(rename = "openai-api")]
     OpenAiApi,
     #[serde(rename = "anthropic-api")]
@@ -42,7 +44,7 @@ impl ConnectionId {
         match self {
             Self::Chatgpt if settings.codex_backend == "legacy_cli" => Transport::CodexCli,
             Self::Chatgpt => Transport::CodexAppServer,
-            Self::ClaudeCode => Transport::ClaudeCode,
+            Self::ClaudeCode | Self::ClaudeCodeApi => Transport::ClaudeCode,
             Self::OpenAiApi => Transport::OpenAiChat,
             Self::AnthropicApi => Transport::AnthropicMessages,
             Self::GeminiApi => Transport::Gemini,
@@ -54,6 +56,7 @@ impl ConnectionId {
         match value {
             "codex" => Ok(Self::Chatgpt),
             "claude" => Ok(Self::ClaudeCode),
+            "claude-code-api" => Ok(Self::ClaudeCodeApi),
             "openai-api" => Ok(Self::OpenAiApi),
             "anthropic-api" => Ok(Self::AnthropicApi),
             "google-api" => Ok(Self::GeminiApi),
@@ -66,6 +69,7 @@ impl ConnectionId {
         let api =
             |mode: &str, key: &str| mode == "api" || (mode.is_empty() && !key.trim().is_empty());
         match provider {
+            "claude" | "" if settings.claude_access_mode == "code_api" => Ok(Self::ClaudeCodeApi),
             "claude" | "" if api(&settings.claude_access_mode, &settings.anthropic_api_key) => {
                 Ok(Self::AnthropicApi)
             }
@@ -78,6 +82,12 @@ impl ConnectionId {
             "local" => Ok(Self::Local),
             _ => Err("Choose a connection in Settings.".into()),
         }
+    }
+
+    /// Subscription exhaustion must never opt a Claude caller into API billing.
+    /// Custom endpoints may also bill, so only subscription backups are eligible.
+    pub fn permits_usage_fallback(self, target: Self) -> bool {
+        self != Self::ClaudeCode || matches!(target, Self::ClaudeCode | Self::Chatgpt)
     }
 
     pub fn api(self) -> Option<ApiProvider> {
@@ -93,7 +103,7 @@ impl ConnectionId {
     pub fn catalog_provider(self) -> &'static str {
         match self {
             Self::Chatgpt | Self::OpenAiApi => "codex",
-            Self::ClaudeCode | Self::AnthropicApi => "claude",
+            Self::ClaudeCode | Self::ClaudeCodeApi | Self::AnthropicApi => "claude",
             Self::GeminiApi => "antigravity",
             Self::Local => "local",
         }

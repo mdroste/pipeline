@@ -138,7 +138,7 @@ export function DocumentBundleView({
             Extraction quality
           </h3>
           {(bundle.quality ?? []).length === 0 ? (
-            <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
+            <p className="mt-2 text-xs text-success">
               No extraction warnings recorded.
             </p>
           ) : (
@@ -209,7 +209,7 @@ export function DocumentBundleView({
                     {asset.rel_path}
                   </div>
                   {!canOpen && (
-                    <div className="mt-1 text-[0.625rem] text-amber-700 dark:text-amber-300">
+                    <div className="mt-1 text-[0.625rem] text-warning">
                       Asset missing from this report
                     </div>
                   )}
@@ -237,7 +237,7 @@ export function DocumentBundleView({
                 }}
                 className={`rounded-full border px-2 py-0.5 text-[0.6875rem] ${
                   kindFilter === kind
-                    ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+                    ? "ui-selected"
                     : "border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300"
                 }`}
               >

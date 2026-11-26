@@ -44,7 +44,7 @@ describe("WorkflowGalleryPage", () => {
     render(<WorkflowGalleryPage onInstalled={vi.fn()} />);
 
     expect(
-      screen.getByRole("heading", { level: 1, name: "Workflow gallery" }),
+      screen.getByRole("heading", { level: 1, name: "Review design gallery" }),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Teaching" }));
     expect(screen.getByRole("button", { name: "Teaching" })).toHaveAttribute(

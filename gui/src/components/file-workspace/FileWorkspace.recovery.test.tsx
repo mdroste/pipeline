@@ -105,7 +105,7 @@ function held<T>() {
 }
 const tick = () =>
   act(async () => {
-    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(2300);
   });
 const restore = (id: string, tabs: string[], active: string) =>
   localStorage.setItem(
@@ -114,6 +114,22 @@ const restore = (id: string, tabs: string[], active: string) =>
   );
 const editor = (path: string) =>
   screen.findByLabelText(`Source editor: ${path}`);
+
+it("does not confirm unchanged open files a second time", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const adapter = polled(
+    vi.fn(async (path) => file(path)),
+    () => "stamp-1",
+  );
+  render(
+    <FileWorkspace adapter={adapter} paths={[]} initial={{ path: "a.py" }} />,
+  );
+  await editor("a.py");
+  await tick();
+  expect(adapter.stat).toHaveBeenCalledTimes(1);
+  expect(adapter.stat).toHaveBeenCalledWith(["a.py"]);
+  expect(adapter.read).toHaveBeenCalledTimes(1);
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

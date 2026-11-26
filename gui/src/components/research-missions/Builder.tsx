@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 /** Full-width, tabbed setup keeps draft state and validation shared across sections. */
 import { useEffect, useId, useRef, useState } from "react";
 import { workflowProfileClient } from "../../lib/workflowProfileClient";
@@ -210,13 +212,13 @@ export default function MissionBuilder({
               Change type
             </button>
           )}
-          <button
+          <IconButton
             type="button"
             onClick={onClose}
-            aria-label="Close research automation builder"
+            label="Close research automation builder"
           >
-            ×
-          </button>
+            <Icon name="close" className="h-4 w-4" />
+          </IconButton>
         </div>
       </div>
       <fieldset disabled={busy} className="mission-fields">

@@ -142,6 +142,18 @@ const MIGRATIONS: [(&str, &str); CURRENT_SCHEMA_VERSION as usize] = [
         include_str!("../migrations/025_document_types.sql"),
         "Failed to add document types",
     ),
+    (
+        include_str!("../migrations/026_project_read_indexes.sql"),
+        "Failed to index project evidence and note history",
+    ),
+    (
+        include_str!("../migrations/027_project_integrations.sql"),
+        "Failed to add project integration and source-context records",
+    ),
+    (
+        include_str!("../migrations/028_conversation_indexes.sql"),
+        "Failed to index conversation records and trim inventory history",
+    ),
 ];
 
 fn apply_migrations(transaction: &Transaction<'_>, from: u32, through: u32) -> WorkbenchResult<()> {

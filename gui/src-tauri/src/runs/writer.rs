@@ -490,7 +490,7 @@ impl Drop for RunWriter {
         if self.finished {
             return;
         }
-        self.meta.status = if crate::commands::is_cancelled() {
+        self.meta.status = if crate::cancellation::is_cancelled() {
             "cancelled".to_string()
         } else {
             "failed".to_string()

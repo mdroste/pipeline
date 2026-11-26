@@ -5,6 +5,9 @@ import { createPortal } from "react-dom";
 import useConversationIndex from "../hooks/useConversationIndex";
 import useModalDialog from "../hooks/useModalDialog";
 import useSearchSources from "../hooks/useSearchSources";
+import useResearchSearch from "../hooks/useResearchSearch";
+import useFullTextSearch from "../hooks/useFullTextSearch";
+import { searchExcerpt } from "../lib/researchSearch";
 import { router, type AppRoute } from "../lib/router";
 import {
   openDestinations,
@@ -22,10 +25,18 @@ interface SearchEntry {
   hint: string;
   group: string;
   current?: boolean;
+  text?: string;
+  preview?: string;
+  matchedQuery?: string;
+  projectId?: string | null;
   run: () => void;
 }
 
 const goTo = (route: AppRoute) => () => void router.navigate(route);
+const contentTarget = (route: AppRoute) =>
+  route.page === "workspace"
+    ? JSON.stringify([route.projectId, route.revisionId, route.file])
+    : null;
 
 const PAGES: SearchEntry[] = (
   [
@@ -41,9 +52,18 @@ const PAGES: SearchEntry[] = (
   ] as const
 ).map(([label, route]) => ({
   id: `page:${route.page}`,
-  group: "Pages",
+  group: "Actions",
   label,
-  hint: route.page === "project-index" ? "Projects and chats" : "Go to",
+  hint:
+    route.page === "main"
+      ? "Open setup · no review starts"
+      : "Navigate · all projects",
+  text:
+    route.page === "project-index"
+      ? "chats conversations"
+      : route.page === "pipeline"
+        ? "workflow profile review design"
+        : "",
   run: goTo(route),
 }));
 
@@ -61,21 +81,47 @@ export default function AppSearch({
   const title = useId();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
-  const { projects, runs, tasks, states, retry } = useSearchSources();
+  const {
+    projects,
+    runs,
+    tasks,
+    states,
+    retry,
+    taskNotices,
+    moreTasks,
+    loadMoreTasks,
+  } = useSearchSources();
   const chats = useConversationIndex(true, false, query, false, true);
   const { conversations } = chats;
   const [expanded, setExpanded] = useState<string[]>([]);
   const workspace = useNavRailSlot()?.workspace;
+  const [scope, setScope] = useState(workspace?.projectId ? "project" : "all");
+  const [kind, setKind] = useState("All types");
+  const scopeId = scope === "project" ? (workspace?.projectId ?? null) : null;
+  const research = useResearchSearch(projects, runs, scopeId);
+  const fullText = useFullTextSearch(
+    research.scopedProjects,
+    research.documents,
+    query,
+    kind,
+    research.contentLoading,
+  );
+  const notices = [...research.notices, ...fullText.notices, ...taskNotices];
+  const contentCount = `${fullText.documents} ${fullText.documents === 1 ? "document" : "documents"} and ${fullText.files} ${fullText.files === 1 ? "file" : "files"}`;
   const viewProject = workspace?.projectId ?? projects[0]?.id ?? null;
   const projectName =
     workspace?.projectName ?? projects.find((p) => p.id === viewProject)?.name;
   const entries = useMemo<SearchEntry[]>(() => {
+    const contentTargets = new Set(
+      fullText.entries.map((entry) => contentTarget(entry.route)),
+    );
     const views =
       viewProject && projectName
         ? openDestinations.map((id) => ({
             id: `view:${id}`,
             label: `${workspaceDestinations[id].label} · ${projectName}`,
             group: "Project tools",
+            projectId: viewProject,
             current: !!workspace?.projectId,
             hint: `Project view · ${
               workspaceSections.find(
@@ -97,6 +143,7 @@ export default function AppSearch({
       ...projects.map((project) => ({
         id: `project:${project.id}`,
         group: "Projects",
+        projectId: project.id,
         current: project.id === workspace?.projectId,
         label: project.name,
         hint: "Project",
@@ -109,7 +156,9 @@ export default function AppSearch({
       })),
       ...conversations.map(({ session, projectName }) => ({
         id: `conversation:${session.id}`,
-        group: "Chats",
+        group: "Conversations",
+        projectId: session.workspaceId,
+        text: "chat chats conversation conversations",
         current:
           !!workspace?.projectId && session.workspaceId === workspace.projectId,
         label: session.title,
@@ -118,19 +167,56 @@ export default function AppSearch({
       })),
       ...PAGES,
       ...views,
+      ...[
+        ...research.entries.filter(
+          (entry) => !contentTargets.has(contentTarget(entry.route)),
+        ),
+        ...fullText.entries,
+      ].map((entry) => ({
+        ...entry,
+        preview: searchExcerpt(entry.text, query),
+        run: goTo(entry.route),
+        projectId:
+          entry.route.page === "workspace" || entry.route.page === "history"
+            ? entry.route.projectId
+            : null,
+      })),
       ...runs.map((run) => ({
         id: `review:${run.run_id}`,
         group: "Reviews",
+        projectId: research.runProjects.get(run.run_id)?.id,
         label: run.title || run.input_name,
-        hint: `Review · ${run.profile_name}`,
-        run: () => onOpenRun(run.run_id),
+        hint: [
+          "Review",
+          research.runProjects.get(run.run_id)?.name,
+          run.profile_name,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        run: research.runProjects.has(run.run_id)
+          ? goTo({
+              page: "history",
+              runId: run.run_id,
+              projectId: research.runProjects.get(run.run_id)!.id,
+            })
+          : () => onOpenRun(run.run_id),
       })),
       ...tasks.map((task) => ({
         id: `automation:${task.id}`,
         group: "Automations",
+        projectId: task.projectId,
         label: task.name,
-        hint: "Automation",
-        run: goTo({ page: "tasks", taskId: task.id }),
+        hint: [
+          "Automation",
+          projects.find((p) => p.id === task.projectId)?.name,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        run: goTo({
+          page: "tasks",
+          taskId: task.id,
+          ...(task.projectId ? { projectId: task.projectId } : {}),
+        }),
       })),
     ];
   }, [
@@ -143,6 +229,10 @@ export default function AppSearch({
     viewProject,
     projectName,
     workspace,
+    research.entries,
+    research.runProjects,
+    fullText.entries,
+    query,
   ]);
   const groups = useMemo(() => {
     const needle = query.toLocaleLowerCase().trim();
@@ -154,12 +244,29 @@ export default function AppSearch({
           ? 40
           : 0) + (entry.current ? 10 : 0);
     const filtered = entries
-      .filter((entry) =>
-        terms.every((term) =>
-          (entry.label + " " + entry.hint).toLocaleLowerCase().includes(term),
-        ),
+      .filter(
+        (entry) =>
+          (!scopeId ||
+            entry.projectId === scopeId ||
+            entry.group === "Actions") &&
+          (kind === "All types" || entry.group === kind),
       )
-      .sort((a, b) => score(b) - score(a));
+      .filter(
+        (entry) =>
+          entry.matchedQuery === needle ||
+          terms.every((term) =>
+            (entry.label + " " + entry.hint + " " + (entry.text ?? ""))
+              .toLocaleLowerCase()
+              .includes(term),
+          ),
+      )
+      .sort(
+        (a, b) =>
+          score(b) - score(a) ||
+          a.label.localeCompare(b.label) ||
+          a.hint.localeCompare(b.hint) ||
+          a.id.localeCompare(b.id),
+      );
     const byGroup = new Map<string, SearchEntry[]>();
     for (const entry of filtered)
       byGroup.set(entry.group, [...(byGroup.get(entry.group) ?? []), entry]);
@@ -168,14 +275,18 @@ export default function AppSearch({
       items,
       visible: expanded.includes(label) ? items : items.slice(0, GROUP_LIMIT),
     }));
-  }, [entries, query, expanded]);
+  }, [entries, query, expanded, scopeId, kind]);
   const matches = groups.flatMap((group) => group.visible);
-  const loading = chats.loading || Object.values(states).includes("loading");
+  const loading =
+    chats.loading ||
+    fullText.loading ||
+    research.loading ||
+    Object.values(states).includes("loading");
   const failures = [
     ...Object.entries(states)
       .filter(([, state]) => state === "error")
       .map(([name]) => name),
-    ...(chats.error ? ["Chats"] : []),
+    ...(chats.error ? ["Conversations"] : []),
   ];
   const selected = Math.min(index, matches.length - 1);
   useEffect(() => {
@@ -215,12 +326,13 @@ export default function AppSearch({
           role="combobox"
           aria-expanded="true"
           aria-autocomplete="list"
+          aria-describedby={`${title}-coverage`}
           aria-label="Search Pipeline"
-          placeholder="Find a project, chat, review, or tool…"
+          placeholder="Find documents, findings, notes, files…"
           value={query}
           aria-controls={`${title}-results`}
           aria-activedescendant={
-            selected >= 0 ? `${title}-${matches[selected].id}` : undefined
+            selected >= 0 ? `${title}-result-${selected}` : undefined
           }
           onChange={(event) => {
             setQuery(event.target.value);
@@ -249,9 +361,77 @@ export default function AppSearch({
             }
           }}
         />
-        <p className="px-4 pb-2 text-ui-meta text-ink-muted">
-          Searches names and titles. To search document text, open its project.
+        <div className="search-filters">
+          <label>
+            Scope
+            <select
+              className="ui-input"
+              value={scope}
+              onChange={(event) => {
+                setScope(event.target.value);
+                setIndex(0);
+                setExpanded([]);
+              }}
+            >
+              <option value="all">All projects</option>
+              <option value="project" disabled={!workspace?.projectId}>
+                This project
+                {workspace?.projectName ? ` · ${workspace.projectName}` : ""}
+              </option>
+            </select>
+          </label>
+          <label>
+            Type
+            <select
+              className="ui-input"
+              value={kind}
+              onChange={(event) => {
+                setKind(event.target.value);
+                setIndex(0);
+                setExpanded([]);
+              }}
+            >
+              {[
+                "All types",
+                "Projects",
+                "Documents",
+                "Findings",
+                "Notes",
+                "Files",
+                "Conversations",
+                "Reviews",
+                "Automations",
+                "Project tools",
+                "Actions",
+              ].map((type) => (
+                <option key={type}>{type}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p
+          className="px-4 pb-2 text-ui-meta text-ink-muted"
+          id={`${title}-coverage`}
+        >
+          {scopeId
+            ? `Searching ${workspace?.projectName ?? "this project"}. `
+            : "Searching active projects and unfiled work. "}
+          Names, saved notes and findings, current captured document versions,
+          and text files in project folders. Contents match the phrase you type.
+          Archived records, older document versions, conversation messages,
+          binary files, and ignored folders are excluded. File names also use
+          the saved file list.
+          {scopeId && " Actions navigate across the app."}
         </p>
+        {fullText.enabled && (
+          <p role="status" className="px-4 pb-2 text-ui-meta text-ink-muted">
+            {!fullText.valid
+              ? "Enter at least 2 characters to search contents; shorten very long queries."
+              : fullText.loading
+                ? `Searching contents… ${contentCount} searched.`
+                : `Contents searched: ${contentCount}.`}
+          </p>
+        )}
         {loading && (
           <p role="status" className="px-4 pb-2 text-ui-label">
             Loading saved work…
@@ -265,11 +445,35 @@ export default function AppSearch({
               onClick={() => {
                 retry();
                 chats.refresh();
+                research.retry();
+                fullText.retry();
               }}
             >
               Retry search
             </button>
           </div>
+        )}
+        {notices.length > 0 && (
+          <details className="search-coverage">
+            <summary>
+              Some sources are unavailable or incomplete ({notices.length})
+            </summary>
+            <ul>
+              {notices.map((notice, i) => (
+                <li key={i}>{notice}</li>
+              ))}
+            </ul>
+            <button
+              className="ui-button ui-button--quiet ui-button--sm"
+              onClick={() => {
+                research.retry();
+                fullText.retry();
+                retry();
+              }}
+            >
+              Retry content sources
+            </button>
+          </details>
         )}
         <div
           id={`${title}-results`}
@@ -292,21 +496,71 @@ export default function AppSearch({
                 role="option"
                 aria-selected={row === selected}
                 tabIndex={-1}
-                id={`${title}-${entry.id}`}
+                id={`${title}-result-${row}`}
                 key={entry.id}
                 data-highlighted={row === selected}
                 onClick={() => choose(entry)}
               >
-                <span>{entry.label}</span>
+                <span className="search-result-label">
+                  {entry.label}
+                  {entry.preview && (
+                    <span className="search-result-preview">
+                      {entry.preview}
+                    </span>
+                  )}
+                </span>
                 <small>{entry.hint}</small>
               </button>
             </Fragment>
           ))}
-          {!matches.length && !loading && !failures.length && (
-            <p>Nothing matches “{query}”.</p>
+          {!matches.length && !loading && (
+            <p>
+              {failures.length ||
+              notices.length ||
+              moreTasks ||
+              research.more ||
+              chats.more
+                ? "No matches in the available results. Coverage is incomplete."
+                : `Nothing matches “${query}” in this scope.`}
+            </p>
           )}
         </div>
         <div className="flex flex-wrap gap-2 px-4 py-2">
+          {moreTasks && (
+            <button
+              className="ui-button ui-button--quiet ui-button--sm"
+              disabled={states.Automations === "loading"}
+              onClick={loadMoreTasks}
+            >
+              Search older automations
+            </button>
+          )}
+          {fullText.more && (
+            <button
+              className="ui-button ui-button--quiet ui-button--sm"
+              disabled={fullText.loading}
+              onClick={fullText.loadMore}
+            >
+              Load more matching passages
+            </button>
+          )}
+          {research.more && (
+            <button
+              className="ui-button ui-button--quiet ui-button--sm"
+              onClick={research.loadMore}
+            >
+              Search older findings (newest {research.limit} reviews searched)
+            </button>
+          )}
+          {chats.more && (
+            <button
+              className="ui-button ui-button--quiet ui-button--sm"
+              disabled={chats.loading}
+              onClick={chats.loadMore}
+            >
+              Load more conversations
+            </button>
+          )}
           {groups
             .filter((g) => g.items.length > g.visible.length)
             .map((g) => (

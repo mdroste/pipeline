@@ -176,7 +176,9 @@ pub(super) fn provider_discovery_error(program: &str, error: &serde_json::Value)
 /// Ask Claude Code for the same account-aware model list exposed by its
 /// interactive `/model` picker. This is the documented Agent SDK initialize
 /// handshake: it does not submit a user prompt or make a model call.
-async fn claude_sdk_initialize() -> Result<serde_json::Value, String> {
+async fn claude_sdk_initialize(
+    mode: crate::agent_runtime::claude::AuthMode,
+) -> Result<serde_json::Value, String> {
     let args = [
         "-p",
         "--input-format",
@@ -196,7 +198,9 @@ async fn claude_sdk_initialize() -> Result<serde_json::Value, String> {
     .into_iter()
     .map(str::to_string)
     .collect::<Vec<_>>();
-    let mut command = crate::agent_runtime::claude::subscription_command(&args, None).await?;
+    let resolved = crate::agent_runtime::claude::verified_auth(mode).await?;
+    let mut command =
+        crate::agent_runtime::claude::verified_auth_command(&resolved, mode, None, &args, None);
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())
@@ -324,7 +328,10 @@ pub(super) fn populate_claude_models(
     Ok(())
 }
 
-pub(super) async fn cli_catalog(provider: &str) -> Result<ModelCatalog, String> {
+pub(super) async fn cli_catalog(
+    provider: &str,
+    mode: crate::agent_runtime::claude::AuthMode,
+) -> Result<ModelCatalog, String> {
     let program = match provider {
         "claude" => "claude",
         "codex" => "codex",
@@ -371,7 +378,7 @@ pub(super) async fn cli_catalog(provider: &str) -> Result<ModelCatalog, String> 
             }
         }
         "claude" => {
-            let initialization = claude_sdk_initialize().await?;
+            let initialization = claude_sdk_initialize(mode).await?;
             populate_claude_models(&mut catalog, &initialization)?;
         }
         _ => unreachable!(),

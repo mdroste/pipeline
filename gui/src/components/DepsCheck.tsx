@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import { useId } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DepsReport } from "../lib/settingsTypes";
@@ -40,22 +41,21 @@ const TONE_STYLES: Record<
 > = {
   success: {
     row: "bg-gray-50/70 dark:bg-neutral-800/30",
-    icon: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-    badge:
-      "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-    text: "text-emerald-700 dark:text-emerald-300",
+    icon: "bg-success-soft text-success",
+    badge: "bg-success-soft text-success",
+    text: "text-success",
   },
   warning: {
-    row: "bg-amber-50/70 dark:bg-amber-950/20",
-    icon: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
-    badge: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
-    text: "text-amber-700 dark:text-amber-300",
+    row: "bg-warning-soft",
+    icon: "bg-warning-soft text-warning",
+    badge: "bg-warning-soft text-warning",
+    text: "text-warning",
   },
   danger: {
-    row: "bg-red-50/80 dark:bg-red-950/25",
-    icon: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
-    badge: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
-    text: "text-red-700 dark:text-red-300",
+    row: "bg-danger-soft",
+    icon: "bg-danger-soft text-danger",
+    badge: "bg-danger-soft text-danger",
+    text: "text-danger",
   },
   neutral: {
     row: "bg-gray-50/80 dark:bg-gray-800/45",
@@ -104,60 +104,13 @@ function StatusIcon({ tone }: { tone: StatusTone }) {
       className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${styles.icon}`}
     >
       {tone === "success" ? (
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.4}
-            d="M5 13l4 4L19 7"
-          />
-        </svg>
+        <Icon name="check" className="h-3 w-3" />
       ) : tone === "danger" ? (
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.4}
-            d="M6 18L18 6M6 6l12 12"
-          />
-        </svg>
+        <Icon name="close" className="h-3 w-3" />
       ) : tone === "warning" ? (
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2.2}
-            d="M12 8v5m0 3h.01"
-          />
-        </svg>
+        <Icon name="warning" className="h-3 w-3" />
       ) : (
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeWidth={2.2} d="M7 12h10" />
-        </svg>
+        <Icon name="minus" className="h-3 w-3" />
       )}
     </span>
   );
@@ -413,7 +366,7 @@ export default function DepsCheck({
         {failed ? (
           <p
             role="alert"
-            className="mt-5 rounded-xl bg-red-50/80 px-3.5 py-3 text-sm [overflow-wrap:anywhere] text-red-700 dark:bg-red-950/25 dark:text-red-300"
+            className="mt-5 rounded-xl bg-danger-soft px-3.5 py-3 text-sm [overflow-wrap:anywhere] text-danger"
           >
             {error}
             <ReportIssueLink />
@@ -514,9 +467,7 @@ export default function DepsCheck({
 
         <div className="mt-5 flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
           {hasBlockers && !checking && (
-            <p className="mr-auto text-sm text-red-600 dark:text-red-400">
-              {blockerMessage}
-            </p>
+            <p className="mr-auto text-sm text-danger">{blockerMessage}</p>
           )}
           {failed && onRetry && <Button onClick={onRetry}>Try again</Button>}
           <button

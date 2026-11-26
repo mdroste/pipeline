@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 import { lazy, Suspense } from "react";
 import type { ComponentProps } from "react";
 import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
@@ -108,13 +110,13 @@ export default function WorkspaceInspectors({
         >
           <div className="workspace-inspector-heading">
             <h2>Activity</h2>
-            <button
+            <IconButton
               type="button"
               onClick={() => closeInspector()}
-              aria-label="Close inspector"
+              label="Close inspector"
             >
-              ×
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
           <p role="status">
             {running

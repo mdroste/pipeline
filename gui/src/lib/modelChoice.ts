@@ -93,8 +93,8 @@ export function unsetModel(
 }
 
 /**
- * The first option of a model menu: who picks, then the model, as in
- * "Claude Code's choice: Opus 5.5".
+ * The first option of a model menu. Put the value first so narrow selectors
+ * keep the model visible; the full summary can be used as a tooltip.
  */
 export function unsetModelOption(
   settings: Settings,
@@ -105,8 +105,8 @@ export function unsetModelOption(
   const model = unsetModel(settings, provider, catalog);
   if (model.source === "local")
     return `Local server: ${model.name ?? "no model selected"}`;
-  if (model.source === "default") return `Default model: ${model.name}`;
-  if (model.name) return `${model.chooser}'s choice: ${model.name}`;
+  if (model.source === "default") return `${model.name} (default)`;
+  if (model.name) return `${model.name} (auto)`;
   return `${model.chooser}'s choice${loading ? " (checking…)" : ""}`;
 }
 
@@ -127,15 +127,66 @@ export function unsetModelSummary(
     : `${model.chooser}'s choice`;
 }
 
+/** Resolve the model whose capabilities/defaults apply to this selection. */
+export function selectedModelId(
+  settings: Settings,
+  provider: string,
+  catalog?: ModelCatalog,
+  selection?: ModelSelection,
+): string | null {
+  if (selection?.mode === "pinned") return selection.model;
+  if (selection?.mode === "role")
+    return (
+      catalog?.roles.find((role) => role.id === selection.role)?.model ?? null
+    );
+  return unsetModel(
+    selection?.mode === "automatic" ? withoutDefaultModel(settings) : settings,
+    provider,
+    catalog,
+  ).id;
+}
+
+function unsetEffortValue(
+  settings: Settings,
+  provider: string,
+  catalog?: ModelCatalog,
+  selection?: ModelSelection,
+): string | undefined {
+  if (provider === settings.preferred_provider && settings.default_effort)
+    return settings.default_effort;
+  const id = selectedModelId(settings, provider, catalog, selection);
+  return (
+    catalog?.models.find((model) => model.id === id)?.default_effort?.trim() ||
+    undefined
+  );
+}
+
+/** Compact select text: the level stays visible even if the suffix is clipped. */
+export function unsetEffortOption(
+  settings: Settings,
+  provider: string,
+  catalog?: ModelCatalog,
+  selection?: ModelSelection,
+): string {
+  const effort = unsetEffortValue(settings, provider, catalog, selection);
+  return effort ? `${capitalize(effort)} (default)` : "Provider default";
+}
+
 /** The thinking level used when a stage or step sets none. */
-export function unsetEffortLabel(settings: Settings, provider: string): string {
+export function unsetEffortLabel(
+  settings: Settings,
+  provider: string,
+  catalog?: ModelCatalog,
+  selection?: ModelSelection,
+): string {
   if (provider === settings.preferred_provider && settings.default_effort)
     return `Default thinking: ${capitalize(settings.default_effort)}`;
   const who =
     provider === "local"
       ? "Local server"
       : connectionFor(settings, provider).label;
-  return `${who} default thinking`;
+  const effort = unsetEffortValue(settings, provider, catalog, selection);
+  return `${who} default thinking${effort ? `: ${capitalize(effort)}` : ""}`;
 }
 
 /**
@@ -166,7 +217,11 @@ export function stageModelDetails(
       ? `${role.label} (${modelDisplayName(catalog, role.model)})`
       : selected.role;
   } else {
-    model = unsetModelSummary(settings, provider, catalog);
+    model = unsetModelSummary(
+      selected?.mode === "automatic" ? withoutDefaultModel(settings) : settings,
+      provider,
+      catalog,
+    );
   }
   const effort = efforts?.[key] || efforts?.[provider];
   const family =
@@ -174,7 +229,9 @@ export function stageModelDetails(
   return {
     provider: family,
     model,
-    effort: effort ? capitalize(effort) : unsetEffortLabel(settings, provider),
+    effort: effort
+      ? capitalize(effort)
+      : unsetEffortLabel(settings, provider, catalog, selected),
   };
 }
 

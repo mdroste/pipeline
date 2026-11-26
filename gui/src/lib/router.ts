@@ -41,10 +41,18 @@ export type AppRoute =
       /** Open this project file on entry, at this PDF page. */
       file?: string;
       filePage?: number;
+      fileLine?: number;
+      revisionId?: string;
+      documentStart?: number;
+      documentEnd?: number;
+      documentHash?: string;
+      documentPage?: number;
+      noteId?: string;
     }
   | {
       page: "tasks";
       taskId?: string;
+      projectId?: string;
       taskSessionId?: string;
       discoveryId?: string;
       /** Prefill the automation builder with this input file. */
@@ -58,7 +66,7 @@ export type AppRoute =
       /** Select this review collection on entry; omitted = the first one. */
       collectionId?: string;
     }
-  | { page: "history"; runId?: string }
+  | { page: "history"; runId?: string; findingId?: string; projectId?: string }
   | { page: "settings"; section?: string; targetId?: string }
   | { page: "help"; section?: "privacy" }
   | { page: "activity" };
@@ -111,10 +119,24 @@ export function serializeRoute(route: AppRoute): string {
       if (route.surface) query.set("surface", route.surface);
       if (route.sessionId) query.set("session", route.sessionId);
       if (route.file) query.set("file", route.file);
+      if (route.revisionId) query.set("revision", route.revisionId);
+      if (route.noteId) query.set("note", route.noteId);
       if (route.file && route.filePage)
         query.set("filePage", String(route.filePage));
+      if (route.file && route.fileLine)
+        query.set("fileLine", String(route.fileLine));
+      if (route.revisionId) {
+        if (route.documentStart !== undefined)
+          query.set("start", String(route.documentStart));
+        if (route.documentEnd !== undefined)
+          query.set("end", String(route.documentEnd));
+        if (route.documentHash) query.set("hash", route.documentHash);
+        if (route.documentPage)
+          query.set("documentPage", String(route.documentPage));
+      }
       break;
     case "tasks":
+      if (route.projectId) query.set("project", route.projectId);
       if (route.taskId) query.set("task", route.taskId);
       if (route.taskSessionId) query.set("session", route.taskSessionId);
       if (route.discoveryId) query.set("discovery", route.discoveryId);
@@ -125,6 +147,8 @@ export function serializeRoute(route: AppRoute): string {
       break;
     case "history":
       if (route.runId) query.set("run", route.runId);
+      if (route.findingId) query.set("finding", route.findingId);
+      if (route.projectId) query.set("project", route.projectId);
       break;
     case "settings":
       if (route.section) path += `/${encodeURIComponent(route.section)}`;
@@ -146,6 +170,16 @@ export function parseRoute(
   const raw = serialized.startsWith("#") ? serialized.slice(1) : serialized;
   const [pathPart, queryPart] = raw.split("?", 2);
   const query = new URLSearchParams(queryPart ?? "");
+  const position = (name: string, minimum = 1) => {
+    const raw = query.get(name);
+    const value = Number(raw);
+    return raw !== null &&
+      raw.trim() !== "" &&
+      Number.isSafeInteger(value) &&
+      value >= minimum
+      ? value
+      : undefined;
+  };
   const segments = pathPart.split("/").filter(Boolean);
   if (segments.length === 0) return null;
   // Longest-prefix match so "/reviews/history" wins over "/reviews".
@@ -179,13 +213,35 @@ export function parseRoute(
             : {}),
           ...(query.get("session") ? { sessionId: query.get("session")! } : {}),
           ...(query.get("file") ? { file: query.get("file")! } : {}),
-          ...(query.get("file") && Number(query.get("filePage")) > 0
-            ? { filePage: Math.floor(Number(query.get("filePage"))) }
+          ...(query.get("revision")
+            ? { revisionId: query.get("revision")! }
+            : {}),
+          ...(query.get("note") ? { noteId: query.get("note")! } : {}),
+          ...(query.get("file") && position("filePage") !== undefined
+            ? { filePage: position("filePage") }
+            : {}),
+          ...(query.get("file") && position("fileLine") !== undefined
+            ? { fileLine: position("fileLine") }
+            : {}),
+          ...(query.get("revision") &&
+          query.get("hash") &&
+          position("start", 0) !== undefined &&
+          position("end", 0) !== undefined &&
+          position("end", 0)! >= position("start", 0)!
+            ? {
+                documentStart: position("start", 0),
+                documentEnd: position("end", 0),
+                documentHash: query.get("hash")!,
+                ...(position("documentPage") !== undefined
+                  ? { documentPage: position("documentPage") }
+                  : {}),
+              }
             : {}),
         };
       case "tasks":
         return {
           page,
+          ...(query.get("project") ? { projectId: query.get("project")! } : {}),
           ...(query.get("task") ? { taskId: query.get("task")! } : {}),
           ...(query.get("session")
             ? { taskSessionId: query.get("session")! }
@@ -208,6 +264,8 @@ export function parseRoute(
         return {
           page,
           ...(query.get("run") ? { runId: query.get("run")! } : {}),
+          ...(query.get("finding") ? { findingId: query.get("finding")! } : {}),
+          ...(query.get("project") ? { projectId: query.get("project")! } : {}),
         };
       case "settings":
         return {

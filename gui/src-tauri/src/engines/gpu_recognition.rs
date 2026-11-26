@@ -1,8 +1,7 @@
 //! Optional graphics-card recognition for the Full Parser on Windows.
 //!
-//! The Windows installer carries llama.cpp's Vulkan build, signed with the rest
-//! of the app, because Smart App Control refuses the unsigned upstream files.
-//! This component adds only the GGUF model files that build reads. Once it is
+//! The engine installer downloads a signed llama.cpp Vulkan runtime and the
+//! GGUF model files it reads. Older bundled runtimes remain usable. Once it is
 //! installed, recognition runs through the same managed server as macOS and
 //! Linux, and page layout stays on the processor. Researchers turn it off with
 //! `paddle_use_gpu`. Extraction never moves between devices on its own.
@@ -27,8 +26,7 @@ fn gpu_recognition_root() -> Result<PathBuf, String> {
     Ok(gpu_recognition_root_at(&pipeline_home()?.join("native")))
 }
 
-/// Only Windows installers carry the Vulkan build, so other platforms never
-/// list this component.
+/// Other platforms retain their existing managed recognition backend.
 pub(super) fn gpu_recognition_listed_for(os: &str, arch: &str) -> bool {
     os == "windows" && arch == "x86_64"
 }
@@ -38,11 +36,11 @@ pub(super) fn gpu_recognition_listed() -> bool {
 }
 
 pub(super) fn gpu_recognition_support_for(
-    server_bundled: bool,
+    supported_platform: bool,
     parser_installed: bool,
 ) -> Result<(), String> {
-    if !server_bundled {
-        return Err("This copy of Pipeline doesn't include graphics card support.".to_string());
+    if !supported_platform {
+        return Err("Graphics card recognition requires 64-bit Windows.".to_string());
     }
     if !parser_installed {
         return Err("Install PaddleOCR-VL 1.6 Full Parser first.".to_string());
@@ -52,7 +50,7 @@ pub(super) fn gpu_recognition_support_for(
 
 pub(super) fn gpu_recognition_support() -> Result<(), String> {
     gpu_recognition_support_for(
-        crate::env::bundled_gpu_server().is_some(),
+        gpu_recognition_listed(),
         paddle_full_parser_status().is_ok(),
     )
 }
@@ -74,7 +72,7 @@ pub(super) fn vulkan_devices(listing: &str) -> Vec<String> {
         .collect()
 }
 
-fn probe_devices(server: &Path) -> Result<Vec<String>, String> {
+pub(super) fn probe_devices(server: &Path) -> Result<Vec<String>, String> {
     let mut probe = std::process::Command::new(server);
     probe.arg("--list-devices");
     let output =
@@ -82,7 +80,7 @@ fn probe_devices(server: &Path) -> Result<Vec<String>, String> {
             .map_err(|error| probe_start_error("llama-server", &error))?;
     if !output.status.success() || output.stdout_truncated {
         return Err(probe_exit_error(
-            "The bundled llama-server",
+            "The graphics card runtime",
             output.status.code(),
         ));
     }
@@ -149,8 +147,8 @@ fn gpu_paths_pinned_at(
         ],
     )
     .ok()?;
-    // The server ships with the app, so bind its version here. An app update
-    // that changes llama.cpp must not reuse earlier extractions.
+    // Bind the pinned engine version; managed runtime integrity is bound by
+    // the resolver as well, before any extraction can execute it.
     let integrity_sha256 = format!(
         "{:x}",
         Sha256::digest(format!(
@@ -176,8 +174,12 @@ pub(super) fn resolve_gpu_recognition_at(
     if !path_present(&root.join("install.json")) {
         return Ok(None);
     }
-    server
-        .and_then(|server| gpu_paths_at(root, server))
+    // An app upgrade may leave existing models awaiting the optional runtime.
+    // Corrupt managed runtimes are rejected by gpu_server before this point.
+    let Some(server) = server else {
+        return Ok(None);
+    };
+    gpu_paths_at(root, server)
         .map(Some)
         .ok_or_else(|| {
             "Graphics card recognition failed verification. Repair it from Settings → PDF extraction, or turn off Use graphics card."
@@ -189,36 +191,61 @@ pub(super) fn resolve_gpu_recognition() -> Result<Option<PaddleEnginePaths>, Str
     if !gpu_recognition_listed() {
         return Ok(None);
     }
-    let server = crate::env::bundled_gpu_server();
-    resolve_gpu_recognition_at(&gpu_recognition_root()?, server.as_deref())
+    let root = gpu_recognition_root()?;
+    if !path_present(&root.join("install.json")) {
+        return Ok(None);
+    }
+    let server = gpu_server()?;
+    let paths =
+        resolve_gpu_recognition_at(&root, server.as_ref().map(|server| server.path.as_path()))?;
+    Ok(paths
+        .zip(server)
+        .map(|(paths, server)| bind_gpu_runtime(paths, &server)))
 }
 
 pub(super) fn gpu_recognition_status() -> Option<PathBuf> {
     let root = gpu_recognition_root().ok()?;
-    gpu_install_committed(&root).then_some(root)
+    (gpu_install_committed(&root) && gpu_runtime_committed()).then_some(root)
 }
 
 /// Whether the installed component passes full verification. Repair is
 /// offered on every install, so a sound copy must not cost another 1.9 GB.
 pub(super) async fn gpu_recognition_sound() -> Result<bool, String> {
-    let Some(server) = crate::env::bundled_gpu_server() else {
-        return Ok(false);
-    };
     let target = gpu_recognition_root()?;
-    tokio::task::spawn_blocking(move || gpu_paths_at(&target, &server).is_some())
-        .await
-        .map_err(|error| format!("Graphics card check failed: {error}"))
+    tokio::task::spawn_blocking(move || {
+        gpu_server()
+            .ok()
+            .flatten()
+            .is_some_and(|server| gpu_paths_at(&target, &server.path).is_some())
+    })
+    .await
+    .map_err(|error| format!("Graphics card check failed: {error}"))
 }
 
 pub(super) async fn install_gpu_recognition(
     app: &crate::emit::EventBus,
     spec: &EngineSpec,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     gpu_recognition_support()?;
-    let server =
-        crate::env::bundled_gpu_server().ok_or("Graphics card support is missing from this app")?;
     emit_phase(app, spec.id, "gpu", "running");
-    let result = install_gpu_files(app, spec, &server).await;
+    let result = async {
+        let server = ensure_gpu_runtime(app).await?;
+        let probe_server = server.path.clone();
+        let devices = tokio::task::spawn_blocking(move || probe_devices(&probe_server))
+            .await
+            .map_err(|error| format!("Graphics card check failed: {error}"))??;
+        if devices.is_empty() {
+            log(
+                app,
+                "No supported graphics card was found. The PDF parser will use the processor.",
+            );
+            return Ok(false);
+        }
+        log(app, format!("Found {}", devices.join("; ")));
+        install_gpu_files(app, spec, &server.path).await?;
+        Ok(true)
+    }
+    .await;
     emit_phase(
         app,
         spec.id,
@@ -233,19 +260,16 @@ async fn install_gpu_files(
     spec: &EngineSpec,
     server: &Path,
 ) -> Result<(), String> {
-    // Check before the download, so a blocked file or a computer with no usable
-    // graphics card doesn't cost researchers 1.9 GB.
-    let server_for_task = server.to_path_buf();
-    let devices = tokio::task::spawn_blocking(move || probe_devices(&server_for_task))
+    // Runtime upgrades and repair preserve already verified GPU models.
+    let existing = gpu_recognition_root()?;
+    let check_server = server.to_path_buf();
+    if tokio::task::spawn_blocking(move || gpu_paths_at(&existing, &check_server).is_some())
         .await
-        .map_err(|error| format!("Graphics card check failed: {error}"))??;
-    if devices.is_empty() {
-        return Err(
-            "Pipeline couldn't find a graphics card it can use. Update your graphics driver and try again."
-                .to_string(),
-        );
+        .map_err(|error| error.to_string())?
+    {
+        log(app, "Using the graphics card model files already installed");
+        return Ok(());
     }
-    log(app, format!("Found {}", devices.join("; ")));
 
     let native_dir = pipeline_home()?.join("native");
     std::fs::create_dir_all(&native_dir)
@@ -264,7 +288,14 @@ async fn install_gpu_files(
             log(app, "Using the model files already downloaded");
             stage
         }
-        None => download_gpu_stage(app, &native_dir, server).await?,
+        None => {
+            let (plan, required) =
+                install_space_requirement(GPU_RECOGNITION_ID, false, false, false)?;
+            if let Ok(free) = fs2::available_space(&native_dir) {
+                check_install_space(free, plan, required)?;
+            }
+            download_gpu_stage(app, &native_dir, server).await?
+        }
     };
     if INSTALL_CANCEL.load(Ordering::Acquire) {
         return Err("Install cancelled".to_string());
@@ -389,9 +420,13 @@ fn reusable_gpu_stage(native_dir: &Path, verified: impl Fn(&Path) -> bool) -> Op
 
 pub(super) async fn uninstall_gpu_recognition(app: &crate::emit::EventBus) -> Result<(), String> {
     let root = gpu_recognition_root()?;
-    tokio::task::spawn_blocking(move || remove_owned_path(&root))
-        .await
-        .map_err(|error| format!("Managed engine cleanup task failed: {error}"))??;
+    let runtime = pipeline_home()?.join("native").join(GPU_RUNTIME_DIR);
+    tokio::task::spawn_blocking(move || {
+        remove_owned_path(&root)?;
+        remove_owned_path(&runtime)
+    })
+    .await
+    .map_err(|error| format!("Managed engine cleanup task failed: {error}"))??;
     log(app, "Graphics card recognition uninstalled");
     Ok(())
 }
@@ -439,7 +474,7 @@ mod tests {
         assert!(gpu_recognition_support_for(true, true).is_ok());
         assert!(gpu_recognition_support_for(false, true)
             .unwrap_err()
-            .contains("doesn't include"));
+            .contains("64-bit Windows"));
         assert!(gpu_recognition_support_for(true, false)
             .unwrap_err()
             .contains("Install PaddleOCR-VL 1.6 Full Parser first"));
@@ -548,9 +583,11 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_bundled_server_stops_extraction() {
+    fn existing_models_can_use_cpu_while_optional_runtime_download_is_pending() {
         let root = tempfile::tempdir().unwrap();
         committed_component(root.path());
-        assert!(resolve_gpu_recognition_at(root.path(), None).is_err());
+        assert!(resolve_gpu_recognition_at(root.path(), None)
+            .unwrap()
+            .is_none());
     }
 }

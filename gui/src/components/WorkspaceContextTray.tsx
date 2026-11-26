@@ -103,6 +103,7 @@ function SourceChip({
         align="start"
       >
         <MenuItem onSelect={onOpen}>Open</MenuItem>
+        <MenuLabel>{`Version ${item.object.revision.slice(0, 12)}${item.object.start != null ? ` · bytes ${item.object.start}–${item.object.end ?? "…"}` : ""}`}</MenuLabel>
         <MenuLabel>Use as</MenuLabel>
         {roles.map((value) => (
           <MenuItem

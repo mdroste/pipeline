@@ -3,11 +3,52 @@ use super::super::store::CreateWorkspaceRequest;
 use super::*;
 
 #[test]
+fn home_reads_one_snapshot_and_releases_it_before_filesystem_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temp.path().join("store")).unwrap();
+    let ws = store
+        .create_legacy_workspace(CreateWorkspaceRequest {
+            name: "Snapshot".into(),
+            root: None,
+            operation_id: "snapshot_workspace".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    let conn = store.connection().unwrap();
+    conn.execute("INSERT INTO research_notes(id,workspace_id,kind,body,state,origin,pinned,revision,created_at,updated_at) VALUES('note',?1,'question','OLD_SENTINEL','accepted','user',1,1,'t','t')", [&ws]).unwrap();
+    let before = crate::workbench::store::connection_opens();
+    let prepared = home::prepare_home(&store, &ws).unwrap();
+    assert_eq!(crate::workbench::store::connection_opens() - before, 1);
+    // The snapshot transaction is over. A concurrent writer can commit before
+    // filesystem status is checked, without mixing note text and context.
+    conn.execute(
+        "UPDATE research_notes SET body='NEW_SENTINEL',revision=2 WHERE id='note'",
+        [],
+    )
+    .unwrap();
+    let snapshot = prepared.finish().unwrap();
+    assert_eq!(snapshot.notes[0].body, "OLD_SENTINEL");
+    assert!(snapshot.context_preview.contains("OLD_SENTINEL"));
+    assert!(!snapshot.context_preview.contains("NEW_SENTINEL"));
+    let before = crate::workbench::store::connection_opens();
+    let current = home(&store, &ws).unwrap();
+    assert_eq!(crate::workbench::store::connection_opens() - before, 1);
+    assert_eq!(current.notes[0].body, "NEW_SENTINEL");
+    let before = crate::workbench::store::connection_opens();
+    assert_eq!(
+        project_context(&store, &ws).unwrap(),
+        current.context_preview
+    );
+    assert_eq!(crate::workbench::store::connection_opens() - before, 1);
+}
+
+#[test]
 fn target_date_is_optional_validated_and_readable_from_older_settings() {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open_at(&temp.path().join("store")).unwrap();
     let ws = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Research".into(),
             root: None,
             operation_id: "create".into(),
@@ -89,7 +130,7 @@ fn put_refuses_a_record_id_owned_by_another_workspace() {
     let store = Store::open_at(&temp.path().join("store")).unwrap();
     let workspace = |name: &str| {
         store
-            .create_workspace(CreateWorkspaceRequest {
+            .create_legacy_workspace(CreateWorkspaceRequest {
                 name: name.into(),
                 root: None,
                 operation_id: format!("create-{name}"),

@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 // Manifest-driven Workflow artifact surface. Reads stay behind the run-owned client.
 import { lazy, Suspense, useCallback, useMemo } from "react";
 import type { ArtifactExplorerProps } from "../lib/artifactTypes";
@@ -72,14 +73,14 @@ export default function ArtifactExplorer({
       <div className="h-full overflow-y-auto">
         <div
           role="alert"
-          className="m-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300"
+          className="m-4 rounded-lg border border-danger bg-danger-soft p-3 text-sm text-danger"
         >
           <p className="font-medium">Could not load this review’s file list.</p>
           <p className="mt-1 text-xs">{manifestError}</p>
           <button
             type="button"
             onClick={retryManifest}
-            className="mt-2 rounded border border-red-300 dark:border-red-800 px-2 py-1 text-xs hover:bg-red-100 dark:hover:bg-red-900/40"
+            className="mt-2 rounded border border-danger px-2 py-1 text-xs hover:bg-danger-soft"
           >
             Retry
           </button>
@@ -155,20 +156,7 @@ export default function ArtifactExplorer({
                 disabled={selectionHistory.length === 0}
                 className="inline-flex items-center gap-1.5 font-medium"
               >
-                <svg
-                  aria-hidden="true"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="m15 18-6-6 6-6"
-                  />
-                </svg>
+                <Icon name="chevron-left" className="h-3.5 w-3.5" />
                 Back
               </button>
               <span className="min-w-0 truncate text-ui-meta text-ink-muted">

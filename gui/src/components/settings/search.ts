@@ -1,7 +1,12 @@
 import type { EngineStatus } from "../../lib/engineTypes";
 import type { Settings } from "../../lib/settingsTypes";
 import type { AppPreferences } from "../../lib/appPreferences";
-import type { ThemePreference } from "../../lib/theme";
+import { TYPEFACE_OPTIONS, typefaceOption } from "../../lib/typefaces";
+import {
+  COLOR_THEMES,
+  themeOption,
+  type ThemePreference,
+} from "../../lib/theme";
 import type { Section } from "./navigation";
 import { connectionDescription } from "../../lib/connections";
 import {
@@ -35,7 +40,7 @@ export function parserControls(engines: EngineStatus[]): ParserControls {
   // processor.
   const graphics = engines.find((engine) => engine.id === "paddleocr-vl-gpu");
   return {
-    graphicsCard: Boolean(graphics?.installed),
+    graphicsCard: Boolean(graphics),
     processorCores: Boolean(graphics),
   };
 }
@@ -70,8 +75,15 @@ export function settingsSearchEntries(
     "general",
     "general-preferences",
     "Appearance",
-    "Theme, system, light or dark mode",
-    theme,
+    `Theme, system, light or dark mode, custom color palette, scheme, ${COLOR_THEMES.map((palette) => palette.name).join(", ")}`,
+    themeOption(theme).label,
+  );
+  add(
+    "general",
+    "interface-typeface",
+    "Typeface",
+    `Fonts, typography, reading, serif, ${TYPEFACE_OPTIONS.map((option) => option.label).join(", ")}`,
+    typefaceOption(p.typeface).label,
   );
   add(
     "general",
@@ -239,7 +251,7 @@ export function settingsSearchEntries(
     "providers",
     "default-model",
     "Default model",
-    "Preferred provider, model, thinking, effort, reviews and new conversations",
+    "Preferred provider, connection, model, thinking, effort, reviews and new conversations",
     connectionDescription(defaultConnectionId(s)).label,
   );
   add(
@@ -386,6 +398,13 @@ export function settingsSearchEntries(
     "app-version",
     "Version & updates",
     "About Pipeline, check for update, automatic updates, download, release notes",
+    "",
+  );
+  add(
+    "advanced",
+    "command-line-tools",
+    "Command-line tools",
+    "CLI, terminal, scripts, install command, PATH, repair, uninstall",
     "",
   );
   add(

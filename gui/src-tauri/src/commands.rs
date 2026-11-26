@@ -35,14 +35,8 @@ mod task;
 pub use artifacts::*;
 pub use batch::*;
 pub use export::*;
-pub use lifecycle::{
-    await_or_cancel, cancel_pass, is_cancelled, is_pass_cancelled, is_pipeline_cancellation_error,
-    register_child_pid, unregister_child_pid, wait_for_cancellation,
-};
-pub(crate) use lifecycle::{
-    kill_all_children, kill_pass_children, kill_process, register_engine_child_pid,
-    unregister_engine_child_pid,
-};
+pub use lifecycle::cancel_pass;
+
 pub use maintenance::{
     cancel_engine_install, check_for_update, get_storage_settings, install_engine, list_engines,
     open_pipeline_dir, set_storage_directory, uninstall_engine, update_install_cancel,
@@ -132,3 +126,11 @@ pub(super) async fn save_via_dialog(
 
 #[cfg(test)]
 mod tests;
+
+use crate::cancellation::{begin_run_state, is_cancelled, is_pipeline_cancellation_error};
+
+#[cfg(test)]
+use crate::process_tree::{
+    register_child_pid, register_engine_child_pid, unregister_child_pid,
+    unregister_engine_child_pid,
+};

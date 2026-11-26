@@ -598,24 +598,26 @@ pub(super) async fn rerun_run_inner(
 
     let result = executor::budget::counted_from(
         budget_start,
-        executor::execute_steps(
+        executor::execute_steps(crate::pipeline::executor::ExecutionRequest {
             app,
-            &execution_config,
-            &orientation_path,
-            &orientation_value,
-            &paper_text_path,
-            &document_bundle_path,
-            &scoped_source_path,
-            &paper_type,
-            &survey_hint,
-            &variables,
-            &resolved_inputs,
-            &runtime_extra_sources,
-            &preloaded,
-            artifact_write_dir.as_deref(),
-            &settings,
-            author_note.as_deref(),
-        ),
+            config: &execution_config,
+            variables: &variables,
+            extra_inputs: &resolved_inputs,
+            extra_input_sources: &runtime_extra_sources,
+            preloaded: &preloaded,
+            write_dir: artifact_write_dir.as_deref(),
+            settings: &settings,
+            author_note: author_note.as_deref(),
+            sources: crate::pipeline::executor::ExecutionSources {
+                orientation_path: &orientation_path,
+                orientation_value: &orientation_value,
+                paper_text_path: &paper_text_path,
+                document_bundle_path: &document_bundle_path,
+                source_path: &scoped_source_path,
+                paper_type: &paper_type,
+                survey_hint: &survey_hint,
+            },
+        }),
     )
     .await?;
     drop(extra_tmps);

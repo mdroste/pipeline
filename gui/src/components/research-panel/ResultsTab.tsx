@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import ExecutionArguments from "./ExecutionArguments";
+import ExecutionEvidence from "./ExecutionEvidence";
+import { scriptSetup } from "../../lib/analysisSetup";
 import { projectClient } from "../../lib/projectClient";
 import { executionClient } from "../../lib/workbench/executionClient";
 import { parseArgvText } from "../../lib/argvText";
@@ -44,6 +47,8 @@ type Props = Pick<
   workspaceId: string;
   snapshot: ConversationSnapshot | null;
   resultsView: "all" | "runs" | "profiles";
+  initialScript?: { path: string; request: number };
+  executionTargetId?: string;
   onError: (message: string) => void;
 };
 
@@ -83,9 +88,22 @@ export default function ResultsTab({
   snapshot,
   resultsView,
   onError,
+  initialScript,
+  executionTargetId,
 }: Props) {
   const [timeout, setTimeoutText] = useState(String(TIMEOUT_DEFAULT));
   const [editing, setEditing] = useState<ExecutionProfile | null>(null);
+  useEffect(() => {
+    if (!initialScript) return;
+    const setup = scriptSetup(initialScript.path, guessPlatform());
+    setEditing(null);
+    setProfileName(initialScript.path);
+    setAdapter(setup.adapter);
+    setArgv(JSON.stringify(setup.argv));
+    setInputs(initialScript.path);
+    setOutputs(setup.outputs.join("\n"));
+    setHostPreview(null);
+  }, [initialScript]);
   const editProfile = (profile: ExecutionProfile) => {
     setEditing(profile);
     setProfileName(profile.name);
@@ -145,13 +163,7 @@ export default function ResultsTab({
         <p className="text-[0.6875rem] text-gray-500">
           {ADAPTER_HELP[adapter]}
         </p>
-        <textarea
-          value={argv}
-          onChange={(event) => setArgv(event.target.value)}
-          rows={3}
-          aria-label="Argument vector JSON"
-          className="w-full rounded border bg-white p-2 font-mono text-[0.6875rem] dark:bg-neutral-950"
-        />
+        <ExecutionArguments value={argv} onChange={setArgv} />
         <ToolchainPicker
           workspaceId={workspaceId}
           adapter={adapter}
@@ -264,7 +276,7 @@ export default function ResultsTab({
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <span
-                  className={`text-[0.6875rem] ${profile.testStatus === "passed" ? "text-emerald-600" : "text-gray-500"}`}
+                  className={`text-[0.6875rem] ${profile.testStatus === "passed" ? "text-success" : "text-gray-500"}`}
                 >
                   {plainLabel(profile.testStatus ?? "untested")}
                 </span>
@@ -316,7 +328,7 @@ export default function ResultsTab({
         </div>
       </section>
       {hostPreview && (
-        <section className="space-y-2 rounded border border-amber-300 p-3">
+        <section className="space-y-2 rounded border border-warning p-3">
           <h3 className="text-xs font-semibold">
             Review command before running
           </h3>
@@ -378,6 +390,7 @@ export default function ResultsTab({
           {executions.map((run) => (
             <details
               key={run.id}
+              open={executionTargetId === run.id || undefined}
               className="rounded border bg-white p-3 dark:bg-neutral-950"
               onToggle={(event) => toggleRun(run.id, event.currentTarget.open)}
             >
@@ -385,9 +398,9 @@ export default function ResultsTab({
                 <span
                   className={
                     run.outcome === "completed"
-                      ? "text-emerald-600"
+                      ? "text-success"
                       : run.outcome === "running"
-                        ? "text-blue-600"
+                        ? "text-running"
                         : run.outcome === "queued"
                           ? "text-gray-500"
                           : "text-danger"
@@ -411,7 +424,7 @@ export default function ResultsTab({
                 </p>
                 {["queued", "running"].includes(run.outcome) && (
                   <button
-                    className="rounded border px-2 py-1 text-red-600"
+                    className="rounded border px-2 py-1 text-danger"
                     onClick={() =>
                       void executionClient
                         .cancelExecution(run.id)
@@ -433,7 +446,10 @@ export default function ResultsTab({
                   </p>
                 )}
                 {openRuns.has(run.id) && (
-                  <RunOutput workspaceId={workspaceId} run={run} />
+                  <>
+                    <RunOutput workspaceId={workspaceId} run={run} />
+                    <ExecutionEvidence workspaceId={workspaceId} run={run} />
+                  </>
                 )}
                 <pre className="overflow-auto whitespace-pre-wrap">
                   {JSON.stringify(run.validation, null, 2)}

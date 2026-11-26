@@ -47,7 +47,7 @@ fn mutations_have_scoped_identity_and_replay_protection() {
     assert!(mutate(&f.store, changed).is_err());
     let other = f
         .store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Other".into(),
             root: None,
             operation_id: "other".into(),

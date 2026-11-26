@@ -78,7 +78,7 @@ function polled(read: FileAdapter["read"], stamp: () => string | null) {
 }
 const tick = () =>
   act(async () => {
-    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(2300);
   });
 beforeEach(() => {
   vi.clearAllMocks();

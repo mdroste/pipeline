@@ -1,203 +1,77 @@
-import { useSetupReads } from "./reviewSetupReads";
-import { useEffect, useId, useMemo, useState } from "react";
-import { appClient } from "../lib/appClient";
-import { settingsClient } from "../lib/settingsClient";
+import { useEffect, useState, type ReactNode } from "react";
 import type { DepsReport, Settings } from "../lib/settingsTypes";
-import type {
-  ModelCatalog,
-  ReviewModelChoice,
-  RosterEntry,
-  RunModelOverrides,
-} from "../lib/reviewModelTypes";
-import type { PipelineConfig } from "../lib/workflowTypes";
-import { workflowParallelAgents } from "../lib/parallelAgents";
+import type { RunModelOverrides } from "../lib/reviewModelTypes";
+import { withoutDefaultModel } from "../lib/modelChoice";
+import { providerAvailability } from "../lib/connections";
+import { providerTransport } from "../lib/providers";
 import {
-  rosterModelSummary,
-  rosterSourceLabel,
-  stageModelDetails,
-  withoutDefaultModel,
-} from "../lib/modelChoice";
-import {
-  defaultMergeAgent,
-  defaultMergeEffortOverrides,
-  defaultMergeModelOverrides,
-  PROVIDERS,
-  PROVIDER_LABELS,
-  providerTransport,
-  type Provider,
-} from "../lib/providers";
+  changeReviewTeam,
+  defaultReviewModel,
+  hasSeparateParallelChoice,
+  needsReviewTeam,
+  primaryReview,
+  withoutCombiningOverride,
+  withoutProvider,
+} from "../lib/reviewTeam";
 import { Icon } from "../ui/icons";
-import AgentDefaultsControl from "./AgentDefaultsControl";
+import ReviewModelRows from "./review-setup/ReviewModelRows";
+import ReviewInspectorTabs from "./review-setup/ReviewInspectorTabs";
+import ReviewRoster from "./review-setup/ReviewRoster";
+import { useReviewModelSetup } from "./review-setup/useReviewModelSetup";
 
 interface Props {
   value: RunModelOverrides | null;
   disabled?: boolean;
-  /** What readiness last saw; undefined leaves providers unlabeled. */
   dependencies?: DepsReport | null;
   localLlmActive?: boolean;
   refreshKey?: number;
+  workflowSteps?: ReactNode;
+  onConnectModel?: () => void;
   onChange: (value: RunModelOverrides | null) => void;
 }
 
-const EMPTY: RunModelOverrides = {
-  agents: [],
-  model_overrides: {},
-  effort_overrides: {},
-};
-
-/** The review model Settings would use, as the starting choice. */
-function defaultReview(settings: Settings): ReviewModelChoice {
-  const provider = settings.preferred_provider || "claude";
-  return {
-    provider,
-    model:
-      (provider === "local" ? settings.local_model : settings.default_model) ??
-      "",
-    effort: settings.default_effort ?? "",
-  };
-}
-
-function entryName(entry: RosterEntry): string {
-  if (!entry.step_labels.length) return entry.label;
-  if (entry.step_labels.length <= 2) return entry.step_labels.join(", ");
-  return `${entry.step_labels.length} ${entry.label.toLowerCase()}`;
-}
-
-/**
- * New review's model choice. One review model covers every call that
- * inherits the default; anything that does not follow it (a Settings stage
- * exception, a workflow-pinned step) is listed under it and can be switched
- * to the review model. The list comes from the backend, which uses the
- * executor's own inheritance rules.
- */
+/** Primary handles the whole review; extra models provide additional opinions. */
 export default function RunModelChoice({
   value,
   disabled = false,
   dependencies,
   localLlmActive = false,
   refreshKey = 0,
+  workflowSteps,
+  onConnectModel,
   onChange,
 }: Props) {
-  const editorId = useId();
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [config, setConfig] = useState<PipelineConfig | null>(null);
-  const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
-  const [catalogErrors, setCatalogErrors] = useState<string[]>([]);
-  const [roster, setRoster] = useState<RosterEntry[] | null>(null);
-  const [open, setOpen] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [rosterError, setRosterError] = useState<string | null>(null);
-  const [rosterLoading, setRosterLoading] = useState(true);
-  const [attempt, setAttempt] = useState(0);
-
-  const reads = useSetupReads(refreshKey);
-  useEffect(() => {
-    let live = true;
-    setConfig(null);
-    setLoadError(null);
-    Promise.all([settingsClient.load(), reads.config()])
-      .then(([response, workflow]) => {
-        if (!live) return;
-        setSettings(response.settings);
-        setConfig(workflow);
-      })
-      .catch((error) => {
-        if (live) setLoadError(String(error));
-      });
-    return () => {
-      live = false;
-    };
-  }, [reads, attempt]);
-
-  const providers = useMemo<Provider[]>(() => {
-    if (!settings) return ["claude", "codex", "antigravity"];
-    return PROVIDERS.filter(
-      (provider) =>
-        provider !== "local" ||
-        (localLlmActive && Boolean(settings.local_model.trim())),
-    ) as Provider[];
-  }, [localLlmActive, settings]);
-
-  // Model lists load up front so collapsed lines can name each model.
-  useEffect(() => {
-    if (!settings) return;
-    let live = true;
-    setCatalogs({});
-    setCatalogErrors([]);
-    Promise.allSettled(
-      providers.map(async (provider) => {
-        const catalog = await settingsClient.modelCatalog({
-          provider,
-          settings,
-          refresh: false,
-        });
-        return [provider, catalog] as const;
-      }),
-    ).then((results) => {
-      if (!live) return;
-      setCatalogErrors(
-        results.flatMap((result, index) =>
-          result.status === "rejected"
-            ? [PROVIDER_LABELS[providers[index]]]
-            : [],
-        ),
-      );
-      setCatalogs(
-        Object.fromEntries(
-          results.flatMap((result) =>
-            result.status === "fulfilled" ? [result.value] : [],
-          ),
-        ),
-      );
-    });
-    return () => {
-      live = false;
-    };
-  }, [providers, settings, attempt]);
-
+  const [tab, setTab] = useState("models");
+  const {
+    settings,
+    config,
+    catalogs,
+    providers,
+    catalogErrors,
+    roster,
+    loadError,
+    rosterError,
+    rosterLoading,
+    retry,
+  } = useReviewModelSetup(value, refreshKey, localLlmActive);
   useEffect(() => {
     if (!settings || !config) return;
-    let live = true;
-    setRosterLoading(true);
-    setRosterError(null);
-    setRoster(null);
-    appClient
-      .modelRoster({
-        runParallelOverrides: value ?? null,
-      })
-      .then((entries) => {
-        if (live) {
-          setRoster(entries);
-          setRosterLoading(false);
-        }
-      })
-      .catch((error) => {
-        if (live) {
-          setRosterError(String(error));
-          setRosterLoading(false);
-        }
-      });
-    return () => {
-      live = false;
-    };
-  }, [config, settings, value, refreshKey, attempt]);
+    const next = withoutCombiningOverride(value);
+    if (needsReviewTeam(next)) onChange(primaryReview(settings, next));
+    else if (next !== value) onChange(next);
+  }, [settings, config, value, onChange]);
 
   if (!settings || !config)
     return (
       <section
-        aria-label="Models for this review"
-        className="review-model-card rounded-ui-md border border-line p-4 text-ui-label"
+        aria-label="Model settings"
+        className="review-setup-card review-model-card"
       >
-        <h2 className="font-medium">Models for this review</h2>
+        <h2>Model settings</h2>
         {loadError ? (
           <div role="alert">
             <p>Couldn't load model choices. {loadError}</p>
-            <button
-              className="mt-2 underline"
-              onClick={() => setAttempt((n) => n + 1)}
-            >
-              Retry model choices
-            </button>
+            <button onClick={retry}>Retry model choices</button>
           </div>
         ) : (
           <p role="status">Loading model choices…</p>
@@ -205,388 +79,259 @@ export default function RunModelChoice({
       </section>
     );
 
-  const hasModelChoice = !!(
-    value?.review ||
-    value?.agents.length ||
-    value?.merge_agent
-  );
-  const review = value?.review ?? defaultReview(settings);
-  const pickerSettings = withoutDefaultModel(settings);
-  const reviewKey = `${review.provider}:${providerTransport(settings, review.provider)}`;
-  const reviewModels = review.model
-    ? { [reviewKey]: { mode: "pinned" as const, model: review.model } }
+  const selection = needsReviewTeam(value)
+    ? primaryReview(settings, value)
+    : withoutCombiningOverride(value)!;
+  const defaultModel = defaultReviewModel(settings);
+  const primary = selection.review ?? defaultModel;
+  const primaryKey = `${primary.provider}:${providerTransport(settings, primary.provider)}`;
+  const primaryModels = primary.model
+    ? { [primaryKey]: { mode: "pinned" as const, model: primary.model } }
     : {};
-  const reviewEfforts = review.effort ? { [reviewKey]: review.effort } : {};
+  const primaryEfforts = primary.effort ? { [primaryKey]: primary.effort } : {};
+  const runSettings: Settings = {
+    ...settings,
+    preferred_provider: primary.provider,
+    default_model: primary.provider === "local" ? "" : primary.model,
+    default_effort: primary.effort,
+    local_model:
+      primary.provider === "local" && primary.model
+        ? primary.model
+        : settings.local_model,
+  };
+  const noModelsConnected = providers.every(
+    (provider) =>
+      providerAvailability(provider, settings, dependencies) === "missing",
+  );
+  const separateParallel = hasSeparateParallelChoice(selection, settings);
+  // Pipeline checks make no model call, and an editorial (Declaude) stage keeps
+  // one editor each, so neither can take added models.
+  const canAddReviewers = config.steps.some(
+    (step) =>
+      step.enabled &&
+      step.phase === "parallel" &&
+      step.kind !== "analyzer" &&
+      typeof step.output_schema?.["x-pipeline-editorial-stage"] !== "string",
+  );
+  const team = separateParallel
+    ? [primary.provider]
+    : selection.agents.length
+      ? selection.agents
+      : [primary.provider];
+  const hasExceptions =
+    !selection.clear_settings_exceptions ||
+    !selection.override_workflow_pins ||
+    separateParallel;
+  const changed =
+    primary.provider !== defaultModel.provider ||
+    primary.model !== defaultModel.model ||
+    primary.effort !== defaultModel.effort ||
+    !!selection.agents.length ||
+    hasExceptions;
   const change = (patch: Partial<RunModelOverrides>) =>
-    onChange({ ...EMPTY, ...value, review, ...patch });
-
-  const exceptions = (roster ?? []).filter(
-    (entry) =>
-      entry.stage !== "fallback" &&
-      (entry.source === "settings" || entry.source === "workflow"),
-  );
-  const fallback = roster?.find((entry) => entry.stage === "fallback");
-
-  const inherited = workflowParallelAgents(config, settings);
-  const parallelChosen = !!value?.agents.length;
-  const agents = parallelChosen ? value!.agents : [review.provider];
-  const modelOverrides = parallelChosen ? value!.model_overrides : reviewModels;
-  const effortOverrides = parallelChosen
-    ? value!.effort_overrides
-    : reviewEfforts;
-  const workflowMergeAgent = config.merge.agents?.[0];
-  const mergeAgent =
-    value?.merge_agent || workflowMergeAgent || defaultMergeAgent(settings);
-  const mergeModelOverrides = value?.merge_agent
-    ? (value.merge_model_overrides ?? {})
-    : workflowMergeAgent
-      ? {}
-      : defaultMergeModelOverrides(settings);
-  const mergeEffortOverrides = value?.merge_agent
-    ? (value.merge_effort_overrides ?? {})
-    : workflowMergeAgent
-      ? {}
-      : defaultMergeEffortOverrides(settings);
-
-  const summary = stageModelDetails(
-    pickerSettings,
-    review.provider,
-    reviewModels,
-    reviewEfforts,
+    onChange({ ...selection, review: primary, ...patch });
+  const common = {
+    settings: withoutDefaultModel(settings),
     catalogs,
-  );
+    providers,
+    dependencies,
+    disabled,
+  };
+  const tabs = [
+    { id: "models", label: "Models" },
+    ...(!noModelsConnected ? [{ id: "advanced", label: "Advanced" }] : []),
+    ...(workflowSteps ? [{ id: "steps", label: "Steps" }] : []),
+  ];
+  const activeTab = tabs.some((item) => item.id === tab) ? tab : "models";
 
   return (
     <section
-      aria-label="Models for this review"
-      className="review-model-card overflow-hidden rounded-ui-md border border-line bg-surface"
+      aria-label="Model settings"
+      className="review-setup-card review-model-card"
     >
-      <div className="flex items-center justify-between gap-2 px-3 pt-3">
-        <h2 className="text-ui-label font-medium text-ink">
-          Models for this review
-        </h2>
-        {hasModelChoice && (
+      <div className="review-section-heading">
+        <h2>Model settings</h2>
+        {changed && !noModelsConnected && (
           <button
             type="button"
             disabled={disabled}
-            onClick={() =>
-              onChange(
-                value?.extraction_method
-                  ? { ...EMPTY, extraction_method: value.extraction_method }
-                  : null,
-              )
-            }
-            className="rounded-ui-sm px-1.5 py-1 text-ui-meta text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+            onClick={() => onChange(primaryReview(settings, selection))}
+            className="ui-button ui-button--quiet ui-button--sm"
           >
             Reset
           </button>
         )}
       </div>
-      <button
-        type="button"
-        aria-label={open ? "Done" : "Change"}
-        aria-expanded={open}
-        aria-controls={editorId}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        className="review-model-summary group flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-50"
-      >
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="break-words text-ui-body font-medium text-ink">
-              {summary.model}
-            </span>
-            <span className="text-ui-meta text-ink-muted">
-              {summary.provider}
-            </span>
-          </span>
-          <span className="mt-1 block text-ui-meta leading-5 text-ink-muted">
-            {review.effort ? `${summary.effort} thinking` : summary.effort}
-            {" · "}
-            {hasModelChoice ? "This review" : "Your default model"}
-          </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1.5 text-ui-meta font-medium text-ink-muted group-hover:text-ink">
-          {open ? "Done" : "Change"}
-          <Icon
-            name="chevron-down"
-            className={`h-3.5 w-3.5 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
-          />
-        </span>
-      </button>
-
-      {rosterLoading && (
-        <p role="status" className="px-3 pb-3 text-ui-meta text-ink-muted">
-          Checking models for each step…
-        </p>
-      )}
-      {catalogErrors.length > 0 && (
-        <div
-          role="alert"
-          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-3 text-ui-meta"
-        >
-          <p>
-            Couldn't load model lists for {catalogErrors.join(", ")}. Your saved
-            model choices are still selected.
-          </p>
-          <button
-            className="mt-2 underline"
-            onClick={() => setAttempt((n) => n + 1)}
-          >
-            Retry model lists
-          </button>
-        </div>
-      )}
-      {rosterError && (
-        <div
-          role="alert"
-          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-3 text-ui-meta"
-        >
-          <p>Couldn't check models for each step. {rosterError}</p>
-          <button
-            className="mt-2 underline"
-            onClick={() => setAttempt((n) => n + 1)}
-          >
-            Retry model check
-          </button>
-        </div>
-      )}
-      {exceptions.length > 0 && (
-        <div
-          role="note"
-          aria-label="Calls on other models"
-          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-2.5 text-ui-meta leading-5 text-ink"
-        >
-          <p className="font-medium">
-            {exceptions.length === 1
-              ? "1 part of this review uses another model:"
-              : `${exceptions.length} parts of this review use other models:`}
-          </p>
-          <ul className="mt-1 space-y-0.5">
-            {exceptions.map((entry) => (
-              <li
-                key={`${entry.stage}-${entry.step_ids.join(",")}-${entry.provider}`}
+      <ReviewInspectorTabs tabs={tabs} value={activeTab} onChange={setTab}>
+        {!noModelsConnected && catalogErrors.length > 0 && (
+          <div role="alert" className="review-inline-error">
+            <p>
+              Couldn't load model lists for {catalogErrors.join(", ")}. Saved
+              choices are retained.
+            </p>
+            <button onClick={retry}>Retry model lists</button>
+          </div>
+        )}
+        {!noModelsConnected && rosterError && (
+          <div role="alert" className="review-inline-error">
+            <p>Couldn't check models for each step. {rosterError}</p>
+            <button onClick={retry}>Retry model check</button>
+          </div>
+        )}
+        {activeTab === "models" && noModelsConnected && (
+          <div role="alert" className="review-model-empty">
+            <p>No models connected</p>
+            {onConnectModel ? (
+              <button
+                type="button"
+                className="ui-button"
+                disabled={disabled}
+                onClick={onConnectModel}
               >
-                {entryName(entry)} →{" "}
-                {rosterModelSummary(settings, entry, catalogs)}{" "}
-                <span className="text-ink-muted">
-                  ({rosterSourceLabel(entry)})
-                </span>
-              </li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() =>
-              change({
-                clear_settings_exceptions: true,
-                override_workflow_pins: true,
-              })
-            }
-            className="mt-2 rounded-ui-sm text-left font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
-          >
-            Use the review model for everything
-          </button>
-        </div>
-      )}
-
-      {open && (
-        <div id={editorId} className="space-y-4 border-t border-line px-3 py-4">
-          <AgentDefaultsControl
-            agents={[review.provider]}
-            modelOverrides={reviewModels}
-            effortOverrides={reviewEfforts}
-            settings={pickerSettings}
-            catalogs={catalogs}
-            providers={providers}
-            stacked
-            dependencies={dependencies}
-            label="Review model"
-            help="Used throughout the review, except where a different model is assigned."
-            disabled={disabled}
-            onChange={(next) => {
-              const provider = next.agents[0] ?? review.provider;
-              const key = `${provider}:${providerTransport(settings, provider)}`;
-              const selection =
-                next.modelOverrides[key] ?? next.modelOverrides[provider];
-              change({
-                review: {
-                  provider,
-                  model: selection?.mode === "pinned" ? selection.model : "",
-                  effort:
-                    next.effortOverrides[key] ??
-                    next.effortOverrides[provider] ??
-                    "",
-                },
-              });
-            }}
-          />
-
-          <details className="group/advanced border-t border-line pt-3">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-ui-sm text-ui-label font-medium text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
-              Advanced options
-              <Icon
-                name="chevron-down"
-                className="h-3.5 w-3.5 shrink-0 transition-transform group-open/advanced:rotate-180 motion-reduce:transition-none"
-              />
-            </summary>
-            <div className="mt-4 space-y-4">
-              <div className="space-y-3 text-ui-meta leading-5 text-ink-muted">
-                <label className="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    className="mt-1 shrink-0 accent-inverse"
-                    checked={!!value?.clear_settings_exceptions}
+                Connect a model
+                <Icon name="arrow" className="h-3.5 w-3.5" />
+              </button>
+            ) : (
+              <span>Connect a model in Settings to start a review.</span>
+            )}
+          </div>
+        )}
+        {activeTab === "models" && !noModelsConnected && (
+          <>
+            {(hasExceptions || team.length > 1) && (
+              <p className="review-team-help">
+                {hasExceptions
+                  ? "Your primary model, with advanced assignments."
+                  : "Primary leads the review and combines feedback."}
+              </p>
+            )}
+            <ReviewModelRows
+              {...common}
+              label="Review models"
+              team
+              multi={canAddReviewers && !separateParallel}
+              agents={team}
+              modelOverrides={{
+                ...withoutProvider(
+                  separateParallel ? {} : selection.model_overrides,
+                  primary.provider,
+                ),
+                ...primaryModels,
+              }}
+              effortOverrides={{
+                ...withoutProvider(
+                  separateParallel ? {} : selection.effort_overrides,
+                  primary.provider,
+                ),
+                ...primaryEfforts,
+              }}
+              onChange={(next) => {
+                const updated = changeReviewTeam(selection, next, settings);
+                onChange(
+                  separateParallel
+                    ? { ...selection, review: updated.review }
+                    : updated,
+                );
+              }}
+            />
+            {team.length > 1 && (
+              <p className="review-meta">
+                Each additional model runs the parallel review steps again. The
+                primary model combines their feedback. This adds model work; it
+                does not set the number of specialist roles.
+              </p>
+            )}
+            {hasExceptions && (
+              <button
+                type="button"
+                className="review-inspect-exceptions"
+                onClick={() => setTab("advanced")}
+              >
+                Custom model assignments · Advanced
+              </button>
+            )}
+          </>
+        )}
+        {activeTab === "advanced" && (
+          <>
+            <div className="review-inheritance">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!selection.clear_settings_exceptions}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    change({ clear_settings_exceptions: !event.target.checked })
+                  }
+                />
+                Use saved Settings model choices
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!selection.override_workflow_pins}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    change({ override_workflow_pins: !event.target.checked })
+                  }
+                />
+                Use design-pinned models
+              </label>
+            </div>
+            {separateParallel && (
+              <div className="review-custom-parallel">
+                <div className="review-section-heading">
+                  <h3>Custom parallel assignments</h3>
+                  <button
+                    type="button"
                     disabled={disabled}
-                    onChange={(event) =>
+                    onClick={() =>
                       change({
-                        clear_settings_exceptions: event.target.checked,
+                        agents: [],
+                        model_overrides: {},
+                        effort_overrides: {},
                       })
                     }
-                  />
-                  Use the review model for stages that Settings sets to another
-                  model
-                </label>
-                <label className="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    className="mt-1 shrink-0 accent-inverse"
-                    checked={!!value?.override_workflow_pins}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      change({ override_workflow_pins: event.target.checked })
-                    }
-                  />
-                  Use the review model for steps the workflow assigns to a model
-                </label>
-              </div>
-
-              {inherited.applies && (
-                <div className="border-t border-line pt-3">
-                  <label className="flex items-start gap-2 text-ui-meta leading-5 text-ink-muted">
-                    <input
-                      type="checkbox"
-                      className="mt-1 shrink-0 accent-inverse"
-                      checked={parallelChosen}
-                      disabled={disabled}
-                      onChange={(event) =>
-                        change(
-                          event.target.checked
-                            ? {
-                                agents: [review.provider],
-                                model_overrides: reviewModels,
-                                effort_overrides: reviewEfforts,
-                              }
-                            : {
-                                agents: [],
-                                model_overrides: {},
-                                effort_overrides: {},
-                                merge_agent: undefined,
-                                merge_model_overrides: undefined,
-                                merge_effort_overrides: undefined,
-                              },
-                        )
-                      }
-                    />
-                    Choose the models for parallel steps, such as a second
-                    opinion
-                  </label>
-                  {parallelChosen && (
-                    <div className="mt-3">
-                      <AgentDefaultsControl
-                        agents={agents}
-                        modelOverrides={modelOverrides}
-                        effortOverrides={effortOverrides}
-                        settings={pickerSettings}
-                        catalogs={catalogs}
-                        providers={providers}
-                        multi
-                        stacked
-                        dependencies={dependencies}
-                        label="Parallel steps"
-                        help="Each selected model runs its own version of every parallel step."
-                        disabled={disabled}
-                        onChange={(next) =>
-                          change({
-                            agents: next.agents,
-                            model_overrides: next.modelOverrides,
-                            effort_overrides: next.effortOverrides,
-                          })
-                        }
-                      />
-                      {agents.length > 1 && config.merge.enabled && (
-                        <div className="mt-4">
-                          <AgentDefaultsControl
-                            agents={[mergeAgent]}
-                            modelOverrides={mergeModelOverrides}
-                            effortOverrides={mergeEffortOverrides}
-                            settings={pickerSettings}
-                            catalogs={catalogs}
-                            providers={providers}
-                            stacked
-                            dependencies={dependencies}
-                            label="Combine results"
-                            help="One model combines the parallel results before the next steps begin."
-                            disabled={disabled}
-                            onChange={(next) =>
-                              change({
-                                merge_agent: next.agents[0],
-                                merge_model_overrides: next.modelOverrides,
-                                merge_effort_overrides: next.effortOverrides,
-                              })
-                            }
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {roster && roster.length > 0 && (
-                <div className="border-t border-line pt-3">
-                  <p className="text-ui-label font-medium text-ink">
-                    Every model this review calls
-                  </p>
-                  <ul
-                    aria-label="Every model this review calls"
-                    className="mt-1.5 space-y-1.5"
                   >
-                    {roster.map((entry) => (
-                      <li
-                        key={`${entry.stage}-${entry.step_ids.join(",")}-${entry.provider}`}
-                        className="text-ui-meta leading-5"
-                      >
-                        <span className="font-medium text-ink">
-                          {entryName(entry)}
-                        </span>
-                        <span className="block break-words text-ink-muted">
-                          {rosterModelSummary(settings, entry, catalogs)}
-                        </span>
-                        <span className="block text-ink-muted">
-                          {rosterSourceLabel(entry)}
-                          {entry.note ? ` · ${entry.note}` : ""}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                    Use primary model
+                  </button>
                 </div>
-              )}
-            </div>
-          </details>
-        </div>
-      )}
-      {fallback && (
-        <div className="border-t border-line bg-sunken/40 px-3 py-2.5">
-          <p className="text-ui-meta font-medium text-ink">
-            Usage-limit backup
-          </p>
-          <p className="mt-1 break-words text-ui-meta leading-5 text-ink-muted">
-            {rosterModelSummary(settings, fallback, catalogs)}
-          </p>
-        </div>
-      )}
+                <ReviewModelRows
+                  {...common}
+                  settings={runSettings}
+                  label="Custom review models"
+                  multi
+                  agents={selection.agents}
+                  modelOverrides={selection.model_overrides}
+                  effortOverrides={selection.effort_overrides}
+                  onChange={(next) =>
+                    change({
+                      agents: next.agents,
+                      model_overrides: next.modelOverrides,
+                      effort_overrides: next.effortOverrides,
+                    })
+                  }
+                />
+              </div>
+            )}
+            {rosterLoading ? (
+              <p role="status" className="review-meta">
+                Checking models for each step…
+              </p>
+            ) : (
+              roster && (
+                <ReviewRoster
+                  roster={roster}
+                  settings={runSettings}
+                  catalogs={catalogs}
+                  pageSize={separateParallel ? 1 : 2}
+                />
+              )
+            )}
+          </>
+        )}
+        {activeTab === "steps" && workflowSteps}
+      </ReviewInspectorTabs>
     </section>
   );
 }

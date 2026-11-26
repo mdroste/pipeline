@@ -91,8 +91,8 @@ export default function PromptEditor({
       />
       {lintHits.length > 0 && (
         <div
-          className="mt-2 px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700
-                        bg-amber-50 dark:bg-amber-950/40 text-[0.6875rem] text-amber-800 dark:text-amber-300"
+          className="mt-2 px-2 py-1.5 rounded border border-warning
+                        bg-warning-soft  text-[0.6875rem] text-warning "
         >
           <span className="font-medium">
             {lintHits.length === 1
@@ -107,7 +107,7 @@ export default function PromptEditor({
               .join(", ")}
             {lintHits.length > 5 ? ", …" : ""}
           </span>
-          <span className="ml-1 text-amber-700/70 dark:text-amber-400/70">
+          <span className="ml-1 text-warning">
             — these placeholders will reach the model unchanged.
           </span>
         </div>

@@ -4,22 +4,32 @@ A project keeps papers, slide decks, other documents, files, notes, and conversa
 **Files**, and **Notes** areas. [Write and review](analysis-and-writing.md)
 covers **Documents**, **Reviews**, and **Changes**.
 
+On **Home**, choose **Explore an example project** for a guided walkthrough
+using the fictional Port Harlan paper from the Reviews tutorial. Try the
+project controls, edit sample notes, and track action items without a model
+connection. Sample changes are discarded when you close the tutorial.
+
 ## Create a project
 
-Open **Projects** and choose **New project**. Enter a name, and optionally
-choose a folder and an initial document. When adding a document, choose its type: **Paper**, **Slides**, **Appendix**, **Response letter**, or **Other**. Then choose **Create project**.
+Open **Projects** and choose **New project**. Choose a folder and enter a name.
+Every new project needs a folder; an existing local Git repository works too.
+You can also choose an initial document and its type: **Paper**, **Slides**,
+**Appendix**, **Response letter**, or **Other**. Then choose **Create project**.
+
+Choose **Open folder** to start from an existing research folder or local Git repository. Pipeline proposes a name and inspects nearby documents. If several possible roots are found, choose one or browse the folder. Opening it does not build or execute its code. Publication details are optional.
 
 A folder lets you browse and edit files, run your own code, and see Git
-status. Without one, a project still holds conversations, notes, and imported
-documents. You can attach a folder later in
-**Project settings**. If setup stops after the project is created, choose
+status. Git is optional. Projects saved by an older version without a folder
+keep their conversations, notes, and documents. Attach their folder in
+**Project settings**. You can change a project's folder there too. If setup
+stops after the project is created, choose
 **Try again** to finish the same project.
 
 **Projects** lists projects under **Pinned** and **Recently active**. Search
 by project name, research brief, or folder. Choose a project row to open its
-Overview. **Pin** keeps it at the top on this computer; **Unpin** returns it
+last working view. Choose **Overview** on the row to open the dashboard. **Pin** keeps it at the top on this computer; **Unpin** returns it
 to the recent list. When projects have deadlines, choose **Deadline** in
-**Sort projects** to put the nearest first.
+**Sort projects** to put the nearest first and see each deadline. Approaching deadlines and interrupted edits also appear on the row.
 
 Inside a project, the sidebar lists its six areas and its conversations:
 
@@ -33,9 +43,28 @@ Inside a project, the sidebar lists its six areas and its conversations:
 | **Notes** | Notes the assistant can use, and action items |
 
 Each area's views are tabs at the top of the page. Choose the project's name in
-the sidebar to move to another project or open **Project settings**. Press
+the sidebar or desk toolbar to move to another project or open **Project settings**.
+The desk toolbar keeps the project name visible when the sidebar is collapsed. Press
 Command/Ctrl+K, or choose **Search** in the sidebar, to find any project,
-conversation, review, automation, or view by name. The layout menu switches
+conversation, review, automation, document, note, finding, or file. Choose
+**This project** or **All projects**, then narrow results with **Type**.
+Notes and saved findings are searchable by their text. Enter at least two
+characters to search the current captured versions of documents and text files
+in project folders. Content search matches the phrase you type. Results show
+the surrounding text, project, and document version or file path; opening one
+takes you to its passage, page, or line. Current files are searched even when
+they are absent from the saved file list. Search reads local text and does not
+start extraction, reviews, or models.
+
+Coverage reports missing captured text, unavailable folders, skipped files,
+and search limits. **Load more matching passages** expands document results;
+narrow the phrase when a document or folder reaches its limit. Findings
+initially cover the newest 50 reviews; **Search older findings** includes more.
+**Search older automations** includes additional saved step automations.
+Step automations retain their project context when opened from search.
+Archived records, older document versions, conversation messages, binary
+files, and ignored folders are excluded. **Actions** opens pages or review
+setup; it does not start a review. The layout menu switches
 between **Project only**, **Conversation only**, and
 **Project + conversation**. Project areas work without a model connection.
 Conversations and reviews need one. See [Models](connections.md).
@@ -44,14 +73,14 @@ Conversations and reviews need one. See [Models](connections.md).
 
 Start a conversation from the Overview, with **New conversation** above the conversation, or
 from **New → New conversation** in the sidebar. Outside a project, **New →
-New conversation** starts one with no project. **Browse chats** at the bottom of **Projects** opens the conversation list.
-Use **+ New chat** there to start a chat without a project. Search chats or use
+New conversation** starts one with no project. **Browse conversations** at the bottom of **Projects** opens the conversation list.
+Use **New conversation** there to start a conversation without a project. Search conversations or use
 the **No project** and **Archived** filters. Choose a chat to resume it, or its project name to open the project.
 **Move to project…** adds a standalone chat to a project; **Change project…**
 lets you move it elsewhere or choose **Unfiled** to remove its project.
-The transcript stays with the chat. Choose **Chats** in a project to search its conversations, open **Archived**,
+The transcript stays with the conversation. Choose **Conversations** in a project to search its conversations, open **Archived**,
 or **Show older conversations**. A chat’s actions menu offers rename, move,
-archive, restore, and delete. Choose **Browse chats** above a conversation to
+archive, restore, and delete. Choose **Browse conversations** above a conversation to
 return to the list. Standalone conversations use a separate list marked **No project**.
 
 The conversation’s **Outline** searches the messages loaded so far. In a long
@@ -102,7 +131,7 @@ Use **Save As** in that app to keep changes.
 ### Choose a model
 
 Open the **Model and thinking** chip below the message box. Choose
-**ChatGPT**, **Claude Code**, **OpenAI API**, **Anthropic API**, **Gemini API**,
+**ChatGPT**, **Claude Code**, **Claude Code (API)**, **OpenAI API**, **Anthropic API**, **Gemini API**,
 or **Local / custom**, then a model. **Automatic** uses the connection’s
 default. API and local connections also accept a name under **Model ID**.
 **Thinking** shows the levels available for the selected model.
@@ -112,7 +141,7 @@ history available to the next provider. For ChatGPT, the picker also shows
 the signed-in account and remaining usage. See [Models](connections.md)
 for sign-in, keys, local servers, and command setup.
 
-For **ChatGPT** and **Claude Code**, open **Tool approvals** in the same
+For **ChatGPT** and either **Claude Code** connection, open **Tool approvals** in the same
 picker. **Ask** lets ChatGPT request approval when it needs additional access
 and asks you before Claude Code runs a shell command. **Sandbox only** runs
 commands the sandbox allows without prompting. **Auto** uses the provider's
@@ -183,57 +212,60 @@ without the chat history or edit permission.
 
 ## Overview
 
-The Overview shows where the paper stands. A section appears only when it has
-something to report. Each row offers one action, such as opening a view or
-starting a conversation with a drafted request that you send yourself. A row
-appears once: something listed under **Next** isn't repeated further down.
-
-The line under the project name shows the kind of paper, its venue, and the
-target date. **Stage** records where the paper is: **Idea**, **Drafting**,
-**Ready to submit**, **Under review**, **Revising**, or **Accepted**. Change it
-as the paper moves on.
+The Overview keeps your research artifacts and next actions close at hand.
+Publication stage, kind, and venue live in **Options**. Stage never hides
+Responses or determines which blockers you see.
 
 | Section | What it shows |
 | --- | --- |
-| **Next** | Up to three things to do now, chosen by the stage |
-| **Research brief** | Pinned notes, or your accepted questions. **Draft a brief from the paper** asks the assistant to propose notes. |
-| **Where you left off** | The latest conversation, your last request, any unsent draft, and next steps |
-| **Project activity** | The current version, the last build, and open or regressed review findings |
-| **Documents in this project** | Each imported document with its role, once there is more than one |
-| **Out of sync** | Files that changed since the current version was imported, and a newer import not yet marked current |
-| **Revision round** | Progress through reviewer comments |
-| **Repository** | Git status, when the folder is a Git repository |
-| **Needs you** | An interrupted edit, merge conflicts, proposed edits, suggested notes, and up to three open action items |
-| **Since you were last here** | Changed files, new versions, commits, finished reviews, and automations since your last visit. A visit ends after 30 minutes away. |
+| **Resume** | Recent file, document, or manuscript work, with a conversation fallback and access to recent conversations |
+| **Working set** | The main paper and pinned or recent documents; **Edit** opens attached source, **Read** opens a saved version, and **Compare** pins that version for comparison |
+| **Attention** | Blockers, proposed decisions, and open tasks; **All items** searches the full loaded list |
+| **Recent changes** | Inspectable files, new versions, commits, reviews, and automation results; routine build auxiliaries are omitted |
+| Repository footer | Local changes and ahead/behind counts as of the last remote fetch |
 
-What **Next** leads with depends on the stage:
+Use an attention item's menu to **Pin for today** or choose **Later · 24 hours**.
+A deferred item returns after 24 hours or when its source revision changes.
+Blockers cannot be deferred. Ordinary uncommitted work stays in repository
+status. If action items span multiple pages, the full attention panel says so
+and links to **All action items**.
 
-| Stage | Leads with |
-| --- | --- |
-| **Idea** | Nothing. The brief and your conversations come first. |
-| **Drafting** | A failed build, an unreviewed draft, open findings |
-| **Ready to submit** | An unreviewed version, open findings, a failed build, uncommitted work |
-| **Under review** | Uncommitted and unpushed work |
-| **Revising** | Reviewer comments still open or without a reply, then open findings |
-| **Accepted** | Uncommitted and unpushed work, a failed build |
+**Context** combines the brief and notes. **Brief** shows accepted, pinned notes
+together; **All notes** and **Suggested** keep other records accessible without
+losing unsaved edits. **Pin in project brief** chooses its contents.
+**Hide from the assistant** keeps a note out of conversations. A transcript's
+**Remember this decision** action lets you edit a proposed note before saving
+it, with a reference to the original message.
 
-With no stage set, **Next** uses a general order.
+**Builds & reviews → Sources and freshness** explains scope, last load time,
+partial results, and unavailable sources, with independent refresh buttons.
+Build results belong to the document recorded in their receipt. Review coverage
+uses matching content identity, not import dates. Local Git checks never fetch
+from a remote; use the repository panel to check the remote.
 
-**Project notes**, at the bottom, holds every note. **Pin in project brief**
-chooses what the brief shows. **Hide from the assistant** keeps a note out of
-conversations.
+**Inspect changes → Mark these changes seen** advances the activity baseline.
+Returning to a project or leaving it open does not acknowledge changes.
+
+Files and Write share unsaved source text for the same file and working copy.
+Saved snapshots and isolated edit copies stay separate. In Write, choose
+**Review findings beside source** to keep feedback visible; select source text
+and choose **Ask about selected source** to carry that passage to a conversation.
 
 ### Project settings
 
-Choose **Project settings** at the top of the Overview to set up the project.
-Its **Command settings** and **Share project** tabs are covered under
+Choose **Options** at the top of the Overview to set up the project. Its
+**Project**, **Documents**, **Folder**, **Exclusions**, and **Git** sections
+keep common settings within the panel. **More tools** opens command settings,
+sharing, version control, and review tools. **Full project settings** opens the
+complete settings page, including earlier research records.
+
+**Command settings** and **Share project** are covered under
 [Command settings](analysis-and-writing.md#command-settings) and
 [Project package](#project-package).
 
-- **Add document** and **Import LaTeX folder** add papers, decks, and other documents.
+- **Add document** and **Import LaTeX folder**, also available under **Add** on the dashboard, add papers, decks, and other documents.
 - **Main paper** selects an optional reference version for the project. Each document has its own current version and history in **Documents**.
-- **Publication details (optional)** sets the **Kind**, **Stage**, and **Venue**. The stage
-  decides what the Overview shows first.
+- **Publication details (optional)** sets the **Kind**, **Stage**, and **Venue**. These are optional publication metadata.
 - **Folder** has **Attach folder**, **Refresh file list**,
   **Check for changes every 30 seconds**, and
   **Folders and files to leave out**. **Refresh file list** reads every file.
@@ -243,8 +275,10 @@ Its **Command settings** and **Share project** tabs are covered under
 - **Earlier research records** appears only in a project that has some. See
   [Earlier research records](#earlier-research-records).
 
-A project with no folder and no paper has a shorter Overview: the brief,
-conversations, anything that needs you, and buttons to add a paper or folder.
+An older project with no folder and no paper has a shorter Overview: the brief,
+conversations, anything that needs you, and **Add** to import a document or attach
+a folder. The dashboard and common Options sections fit typical desktop windows;
+narrow windows, enlarged text, and long notes can scroll so content stays readable.
 
 ### Earlier research records
 
@@ -322,7 +356,10 @@ Every open file has these in its **…** menu, along with **Reload**. Pipeline
 will not open a program or script with **Open externally** or **Open external
 editor**. On a Mac, that includes Python files. On an exFAT drive or a network
 share, which can't mark a file as a program, Pipeline reads the start of the
-file instead, and also won't open a file with no extension.
+file instead, and also won't open a file with no extension. A file in an edit
+conversation's copy opens externally as a read-only snapshot, because the
+conversation can still change the copy. Edit it in Pipeline instead, or use
+**Reveal in folder**.
 
 The editor handles LaTeX, BibTeX, Markdown, Stata, Python, R, Julia, MATLAB,
 and other common languages. Markdown has **Source** and **Preview** views, and
@@ -390,9 +427,13 @@ backups of your project folders and datasets.
 Open **Settings → Data & Storage**, then **Manage research data**, and choose
 **Export research backup**.
 
-A backup includes conversation working files. It leaves out links, special
-files, files it can't read, and files too large for a backup, and says so when
-it does.
+A backup includes conversation working files and private project edit copies,
+including changes that have not yet been captured. For conversations without a
+project folder, it leaves out links, special files, unreadable files, and files
+too large for a backup, and reports those omissions. An unreadable, changing,
+or oversized private edit copy stops the backup so its work is not lost silently.
+Private Git edit worktrees restore as ordinary edit copies; keep a separate
+backup of the source repository and its history.
 
 If a saved file is missing from your research data folder, Pipeline lists what
 it affects and asks whether to back up without it. Everything else is saved.
@@ -419,6 +460,8 @@ pages and start a Review. Files over 64 MB stop the export; turn off
 
 To import, choose **Inspect package…**, then
 **Into a new separate project (default)** or **Merge into this project**.
+For a new project, choose **Choose project folder…** to select its folder on
+this computer.
 **Preview import** shows what's new, identical, or in conflict. Imported
 command runs show their results but never run again.
 
@@ -436,6 +479,68 @@ plus the shared earlier version when there is one. Choose **Keep local** or
 **Create a review design from saved research steps**, on the same page, turns
 completed action items into a draft review. Choose **Draft review**, then
 **Save draft…**, and open the file in the review designer.
+
+### Research workflow tools
+
+**Project options → Documents** separates the primary manuscript from its
+historical reference version. New captures update the primary document without
+advancing the reference. Builds, reviews, working edits, and submissions retain
+their own version identities.
+
+In **Write**, select source text and choose **Ask about selected source** to add
+that exact selection to an unsent conversation. Source chips can be inspected,
+reclassified, or removed. Unsaved selections are labeled as drafts. In
+**Responses**, create a linked task, inspect proposed edits and check receipts,
+and draft a reply from an accepted change. Accepting an edit does not resolve
+the original objection automatically.
+
+In **Files**, **Run…** prepares an execution profile for a supported script.
+Review the program, individual arguments, inputs, and expected outputs before
+launching. **Runs** connects files to recorded executions using path and hash.
+Execution details can compare current inputs with the recorded input versions;
+these checks cover declared dependencies only.
+
+**Project options → Git** connects an existing source folder through one active
+transport. Version control can clone into an empty attached folder, add a remote
+without replacing another, select its destination branch, fetch, compare, pull,
+and publish. Changed destinations must be reconnected before exchange. A
+destination applies to the branch you selected it on. Other branches publish
+under their own names, and Pipeline won't publish a branch to a remote branch
+with another name unless you select that branch as its destination.
+
+- **Overleaf:** use an eligible Overleaf plan and native Git credentials with
+  username `git`. Select the remote's existing `main` or `master` branch.
+  Comments and tracked changes do not round-trip completely through Git.
+- **Dropbox:** use a folder managed by the Dropbox desktop application. Keep
+  files available offline. Pipeline observes local bytes; it cannot establish
+  cloud upload completion. New task copies live in private app storage.
+  Legacy `.pipeline-tasks` folders must be cleared or moved before connecting.
+- **GitHub:** the collaboration panel uses an installed, signed-in `gh` CLI.
+  Check pull requests and CI for the selected commit, import conversation
+  comments or issues as local tasks, and prepare a draft pull request. Creating
+  the draft is a separate publication action and requires the exact branch
+  commit to exist on GitHub. CI artifacts remain on GitHub until opened there.
+
+**Write → Citations** indexes selected BibTeX or CSL JSON files, searches by
+author, title, or key, inserts a citation at the editor selection, and checks
+literal TeX citation commands for missing keys. Bibliography files remain
+the source of your references. The optional local Zotero preview imports selected collection
+metadata with database and item versions; it does not acquire attachments or
+edit the bibliography automatically.
+
+**Project options → Milestones & checks** provides named submission snapshots
+and optional local citation checks. Choose saved files, document versions, and
+evidence, then edit the handoff note. Review the retained file manifest before
+exporting an ordinary ZIP containing documents, evidence, a README, and hashes.
+Later edits do not change a snapshot. Source-tree document references require
+selecting their source files separately; unsaved buffers are excluded.
+
+Citation checks are off by default. Enable them for a selected TeX file and
+bibliographies to check after saving those files in Pipeline. Changes settle
+for 500 ms and matching inputs reuse their receipt. Failures appear in
+Attention; routine success stays in history. Opening a project launches
+nothing. Builds, analyses, and model reviews keep their existing manual launch
+and cancellation controls.
 
 ### Trash
 

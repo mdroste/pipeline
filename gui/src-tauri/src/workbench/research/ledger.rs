@@ -420,7 +420,13 @@ fn claim_ids(
 
 pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<ResearchLedger> {
     validate_id("workspace id", workspace_id)?;
-    let connection = open_connection(store)?;
+    research_ledger_on(&open_connection(store)?, workspace_id)
+}
+
+pub(crate) fn research_ledger_on(
+    connection: &Connection,
+    workspace_id: &str,
+) -> WorkbenchResult<ResearchLedger> {
     let mut claims_statement = connection.prepare("SELECT c.id, c.workspace_id, c.paper_id, c.workflow_state, v.id, v.version, v.claim_text, v.kind, v.origin, v.paper_locator_json, v.dependency_hash, c.created_at, c.updated_at FROM claims c JOIN claim_versions v ON v.id = c.current_version_id WHERE c.workspace_id = ?1 AND c.workflow_state <> 'retired' ORDER BY c.updated_at DESC LIMIT 500").map_err(|error| WorkbenchError::storage("Failed to prepare claim ledger", error))?;
     let claims = claims_statement
         .query_map([workspace_id], claim_from_row)
@@ -435,8 +441,8 @@ pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<Res
         .map_err(|error| WorkbenchError::storage("Failed to decode evidence", error))?;
     // Over every claim and link: the lists above stop at their limits, and a
     // claim's only support can be older than the newest links.
-    let unsupported_accepted_claims = claim_ids(&connection, workspace_id, "c.workflow_state = 'accepted' AND NOT EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.relation = 'supports' AND e.freshness = 'current' AND e.assessment IN ('human_confirmed', 'check_passed'))")?;
-    let stale_claims = claim_ids(&connection, workspace_id, "c.workflow_state <> 'retired' AND EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.freshness = 'stale')")?;
+    let unsupported_accepted_claims = claim_ids(connection, workspace_id, "c.workflow_state = 'accepted' AND NOT EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.relation = 'supports' AND e.freshness = 'current' AND e.assessment IN ('human_confirmed', 'check_passed'))")?;
+    let stale_claims = claim_ids(connection, workspace_id, "c.workflow_state <> 'retired' AND EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.freshness = 'stale')")?;
     Ok(ResearchLedger {
         claims,
         evidence,

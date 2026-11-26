@@ -145,10 +145,10 @@ pub(crate) fn run_profile_process(
             process_started: false,
         });
     }
-    let mut child = crate::commands::lifecycle::spawn_independent(&mut command)
+    let mut child = crate::process_tree::spawn_independent(&mut command)
         .map_err(|error| format!("Failed to start research execution: {error}"))?;
     let pid = child.id();
-    crate::commands::lifecycle::register_independent_child_pid(pid);
+    crate::process_tree::register_independent_child_pid(pid);
     execution_pids()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -192,7 +192,7 @@ pub(crate) fn run_profile_process(
             // 30 seconds before forced termination, which is recorded as
             // requiring cleanup verification. Direct Stata stops immediately.
             if !waits_for_launcher || requested_at.elapsed() >= Duration::from_secs(30) {
-                crate::commands::lifecycle::kill_independent_process(pid);
+                crate::process_tree::kill_independent_process(pid);
                 let _ = child.wait();
                 break (reason.to_string(), None);
             }
@@ -215,7 +215,7 @@ pub(crate) fn run_profile_process(
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => {
-                crate::commands::lifecycle::kill_independent_process(pid);
+                crate::process_tree::kill_independent_process(pid);
                 let _ = child.wait();
                 wait_error = Some(format!(
                     "Failed while waiting for research execution: {error}"
@@ -234,8 +234,8 @@ pub(crate) fn run_profile_process(
         .remove(execution_id);
     // A completed launcher may leave descendants holding inherited output pipes.
     // Reap this execution's independent group before joining capture threads.
-    crate::commands::lifecycle::kill_independent_process(pid);
-    crate::commands::lifecycle::unregister_independent_child_pid(pid);
+    crate::process_tree::kill_independent_process(pid);
+    crate::process_tree::unregister_independent_child_pid(pid);
     // Even a failed OS cleanup must not strand the execution in a pipe join.
     let stdout_result = stdout_rx.recv_timeout(Duration::from_secs(2)).ok();
     let stderr_result = stderr_rx.recv_timeout(Duration::from_secs(2)).ok();

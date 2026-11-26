@@ -42,6 +42,7 @@ pub struct EngineStatus {
     pub install_progress: Option<EngineInstallProgress>,
     pub available: bool,
     pub unavailable_reason: String,
+    pub setup_message: Option<String>,
 }
 
 /// Remove one exact app-owned path without ever following a symlink. Returns
@@ -191,6 +192,10 @@ pub(super) fn cleanup_managed_engine_storage_at(
 
     // The native recognition stack swaps atomically. If activation was
     // interrupted before the new target appeared, put the old target back.
+    match cleanup_gpu_runtime_at(native_root) {
+        Ok(count) => removed += count,
+        Err(error) => errors.push(error),
+    }
     let paddle_target = native_root.join("paddleocr-vl");
     let paddle_backup = native_root.join(".paddleocr-vl-backup");
     if path_present(&paddle_backup) {
@@ -426,12 +431,20 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
                 est_download_mb: spec.est_download_mb,
                 est_disk_mb: spec.est_disk_mb,
                 managed_stack_mb: stack_mb,
-                installing,
+                installing: installing
+                    && install_progress
+                        .as_ref()
+                        .is_none_or(|progress| progress.engine_id == spec.id),
                 install_progress: install_progress
                     .clone()
                     .filter(|progress| progress.engine_id == spec.id),
                 available: support.is_ok(),
                 unavailable_reason,
+                setup_message: if spec.id == GPU_RECOGNITION_ID {
+                    gpu_setup_message()
+                } else {
+                    None
+                },
             }
         })
         .collect()

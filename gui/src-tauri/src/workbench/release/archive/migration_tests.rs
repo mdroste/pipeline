@@ -52,6 +52,7 @@ fn legacy_archive(root: &Path, declared_schema: u32, conflicting_table: bool) ->
         original_blob_root: "/original/blobs".into(),
         workspace_roots: vec![],
         conversation_files: vec![],
+        project_copies: vec![],
         omitted_references: vec![],
         blobs: vec![BlobManifest {
             archive_path: "blobs/evidence.txt".into(),
@@ -197,6 +198,7 @@ fn an_archive_from_every_prior_schema_restores() {
             original_blob_root: "workspace://blobs".into(),
             workspace_roots: vec![],
             conversation_files: vec![],
+            project_copies: vec![],
             omitted_references: vec![],
             blobs: vec![],
             portability_note: "Prior schema fixture".into(),
@@ -405,6 +407,7 @@ fn a_backup_from_before_the_journal_was_cleared_restores_and_stays_reconcilable(
         original_blob_root: "workspace://blobs".into(),
         workspace_roots: vec![],
         conversation_files: vec![],
+        project_copies: vec![],
         omitted_references: vec![],
         blobs: vec![],
         portability_note: "Journal fixture".into(),

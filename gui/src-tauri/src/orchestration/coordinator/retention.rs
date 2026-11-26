@@ -264,7 +264,7 @@ impl Coordinator {
                 continue;
             };
             let operation = run.id.clone();
-            if let Err(error) = crate::workbench::commands::run_store(move |s| {
+            if let Err(error) = crate::workbench::runtime::run_store(move |s| {
                 if crate::workbench::tasks::owns_occurrence(&s, &operation, &session)? {
                     crate::workbench::tasks::archive_occurrence(&s, &session)?;
                 }

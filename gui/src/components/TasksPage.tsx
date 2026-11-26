@@ -25,6 +25,8 @@ import Detail from "./tasks/Detail";
 import ScheduleCard from "./tasks/ScheduleCard";
 import { ResearchStatus, Status } from "./tasks/shared";
 import PageHeader from "../ui/PageHeader";
+import ProjectBreadcrumb from "./ProjectBreadcrumb";
+import useRouteSnapshot from "../hooks/useRouteSnapshot";
 import "./TasksPage.css";
 import ReportIssueLink from "./ReportIssueLink";
 const MissionDetail = lazy(() => import("./research-missions/Detail"));
@@ -50,6 +52,7 @@ export default function TasksPage({
   /** Open the builder prefilled to automate this input file. */
   initialAutomatePath?: string | null;
 }) {
+  const { route } = useRouteSnapshot();
   const [view, setView] = useState("active");
   const views = ["active", "scheduled", "history"];
   const tabList = useTabList(
@@ -264,10 +267,23 @@ export default function TasksPage({
     );
     pane?.firstElementChild?.scrollIntoView?.({ block: "nearest" });
   }, [paneKey]);
+  const detailProjectId = selected
+    ? selected.kind === "task"
+      ? selected.run.scope.workspaceId
+      : selected.run.workspaceId
+    : route.page === "tasks"
+      ? route.projectId
+      : undefined;
   return (
-    <main className="ui-page tasks-page">
+    <main className="ui-page ui-page--index tasks-page">
+      {detailProjectId && (
+        <ProjectBreadcrumb
+          projectId={detailProjectId}
+          location="Automation · All automations"
+        />
+      )}
       <PageHeader
-        variant={creating ? "compact" : "standard"}
+        variant="standard"
         title="All automations"
         description="Schedule project work, review and revise papers, or investigate a research question."
         action={

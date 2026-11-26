@@ -187,6 +187,20 @@ describe("NavRail", () => {
     );
   });
 
+  it("temporarily follows the tutorial without changing saved section preferences", () => {
+    const key = "pipeline.ui.navRailSections";
+    localStorage.setItem(key, JSON.stringify({ reviews: false }));
+    const props = railProps();
+    const { rerender } = render(<NavRail {...props} />);
+    expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
+    rerender(<NavRail {...props} activePage="main" transientNavigation />);
+    expect(screen.getByRole("button", { name: "Designer" })).toBeVisible();
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ reviews: false });
+    rerender(<NavRail {...props} />);
+    expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ reviews: false });
+  });
+
   it("opens recent projects directly and identifies unavailable folders", async () => {
     const user = userEvent.setup();
     const onOpenProject = vi.fn();

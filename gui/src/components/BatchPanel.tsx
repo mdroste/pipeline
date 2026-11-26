@@ -1,3 +1,6 @@
+import { Icon } from "../ui/icons";
+import IconButton from "../ui/IconButton";
+import "../ui/page.css";
 import type { ExecutionPlanEnvelope } from "../lib/appRunPreparation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { appClient } from "../lib/appClient";
@@ -27,11 +30,11 @@ function fmtDuration(secs: number): string {
 function statusColor(status: string): string {
   switch (status) {
     case "done":
-      return "text-green-600 dark:text-green-400";
+      return "text-success";
     case "failed":
-      return "text-red-600 dark:text-red-400";
+      return "text-danger";
     case "running":
-      return "text-blue-600 dark:text-blue-400 animate-pulse";
+      return "text-running animate-pulse motion-reduce:animate-none";
     case "cancelled":
       return "text-ink-muted";
     default:
@@ -191,7 +194,7 @@ export default function BatchPanel({
     async (paperPath?: string | null): Promise<ExecutionPlanEnvelope> => {
       if (!profileConfigSnapshotId) {
         throw new Error(
-          "The active workflow setup is not ready. Refresh it and review the options.",
+          "The active review design setup is not ready. Refresh it and review the options.",
         );
       }
       const setup = await appClient.executionPlan({
@@ -224,8 +227,8 @@ export default function BatchPanel({
           .join("; ");
         throw new Error(
           missing
-            ? `The active workflow is not ready. Missing: ${missing}.`
-            : "The active workflow is not ready. Refresh dependencies and try again.",
+            ? `The active review design is not ready. Missing: ${missing}.`
+            : "The active review design is not ready. Refresh dependencies and try again.",
         );
       }
       return setup;
@@ -409,23 +412,21 @@ export default function BatchPanel({
     .join(" · ");
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-line bg-surface shrink-0">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Batch reports
-        </h2>
+    <div className="ui-layout-workspace flex flex-col h-full">
+      <div className="ui-workspace-header flex flex-wrap items-center gap-3">
+        <h2 className="ui-workspace-title">Batch reports</h2>
         <span className="text-xs text-ink-muted">
           Review each document in turn using the selected review design.
         </span>
         {showClose && (
-          <button
+          <IconButton
             type="button"
             onClick={onClose}
-            className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            aria-label="Close batch"
+            className="ml-auto"
+            label="Close batch"
           >
-            ✕
-          </button>
+            <Icon name="close" className="h-4 w-4" />
+          </IconButton>
         )}
       </div>
 
@@ -433,7 +434,7 @@ export default function BatchPanel({
         {error && (
           <div
             role="alert"
-            className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
+            className="flex items-start gap-3 p-3 bg-danger-soft border border-danger rounded text-sm text-danger"
           >
             <span className="flex-1">
               {error}
@@ -443,7 +444,7 @@ export default function BatchPanel({
               <button
                 type="button"
                 onClick={() => setSetupAttempt((attempt) => attempt + 1)}
-                className="shrink-0 rounded border border-red-300 px-2 py-1 text-xs font-medium dark:border-red-800"
+                className="shrink-0 rounded border border-danger px-2 py-1 text-xs font-medium"
               >
                 Retry setup
               </button>
@@ -596,7 +597,7 @@ export default function BatchPanel({
                   !profileConfigSnapshotId ||
                   preparingStart
                 }
-                className="ml-auto px-4 py-1.5 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="ui-button ui-button--primary ml-auto"
               >
                 Start batch ({staged.length})
               </button>
@@ -611,14 +612,13 @@ export default function BatchPanel({
                     <span className="flex-1 truncate" title={p}>
                       {p.split(/[\\/]/).pop()}
                     </span>
-                    <button
+                    <IconButton
                       type="button"
                       onClick={() => removeStaged(p)}
-                      aria-label={`Remove ${p.split(/[\\/]/).pop()}`}
-                      className="text-xs text-gray-400 hover:text-red-500"
+                      label={`Remove ${p.split(/[\\/]/).pop()}`}
                     >
-                      ✕
-                    </button>
+                      <Icon name="close" className="h-4 w-4" />
+                    </IconButton>
                   </div>
                 ))}
               </div>
@@ -656,13 +656,13 @@ export default function BatchPanel({
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 Jobs {done + failed}/{jobs.length} done
                 {failed > 0 && (
-                  <span className="text-red-500"> · {failed} failed</span>
+                  <span className="text-danger"> · {failed} failed</span>
                 )}
               </h3>
               {running && (
                 <button
                   onClick={cancel}
-                  className="px-3 py-1 text-xs rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
+                  className="px-3 py-1 text-xs rounded-lg border border-danger text-danger hover:bg-danger-soft"
                 >
                   Cancel batch
                 </button>
@@ -700,7 +700,7 @@ export default function BatchPanel({
                   )}
                   {j.error && (
                     <span
-                      className="text-xs text-red-500 max-w-[16rem] truncate"
+                      className="text-xs text-danger max-w-[16rem] truncate"
                       title={j.error}
                     >
                       {j.error}

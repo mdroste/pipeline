@@ -157,3 +157,24 @@
     flex-wrap: wrap;
   }
 }
+.project-picker-attention {
+  color: var(--ui-danger);
+  font-size: var(--ui-text-meta);
+}
+.project-picker-date[data-deadline] {
+  max-width: 15rem;
+  white-space: normal;
+  text-align: right;
+}
+@container (max-width: 480px) {
+  .project-picker-row {
+    flex-wrap: wrap;
+  }
+  .project-picker-open {
+    flex-basis: 100%;
+  }
+  .project-picker-date[data-deadline] {
+    display: block;
+    max-width: 9rem;
+  }
+}

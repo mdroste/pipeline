@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { detectReportIssues, renderSpecialistMarkdown } from "../../lib/issues";
 import ExampleReview, { EXAMPLE_REVIEW_TITLE } from "./ExampleReview";
-import { EXAMPLE_REPORT } from "./exampleReviewData";
+import {
+  EXAMPLE_REPORT,
+  EXAMPLE_ADAPTIVE_REVIEWERS,
+} from "./exampleReviewData";
 import { EXAMPLE_FINDINGS } from "./exampleReviewFindings";
 import { EXAMPLE_PAPER_PAGES } from "./exampleReviewPaper";
 
@@ -90,15 +93,14 @@ it("builds the sample in the same shape as a saved run", () => {
     expect(renderSpecialistMarkdown(step.raw_text)).toContain("**#1.");
 });
 
-it("opens the real report screen on sample data and saves nothing", async () => {
+it("can skip to the real report, inspect evidence, and save nothing", async () => {
   const user = userEvent.setup();
   const onClose = vi.fn();
   render(<ExampleReview onClose={onClose} />);
   const dialog = screen.getByRole("dialog", { name: EXAMPLE_REVIEW_TITLE });
 
-  expect(
-    within(dialog).getByText(/No model was called, and nothing is saved/),
-  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Skip to results" }));
+  await user.click(screen.getByRole("button", { name: "Explore freely" }));
   expect(
     within(dialog).getByRole("heading", {
       name: "Bus Rapid Transit and Women's Employment: Evidence from Port Harlan",
@@ -119,13 +121,12 @@ it("opens the real report screen on sample data and saves nothing", async () => 
     await within(dialog).findByText("Recorded limitations", { selector: "p" }),
   ).toBeVisible();
 
-  await user.click(within(dialog).getByRole("tab", { name: /Issues/ }));
+  await user.click(within(dialog).getByRole("tab", { name: /Findings/ }));
   await within(dialog).findByRole(
     "heading",
-    { name: "Issues (10)" },
+    { name: "Findings (10)" },
     lazyPanelWait,
   );
-  expect(within(dialog).getByText(/quote check catches it/)).toBeVisible();
 
   for (const title of [
     "Standard errors are clustered below the level of treatment",
@@ -145,7 +146,7 @@ it("opens the real report screen on sample data and saves nothing", async () => 
   // Decisions stay in memory: no saved run receives annotations.
   await user.click(
     within(dialog).getByRole("button", {
-      name: "accept issue: The $2.30 return does not follow from the paper's own numbers",
+      name: "accept finding: The $2.30 return does not follow from the paper's own numbers",
     }),
   );
   expect(within(dialog).getByText(/Annotations aren't saved/)).toBeVisible();
@@ -164,6 +165,13 @@ it("opens the real report screen on sample data and saves nothing", async () => 
     lazyPanelWait,
   );
   expect(scrollIntoView.mock.contexts).toContain(target);
+
+  for (const [, label] of EXAMPLE_ADAPTIVE_REVIEWERS) {
+    await user.click(within(dialog).getByRole("button", { name: label }));
+    expect(
+      await within(dialog).findByRole("heading", { name: label }),
+    ).toBeVisible();
+  }
 
   expect(invoke).not.toHaveBeenCalled();
 

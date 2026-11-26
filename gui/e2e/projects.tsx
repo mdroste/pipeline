@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import ProjectIndexPage from "../src/components/ProjectIndexPage";
 import WorkspaceProjectSurface from "../src/components/WorkspaceProjectSurface";
 import NavRail from "../src/components/NavRail";
+import { overviewFixture } from "./overviewFixture";
 import type { ProjectHome } from "../src/lib/projectClient";
 import type { ProjectIndexItem } from "../src/lib/projectIndex";
 import type {
@@ -196,7 +197,9 @@ const sessions = [
     archivedAt: time,
   },
 ];
-const documentPreview = new URLSearchParams(location.search).has("documents");
+const overviewPreview = new URLSearchParams(location.search).has("overview");
+const documentPreview =
+  overviewPreview || new URLSearchParams(location.search).has("documents");
 const documentHistory = new Map<
   string,
   NonNullable<ProjectHome["papers"][number]["revision"]>[]
@@ -247,11 +250,16 @@ if (documentPreview) {
     };
   });
 }
+const overviewCommand = overviewPreview
+  ? overviewFixture(home, workspace, session)
+  : null;
 Object.assign(window, {
   __TAURI_INTERNALS__: {
     transformCallback: () => 1,
     unregisterCallback: () => {},
     invoke: async (command: string, args: any) => {
+      const overviewResult = overviewCommand?.(command, args);
+      if (overviewResult !== undefined) return overviewResult;
       if (command.startsWith("plugin:event|")) return 1;
       if (command === "workbench_project_index") return projects;
       if (command === "workbench_list_workspaces")
@@ -362,7 +370,7 @@ function Fixture() {
     documentPreview ? "project" : "index",
   );
   const [destination, setDestination] = useState<WorkspaceDestination>(
-    documentPreview ? "documents" : "overview",
+    documentPreview && !overviewPreview ? "documents" : "overview",
   );
   const [width, setWidth] = useState(1400);
   const [dark, setDark] = useState(false);
@@ -379,7 +387,13 @@ function Fixture() {
     setView("conversation");
   };
   return (
-    <>
+    <div
+      style={
+        overviewPreview
+          ? { height: "100dvh", display: "flex", flexDirection: "column" }
+          : undefined
+      }
+    >
       <div className="flex flex-wrap items-center gap-5 p-3 text-xs dark:bg-neutral-900 dark:text-neutral-100">
         <span>
           Development fixture · sample research · no native/model calls
@@ -391,7 +405,7 @@ function Fixture() {
             value={width}
             onChange={(e) => setWidth(Number(e.target.value))}
           >
-            {[1024, 1400, 1600].map((n) => (
+            {[1024, 1280, 1366, 1400, 1440, 1600, 1920].map((n) => (
               <option key={n}>{n}</option>
             ))}
           </select>
@@ -405,7 +419,17 @@ function Fixture() {
           Dark appearance
         </label>
       </div>
-      <div style={{ width, maxWidth: "100%", height: 780, display: "flex" }}>
+      <div
+        data-testid="project-fixture-window"
+        style={{
+          width,
+          maxWidth: "100%",
+          height: overviewPreview ? undefined : 780,
+          flex: overviewPreview ? 1 : undefined,
+          minHeight: 0,
+          display: "flex",
+        }}
+      >
         <NavRail
           activePage={view === "index" ? "project-index" : "workspace"}
           width={216}
@@ -431,6 +455,7 @@ function Fixture() {
           ) : view === "project" ? (
             <div className="workspace-chat-shell flex h-full">
               <WorkspaceProjectSurface
+                navigationInSidebar={overviewPreview}
                 workspaceId={workspace.id}
                 sessions={[session]}
                 onConversation={async () => {}}
@@ -459,7 +484,7 @@ function Fixture() {
           )}
         </main>
       </div>
-    </>
+    </div>
   );
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

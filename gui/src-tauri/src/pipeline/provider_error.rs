@@ -63,11 +63,85 @@ pub fn is_non_retryable_error(error: &str) -> bool {
         "[codex-outcome-unknown]",
         "[codex-capability]",
         "[codex-auth]",
+        "[claude-auth]",
         ARTIFACT_LIMIT_PREFIX,
         super::executor::budget::BUDGET_STOP_PREFIX,
     ]
     .iter()
     .any(|marker| error.contains(marker))
+}
+
+/// Compatibility classification at the provider-string boundary. Display text
+/// stays untouched; policies use named facts instead of repeating marker scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureKind {
+    Cancelled,
+    OutcomeUnknown,
+    Capability,
+    Authentication,
+    ArtifactLimit,
+    BudgetLimit,
+    UsageExhausted,
+    Throttled,
+    Other,
+}
+#[derive(Debug)]
+pub(crate) struct Failure<'a> {
+    pub message: &'a str,
+    pub kind: FailureKind,
+    usage_exhausted: bool,
+    non_retryable: bool,
+    throttled: bool,
+}
+impl<'a> Failure<'a> {
+    pub fn from_legacy(message: &'a str) -> Self {
+        let usage_exhausted = is_usage_limit_error(message);
+        let non_retryable = is_non_retryable_error(message);
+        let throttled = is_throttling_error(message);
+        let kind = if crate::cancellation::is_pipeline_cancellation_error(message) {
+            FailureKind::Cancelled
+        } else if message.contains("[codex-outcome-unknown]") {
+            FailureKind::OutcomeUnknown
+        } else if message.contains("[codex-capability]") {
+            FailureKind::Capability
+        } else if message.contains("[codex-auth]") || message.contains("[claude-auth]") {
+            FailureKind::Authentication
+        } else if message.contains(ARTIFACT_LIMIT_PREFIX) {
+            FailureKind::ArtifactLimit
+        } else if message.contains(super::executor::budget::BUDGET_STOP_PREFIX) {
+            FailureKind::BudgetLimit
+        } else if usage_exhausted {
+            FailureKind::UsageExhausted
+        } else if throttled {
+            FailureKind::Throttled
+        } else {
+            FailureKind::Other
+        };
+        Self {
+            message,
+            kind,
+            usage_exhausted,
+            non_retryable,
+            throttled,
+        }
+    }
+    pub fn permits_fallback(&self) -> bool {
+        self.usage_exhausted && !self.non_retryable
+    }
+    pub fn stops_retries(&self) -> bool {
+        self.usage_exhausted || self.non_retryable
+    }
+    pub fn is_throttled(&self) -> bool {
+        self.throttled
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.kind == FailureKind::Cancelled
+    }
+}
+impl std::fmt::Display for Failure<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
 }
 
 #[cfg(test)]
@@ -116,5 +190,23 @@ mod tests {
         assert!(!is_usage_limit_error(
             "Artifact safety quota exceeded (1001 files, 12 MB)"
         ));
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::{Failure, FailureKind};
+    #[test]
+    fn uncertainty_and_safety_prevent_fallback_even_with_quota_words() {
+        let message = "[codex-outcome-unknown] quota exceeded";
+        let failure = Failure::from_legacy(message);
+        assert_eq!(failure.kind, FailureKind::OutcomeUnknown);
+        assert!(failure.stops_retries());
+        assert!(!failure.permits_fallback());
+        assert_eq!(failure.to_string(), message);
+        let quota = Failure::from_legacy("insufficient_quota");
+        assert!(quota.permits_fallback());
+        assert!(quota.stops_retries());
+        assert!(!Failure::from_legacy("subscription cancelled").is_cancelled());
     }
 }

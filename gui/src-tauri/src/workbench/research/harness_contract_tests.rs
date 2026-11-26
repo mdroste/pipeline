@@ -108,14 +108,18 @@ fn plain_harness_and_empty_snapshot_match_frozen_contract() {
 fn only_conversations_without_a_project_folder_get_a_private_folder() {
     let (_temporary, store) = store();
     let create = |id: &str, root: Option<String>| {
-        let workspace = store
-            .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
-                name: id.into(),
-                root,
-                operation_id: format!("{id}-workspace"),
-            })
-            .unwrap()
-            .record;
+        let request = crate::workbench::store::CreateWorkspaceRequest {
+            name: id.into(),
+            root,
+            operation_id: format!("{id}-workspace"),
+        };
+        let workspace = if request.root.is_some() {
+            store.create_workspace(request)
+        } else {
+            store.create_legacy_workspace(request)
+        }
+        .unwrap()
+        .record;
         store
             .create_session(crate::workbench::store::CreateSessionRequest {
                 workspace_id: Some(workspace.id),

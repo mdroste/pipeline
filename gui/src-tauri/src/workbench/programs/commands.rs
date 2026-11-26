@@ -1,6 +1,6 @@
 //! Narrow host facade; only this module crosses the blocking-store boundary.
 use super::*;
-use crate::workbench::{commands as host, research};
+use crate::workbench::{research, runtime as host};
 use tauri::Emitter;
 #[derive(Debug, Deserialize)]
 #[serde(
@@ -689,7 +689,7 @@ fn acquisition_allowed(store: &Store, ws: &str, consent: bool) -> WorkbenchResul
 }
 #[tauri::command]
 pub async fn workbench_research_activity() -> WorkbenchResult<Value> {
-    let pending = host::workbench_codex_pending_requests();
+    let pending = host::codex::requests::codex_pending_requests();
     let mut activity=host::run_store(|s|{let c=s.connection()?;
         let mut q=c.prepare("SELECT s.id,s.workspace_id,s.title,b.provider_thread_id,t.provider_turn_id,t.state FROM turns t JOIN session_bindings b ON b.id=t.binding_id JOIN sessions s ON s.id=b.session_id WHERE t.terminal_at IS NULL ORDER BY t.created_at DESC LIMIT 100").map_err(err)?;
         let turns=q.query_map([],|r|Ok(json!({"sessionId":r.get::<_,String>(0)?,"workspaceId":r.get::<_,Option<String>>(1)?,"title":r.get::<_,String>(2)?,"threadId":r.get::<_,String>(3)?,"turnId":r.get::<_,Option<String>>(4)?,"state":r.get::<_,String>(5)?}))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;

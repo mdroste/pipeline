@@ -9,7 +9,8 @@ use super::inspection::{
 };
 use super::omissions::clear_omitted_references;
 use super::{
-    conversation_files, copy_entry, hash_reader, now, safe_archive_name, validate_absolute_file,
+    conversation_files, copy_entry, hash_reader, now, project_copies, safe_archive_name,
+    validate_absolute_file,
 };
 use crate::workbench::store::{
     is_left_out_reference, record_location, resolve_reference, Store, WorkbenchError,
@@ -278,6 +279,12 @@ pub fn import_archive(
     conversation_files::validate(
         &manifest.conversation_files,
         &session_ids,
+        temporary.path(),
+        &mut expected_names,
+    )?;
+    project_copies::validate(
+        &manifest.project_copies,
+        &imported,
         temporary.path(),
         &mut expected_names,
     )?;
@@ -574,6 +581,8 @@ pub fn import_archive(
     verify_retired(&imported)?;
     adopt_retained_references(&imported, store.root_path())?;
     record_location(&imported, store.root_path())?;
+    let mut installed_copies =
+        project_copies::install(store, &manifest.project_copies, temporary.path(), &imported)?;
     drop(imported);
     let imported = open_archived_database(&database_path)?;
     let mut installed =
@@ -586,6 +595,7 @@ pub fn import_archive(
         .map_err(|error| WorkbenchError::storage("Failed to restore archive database", error))?;
     drop(backup);
     installed.commit();
+    installed_copies.commit();
     let workspace_count = destination
         .query_row("SELECT COUNT(*) FROM workspaces", [], |row| {
             row.get::<_, i64>(0)

@@ -1,7 +1,6 @@
 //! Claude CLI transport.
 
 use super::*;
-use std::future::Future;
 
 /// Call `claude -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
@@ -43,32 +42,10 @@ pub(super) fn is_cli_session_capability_error(error: &str) -> bool {
 /// clock; every other failure of a fork whose warm-up already succeeded is
 /// worth one self-contained attempt rather than failing the step.
 pub(super) fn fork_failure_uses_fallback(error: &str) -> bool {
-    !crate::commands::is_pipeline_cancellation_error(error)
+    !crate::cancellation::is_pipeline_cancellation_error(error)
         && !error.contains("timed out after")
         && !crate::pipeline::provider_error::is_usage_limit_error(error)
-}
-
-/// Check the Claude subscription sign-in on a Review run's first Claude call
-/// and reuse that executable for the rest of the run; concurrent first calls
-/// share one check. A failed check is not remembered, so a retry checks again.
-/// Outside a run the shared fallback scope is reused across operations, so
-/// every call checks.
-pub(super) async fn verify_subscription_once_per_run<F, Fut>(
-    verify: F,
-) -> Result<crate::deps::ResolvedCommand, String>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = Result<crate::deps::ResolvedCommand, String>>,
-{
-    let scope = crate::run_scope::current();
-    if scope.is_fallback() {
-        return verify().await;
-    }
-    scope
-        .claude_subscription()
-        .get_or_try_init(verify)
-        .await
-        .cloned()
+        && !crate::pipeline::provider_error::is_non_retryable_error(error)
 }
 
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
@@ -108,8 +85,15 @@ pub async fn call_claude(
 
     let model = overrides.model.unwrap_or("");
     let effort = overrides.effort.unwrap_or("");
-    let session_key =
-        context.compatibility_key("claude-cli", [model, effort, system_prompt.unwrap_or("")]);
+    let session_key = context.compatibility_key(
+        "claude-cli",
+        [
+            model,
+            effort,
+            system_prompt.unwrap_or(""),
+            overrides.claude_auth.runtime(),
+        ],
+    );
     let slot = context.slot(session_key).await;
 
     let base_result = {
@@ -156,7 +140,7 @@ pub async fn call_claude(
                             // A cancelled warm-up says nothing about the CLI's
                             // session support; leave the slot empty so a later
                             // unit can warm the shared session again.
-                            if !crate::commands::is_pipeline_cancellation_error(&error) {
+                            if !crate::cancellation::is_pipeline_cancellation_error(&error) {
                                 *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
                             }
                             Err(error)
@@ -240,10 +224,11 @@ pub async fn call_claude(
             result
         }
         Err(error) => {
-            if crate::commands::is_pipeline_cancellation_error(&error) {
+            if crate::cancellation::is_pipeline_cancellation_error(&error) {
                 return Err(error);
             }
             if crate::pipeline::provider_error::is_usage_limit_error(&error)
+                || crate::pipeline::provider_error::is_non_retryable_error(&error)
                 || crate::pipeline::cli_process::elapsed_call_deadline().is_some()
             {
                 return Err(error);
@@ -564,11 +549,27 @@ async fn call_claude_inner(
     // auto-approved in the cwd, and the scoped allow/deny rules above keep
     // everything else closed.
     let effective_cwd = workspace.cwd.as_deref();
-    let claude =
-        verify_subscription_once_per_run(crate::agent_runtime::claude::verified_subscription)
+    // Recheck every process, including warm-ups and forks: native login can change.
+    let scope = crate::run_scope::current();
+    let claude = if scope.is_fallback() {
+        crate::agent_runtime::claude::verified_auth(overrides.claude_auth).await?
+    } else {
+        // Reuse only the executable path. The account can change between calls.
+        let command = scope
+            .claude_command()
+            .get_or_try_init(|| async {
+                crate::deps::resolve_command("claude")
+                    .ok_or_else(|| "Install Claude Code first.".to_string())
+            })
             .await?;
-    let mut cmd = crate::agent_runtime::claude::verified_subscription_command(
+        crate::agent_runtime::claude::verified_resolved_auth(command.clone(), overrides.claude_auth)
+            .await?
+            .0
+    };
+    let mut cmd = crate::agent_runtime::claude::verified_auth_command(
         &claude,
+        overrides.claude_auth,
+        None,
         &cmd_args,
         effective_cwd,
     );
@@ -577,7 +578,14 @@ async fn call_claude_inner(
         .stderr(Stdio::piped());
 
     validate_cli_command_length(cmd.as_std(), cfg!(windows))?;
-    crate::pipeline::executor::budget_dispatch::reserve(None, true)?;
+    crate::pipeline::executor::budget_dispatch::reserve(
+        (overrides.claude_auth == crate::agent_runtime::claude::AuthMode::Api).then_some((
+            crate::usage_allowance::CLAUDE_CODE_API_BILLING,
+            0,
+            0,
+        )),
+        true,
+    )?;
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
@@ -858,8 +866,8 @@ pub fn classify_terminated_exit(
     exit_code: i32,
 ) -> Option<String> {
     let pass_cancelled = crate::pipeline::logging::current_pass()
-        .is_some_and(|pass| crate::commands::is_pass_cancelled(&pass));
-    if crate::commands::is_cancelled() || pass_cancelled {
+        .is_some_and(|pass| crate::cancellation::is_pass_cancelled(&pass));
+    if crate::cancellation::is_cancelled() || pass_cancelled {
         return Some("Pipeline cancelled".to_string());
     }
     if let Some(seconds) = crate::pipeline::cli_process::elapsed_call_deadline() {

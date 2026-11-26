@@ -36,6 +36,7 @@ import ReportIssueLink from "./ReportIssueLink";
 
 import ImportDocumentDialog from "./project-surface/ImportDocumentDialog";
 import { documentExtensions, documentType } from "../lib/documentTypes";
+import useRouteSnapshot from "../hooks/useRouteSnapshot";
 
 /** A saved or linked view the project no longer offers opens the overview. */
 const offered = (tab: string): ProjectTab =>
@@ -127,19 +128,22 @@ function WorkspaceProjectSurface({
   }, [workspaceId]);
   // A route may name a file, so a link or notification can land on it. It
   // applies once: later route changes must not pull the researcher back here.
-  const followedFile = useRef("");
+  const followedFile = useRef(-1);
   useEffect(() => {
-    const follow = ({ route }: RouterSnapshot) => {
+    const follow = ({ route, revision }: RouterSnapshot) => {
       if (
         route.page !== "workspace" ||
         !route.file ||
         (route.projectId && route.projectId !== workspaceId)
       )
         return;
-      const target = `${route.file}#${route.filePage ?? ""}`;
-      if (target === followedFile.current) return;
-      followedFile.current = target;
-      setFileLocation({ path: route.file, page: route.filePage });
+      if (revision === followedFile.current) return;
+      followedFile.current = revision;
+      setFileLocation({
+        path: route.file,
+        page: route.filePage,
+        line: route.fileLine,
+      });
       setObject(null);
       setTab("files");
     };
@@ -180,6 +184,8 @@ function WorkspaceProjectSurface({
     ],
   );
   const dataModel = useProjectSurfaceData(workspaceId, setRevisionId);
+  const location = useRouteSnapshot();
+  const followedDocument = useRef(-1);
   const {
     data,
     setData,
@@ -196,6 +202,43 @@ function WorkspaceProjectSurface({
     act,
     saveSettings,
   } = dataModel;
+  useEffect(() => {
+    const { route, revision } = location;
+    if (
+      !data ||
+      route.page !== "workspace" ||
+      route.projectId !== workspaceId ||
+      !route.revisionId ||
+      followedDocument.current === revision
+    )
+      return;
+    followedDocument.current = revision;
+    setObject(null);
+    setRevisionId(route.revisionId);
+    setInitialSelection(
+      route.documentHash &&
+        route.documentStart !== undefined &&
+        route.documentEnd !== undefined
+        ? {
+            revisionId: route.revisionId,
+            revisionHash: route.documentHash,
+            start: route.documentStart,
+            end: route.documentEnd,
+            page: route.documentPage ?? null,
+            region: null,
+            quote: "",
+          }
+        : undefined,
+    );
+    setTab("documents");
+  }, [location, data, workspaceId, setRevisionId, setInitialSelection, setTab]);
+  useEffect(
+    () =>
+      appEvents.on("project-notes-changed", (event) => {
+        if (event.workspaceId === workspaceId) changed();
+      }),
+    [workspaceId, changed],
+  );
   // A failure belongs to the view it happened in.
   useEffect(() => clearError(), [clearError, tab, object]);
 
@@ -278,7 +321,7 @@ function WorkspaceProjectSurface({
   useEffect(() => {
     if (conversationFirst.current || !thin || !hasConversation) return;
     conversationFirst.current = true;
-    if (entryTab.current === "overview" && tab === "overview")
+    if (!destination && entryTab.current === "overview" && tab === "overview")
       onConversationFirst?.();
   }, [thin, hasConversation]);
   const thinBrief = data && thin ? (briefNotes(data)[0]?.body ?? null) : null;
@@ -437,7 +480,7 @@ function WorkspaceProjectSurface({
       {error && (
         <div
           role="alert"
-          className="m-4 flex items-start gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200"
+          className="m-4 flex items-start gap-3 rounded-md border border-danger bg-danger-soft p-3 text-sm text-danger"
         >
           <span className="min-w-0 flex-1">
             {error}
@@ -475,6 +518,7 @@ function WorkspaceProjectSurface({
         refresh={refresh}
         onChanged={changed}
         clearError={clearError}
+        error={error}
         watch={watch}
         setWatch={setWatch}
         attachFolder={attachFolder}

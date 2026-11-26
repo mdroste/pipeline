@@ -13,12 +13,15 @@ export function RepositorySetup({
   busy,
   onAct,
   onAttachFolder,
+  onCancel,
 }: {
   state: Exclude<VersionControlState, { state: "ready" }>;
   busy: boolean;
   onAct: (action: VersionControlAction) => Promise<boolean>;
   onAttachFolder: () => void;
+  onCancel?: () => void;
 }) {
+  const [cloneUrl, setCloneUrl] = useState("");
   if (state.state === "noFolder")
     return (
       <EmptyState
@@ -59,13 +62,42 @@ export function RepositorySetup({
       }
       action={
         !state.problem && (
-          <Button
-            variant="primary"
-            disabled={busy}
-            onClick={() => void onAct({ kind: "initialize" })}
-          >
-            Start tracking this folder
-          </Button>
+          <div className="space-y-3">
+            <Button
+              variant="primary"
+              disabled={busy}
+              onClick={() => void onAct({ kind: "initialize" })}
+            >
+              Start tracking this folder
+            </Button>
+            <details>
+              <summary>Clone GitHub or Overleaf into this empty folder</summary>
+              <label className="block text-xs">
+                Clone address
+                <input
+                  className="vc-input"
+                  value={cloneUrl}
+                  onChange={(event) => setCloneUrl(event.target.value)}
+                  placeholder="https://github.com/owner/repository.git"
+                />
+              </label>
+              <p className="text-xs">
+                The attached folder must be empty. Use your native Git
+                credential manager. For Overleaf, use username “git” and an
+                authentication token from Overleaf settings; keep the token out
+                of this address.
+              </p>
+              <Button
+                disabled={busy || !cloneUrl.trim()}
+                onClick={() => void onAct({ kind: "clone", url: cloneUrl })}
+              >
+                {busy ? "Cloning…" : "Clone into attached folder"}
+              </Button>
+              {busy && onCancel && (
+                <Button onClick={onCancel}>Stop clone</Button>
+              )}
+            </details>
+          </div>
         )
       }
     />
@@ -92,17 +124,38 @@ export function ConnectRemote({
   onDone: () => void;
 }) {
   const [url, setUrl] = useState("");
+  const [name, setName] = useState(remote ? "research" : "origin");
+  const [replace, setReplace] = useState(false);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (await onAct({ kind: "setRemote", url })) onDone();
+    if (
+      await onAct(
+        replace ? { kind: "setRemote", url } : { kind: "addRemote", name, url },
+      )
+    )
+      onDone();
   };
   return (
     <form className="vc-connect" onSubmit={(event) => void submit(event)}>
       {remote && (
-        <p>
-          This changes the address of the remote named {remote.name}. Any other
-          remotes stay as they are.
-        </p>
+        <label>
+          <input
+            type="checkbox"
+            checked={replace}
+            onChange={(event) => setReplace(event.target.checked)}
+          />
+          Replace the address of {remote.name}
+        </label>
+      )}
+      {!replace && (
+        <label>
+          <span>Remote name</span>
+          <input
+            className="vc-input"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </label>
       )}
       <p>
         A remote keeps a copy of this repository online, where coauthors can
@@ -136,7 +189,7 @@ export function ConnectRemote({
         password or token.
       </p>
       <Button variant="primary" type="submit" disabled={busy || !url.trim()}>
-        Connect
+        {replace ? "Replace selected address" : "Add remote"}
       </Button>
     </form>
   );

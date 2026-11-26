@@ -35,6 +35,10 @@ interface Props extends Partial<
   Omit<ActivityTrayProps, "current" | "activeRunKey">
 > {
   activePage: AppPage;
+  /** A tutorial can show its current location without changing saved nav choices. */
+  transientNavigation?: boolean;
+  /** A walkthrough can supply the production project navigation with sample records. */
+  transientProjectNavigation?: ReactNode;
   hasCurrentRun: boolean;
   /** The review on screen. */
   activeRunKey?: string | null;
@@ -67,7 +71,7 @@ function RecentConversations({
   if (!conversations.length)
     return (
       <p className="nav-empty">
-        {loading ? "Loading chats…" : "No chats yet."}
+        {loading ? "Loading conversations…" : "No conversations yet."}
       </p>
     );
   return (
@@ -98,6 +102,8 @@ const pageSection = (page: AppPage): NavSection | null => {
 
 export default function NavRail({
   activePage,
+  transientNavigation = false,
+  transientProjectNavigation,
   hasCurrentRun,
   runs = NO_RUNS,
   runLimit = 1,
@@ -169,7 +175,7 @@ export default function NavRail({
   const rail = useNavRailSlot();
   const workspace = activePage === "workspace" ? rail?.workspace : null;
   const section = pageSection(activePage);
-  const { isOpen, toggle } = useNavSections(section);
+  const { isOpen, toggle } = useNavSections(section, transientNavigation);
   const [flyout, setFlyout] = useState<NavSection | null>(null);
   const flyoutAnchors = {
     projects: useRef<HTMLButtonElement>(null),
@@ -248,20 +254,22 @@ export default function NavRail({
     ) : (
       <p className="nav-empty">Your projects will appear here.</p>
     );
-  const projectChildren = workspace ? (
-    slot
-  ) : (
-    <>
-      {recentProjectChildren}
-      <div className="nav-label">Recent chats</div>
-      <RecentConversations
-        onOpen={(id) => {
-          setFlyout(null);
-          onOpenConversation?.(id);
-        }}
-      />
-    </>
-  );
+  const projectChildren =
+    transientProjectNavigation ??
+    (workspace ? (
+      slot
+    ) : (
+      <>
+        {recentProjectChildren}
+        <div className="nav-label">Recent conversations</div>
+        <RecentConversations
+          onOpen={(id) => {
+            setFlyout(null);
+            onOpenConversation?.(id);
+          }}
+        />
+      </>
+    ));
   const reviewChildren = (
     <>
       <NavChild
@@ -444,6 +452,7 @@ export default function NavRail({
           <NavIcon
             icon="home"
             label="Home"
+            data-review-tour="sidebar-home"
             current={activePage === "home"}
             onClick={() => onNavigate("home")}
           />
@@ -524,6 +533,7 @@ export default function NavRail({
         <NavRow
           icon="home"
           label="Home"
+          data-review-tour="sidebar-home"
           current={activePage === "home"}
           onClick={() => onNavigate("home")}
         />

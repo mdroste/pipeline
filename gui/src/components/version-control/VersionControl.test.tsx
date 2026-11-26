@@ -660,7 +660,7 @@ it("names the remote that Change remote edits", async () => {
   );
   fireEvent.click(screen.getByRole("menuitem", { name: "Change remote…" }));
   expect(
-    await screen.findByText(/address of the remote named overleaf/),
+    await screen.findByLabelText("Replace the address of overleaf"),
   ).toBeVisible();
 });
 

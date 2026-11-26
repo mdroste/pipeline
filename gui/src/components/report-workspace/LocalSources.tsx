@@ -78,7 +78,7 @@ export default function LocalSources({
             onClick={() => setSelected(option.id)}
             className={`mb-0.5 w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs ${
               option.id === active?.id
-                ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                ? "ui-selected"
                 : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
             }`}
           >
@@ -90,7 +90,7 @@ export default function LocalSources({
         {pageMissing && active?.id === "extracted" && (
           <p
             role="status"
-            className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+            className="shrink-0 border-b border-warning bg-warning-soft px-4 py-2 text-xs text-warning"
           >
             Page {requestedPage} is not in the extracted text.
           </p>

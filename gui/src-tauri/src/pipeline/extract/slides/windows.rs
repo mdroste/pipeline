@@ -89,7 +89,7 @@ pub(super) fn is_miktex(
     started: Instant,
 ) -> Result<bool, String> {
     crate::pipeline::review_budget::check()?;
-    if crate::commands::is_cancelled() {
+    if crate::cancellation::is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
     let remaining = RENDER_TIMEOUT

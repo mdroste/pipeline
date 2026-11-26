@@ -4,7 +4,7 @@ use super::interrupt::is_interruption;
 use super::io::{absolutize, absolutize_inputs, emit_to, validate_output_path, write_report_file};
 use super::run::prepare_batch_outputs;
 use super::workflow::load_cli_workflow;
-use pipeline_gui_lib::pipeline_config;
+use crate::pipeline_config;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -461,7 +461,7 @@ fn exact_model_ids_and_limits_are_identical_for_run_check_and_batch() {
 fn workflow_loader_accepts_a_single_utf8_signature_and_still_validates_json() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("workflow.json");
-    let template = pipeline_gui_lib::pipeline_config::workflow_template().unwrap();
+    let template = crate::pipeline_config::workflow_template().unwrap();
     std::fs::write(&path, format!("\u{feff}{}", template.canonical_json)).unwrap();
     let loaded = load_cli_workflow(path.to_str().unwrap()).unwrap();
     assert_eq!(loaded.document.fingerprint, template.fingerprint);

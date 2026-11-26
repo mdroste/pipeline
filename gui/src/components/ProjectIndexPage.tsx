@@ -16,6 +16,9 @@ import { Icon } from "../ui/icons";
 import "./project-surface/ProjectHome.css";
 import "./ProjectIndexPage.css";
 import ReportIssueLink from "./ReportIssueLink";
+import { useProjectEnvironment } from "../lib/projectEnvironment";
+import { recentWork } from "../lib/project-overview/continuation";
+import { targetSummary } from "../lib/project-overview/target";
 
 const ProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
 
@@ -34,6 +37,8 @@ export default function ProjectIndexPage({
   creatingConversation?: boolean;
 }) {
   const { projects, loading, error, refresh } = useProjectIndex();
+  const { choose } = useProjectEnvironment();
+  const [initialFolder, setInitialFolder] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showChats, setShowChats] = useState(false);
   const [chatSearch, setChatSearch] = useState("");
@@ -49,12 +54,16 @@ export default function ProjectIndexPage({
   const [creating, setCreating] = useState(false);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const openProject = async (id: string) => {
+  const openProject = async (
+    id: string,
+    destination?: WorkspaceDestination,
+  ) => {
     if (pending) return;
     setPending(true);
     setActionError(null);
     try {
-      await onOpenProject(id);
+      if (destination) await onOpenProject(id, destination);
+      else await onOpenProject(id);
     } catch (cause) {
       setActionError(workbenchErrorMessage(cause));
     } finally {
@@ -93,18 +102,42 @@ export default function ProjectIndexPage({
   ];
   return (
     <div className="project-home project-index-page">
-      <div className="ui-page">
+      <div className="ui-page ui-page--index">
         <PageHeader
           title="Projects"
           action={
-            <button
-              type="button"
-              className="ui-button ui-button--primary"
-              onClick={() => setCreating(true)}
-            >
-              <Icon name="plus" />
-              New project
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="ui-button"
+                onClick={() => {
+                  void choose({ directory: true, multiple: false })
+                    .then((folder) => {
+                      if (typeof folder === "string") {
+                        setInitialFolder(folder);
+                        setCreating(true);
+                      }
+                    })
+                    .catch((cause) =>
+                      setActionError(workbenchErrorMessage(cause)),
+                    );
+                }}
+                title="Open a research folder or local Git repository"
+              >
+                Open folder
+              </button>
+              <button
+                type="button"
+                className="ui-button ui-button--primary"
+                onClick={() => {
+                  setInitialFolder(null);
+                  setCreating(true);
+                }}
+              >
+                <Icon name="plus" />
+                New project
+              </button>
+            </div>
           }
         />
         <div className="project-picker-toolbar">
@@ -192,7 +225,10 @@ export default function ProjectIndexPage({
                     const subtitle = project.brief?.title || project.root;
                     const updatedAt =
                       project.activity?.updatedAt ?? project.updatedAt;
-                    const date = new Date(updatedAt);
+                    const deadline = targetSummary(project, new Date());
+                    const showDeadline =
+                      deadline && (byDeadline || deadline.days <= 30);
+                    const resume = recentWork(project.id)[0];
                     return (
                       <article className="project-picker-row" key={project.id}>
                         <button
@@ -217,27 +253,57 @@ export default function ProjectIndexPage({
                                 {subtitle}
                               </span>
                             )}
+                            {resume && (
+                              <span className="project-picker-subtitle">
+                                Recent: {resume.title}
+                              </span>
+                            )}
+                            {project.interruptedEdits > 0 && (
+                              <span className="project-picker-attention">
+                                Interrupted edit needs recovery
+                              </span>
+                            )}
+                            {!project.interruptedEdits &&
+                              project.proposedNotes > 0 && (
+                                <span className="project-picker-subtitle">
+                                  {project.proposedNotes} proposed{" "}
+                                  {project.proposedNotes === 1
+                                    ? "note"
+                                    : "notes"}
+                                </span>
+                              )}
                           </span>
                           <time
                             className="project-picker-date"
-                            dateTime={updatedAt}
-                            title={`Last active ${projectDate(updatedAt)}`}
+                            data-deadline={showDeadline || undefined}
+                            dateTime={
+                              showDeadline ? project.targetDate! : updatedAt
+                            }
+                            title={
+                              showDeadline
+                                ? `${deadline.label}: ${deadline.date}`
+                                : `Last active ${projectDate(updatedAt)}`
+                            }
                           >
-                            {Number.isNaN(date.getTime())
-                              ? ""
-                              : date.toLocaleDateString(undefined, {
-                                  month: "short",
-                                  day: "numeric",
-                                  ...(date.getFullYear() !==
-                                  new Date().getFullYear()
-                                    ? { year: "numeric" as const }
-                                    : {}),
-                                })}
+                            {showDeadline
+                              ? `${deadline.label} · ${deadline.date}${deadline.days < 0 ? " · overdue" : deadline.days === 0 ? " · today" : ""}`
+                              : `Active ${new Date(updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
                           </time>
                           <Icon
                             name="chevron-right"
                             className="project-picker-chevron"
                           />
+                        </button>
+                        <button
+                          type="button"
+                          className="project-picker-pin"
+                          aria-label={`Overview of ${project.name}`}
+                          disabled={pending}
+                          onClick={() =>
+                            void openProject(project.id, "overview")
+                          }
+                        >
+                          Overview
                         </button>
                         <button
                           type="button"
@@ -264,17 +330,17 @@ export default function ProjectIndexPage({
             onClick={() => setShowChats(!showChats)}
           >
             <Icon name={showChats ? "chevron-down" : "chevron-right"} />
-            Browse chats
+            Browse conversations
           </button>
           <div id="project-picker-chats" hidden={!showChats}>
             {showChats && (
               <>
                 <div className="project-picker-toolbar">
                   <input
-                    aria-label="Search chats"
+                    aria-label="Search conversations"
                     className="ui-input"
                     type="search"
-                    placeholder="Search chats…"
+                    placeholder="Search conversations…"
                     value={chatSearch}
                     onChange={(e) => setChatSearch(e.target.value)}
                   />
@@ -284,7 +350,7 @@ export default function ProjectIndexPage({
                     onClick={onNewConversation}
                     disabled={creatingConversation}
                   >
-                    + New chat
+                    + New conversation
                   </button>
                   {chats.error && (
                     <button
@@ -316,9 +382,13 @@ export default function ProjectIndexPage({
       {creating && (
         <Suspense fallback={<p role="status">Opening new project…</p>}>
           <ProjectDialog
+            initialFolder={initialFolder}
             onClose={() => setCreating(false)}
             onCreated={async (project) => {
-              await onOpenProject(project.id);
+              await onOpenProject(
+                project.id,
+                initialFolder ? "files" : undefined,
+              );
               setCreating(false);
             }}
           />

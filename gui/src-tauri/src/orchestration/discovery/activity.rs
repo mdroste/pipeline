@@ -2,7 +2,7 @@
 //! observations. Polling this view never advances a run or changes its revision.
 use super::{storage, store, Coordinator};
 use crate::workbench::store::WorkbenchResult;
-use crate::workbench::{commands::run_store, tasks};
+use crate::workbench::{runtime::run_store, tasks};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;

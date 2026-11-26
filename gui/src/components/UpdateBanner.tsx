@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import { flushDrafts } from "../lib/flushDrafts";
 import { useEffect, useState, type ReactNode } from "react";
 import { updateClient } from "../lib/updateClient";
@@ -182,10 +183,10 @@ export default function UpdateBanner({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
-            className="w-32 h-1.5 shrink-0 overflow-hidden rounded-full bg-blue-200 dark:bg-blue-900"
+            className="w-32 h-1.5 shrink-0 overflow-hidden rounded-full bg-running-soft"
           >
             <div
-              className="h-full rounded-full bg-blue-600 transition-[width]"
+              className="h-full rounded-full bg-running transition-[width]"
               style={{ width: `${percent}%` }}
             />
           </div>
@@ -297,18 +298,7 @@ export default function UpdateBanner({
       role="status"
       className="flex flex-wrap items-center gap-2 border-b border-line bg-sunken px-[var(--ui-page-gutter)] py-2 text-ui-label text-ink"
     >
-      <svg
-        className="w-4 h-4 shrink-0"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        aria-hidden="true"
-      >
-        <path
-          fillRule="evenodd"
-          d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a1 1 0 0 0 0 2v3a1 1 0 0 0 1 1h1a1 1 0 1 0 0-2v-3a1 1 0 0 0-1-1H9Z"
-          clipRule="evenodd"
-        />
-      </svg>
+      <Icon name="info" className="w-4 h-4 shrink-0" />
       {/* A failure explains itself, so it wraps rather than being cut off. */}
       <span className={"min-w-0 flex-[1_1_12rem] break-words"}>{summary}</span>
       {actionError && (

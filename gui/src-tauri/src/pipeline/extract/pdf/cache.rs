@@ -15,16 +15,25 @@ pub(in crate::pipeline::extract) fn llm_extraction_cache_path(
     if hash.len() != 16 || !hash.chars().all(|value| value.is_ascii_hexdigit()) {
         return None;
     }
+    let local_endpoint = if settings.preferred_provider == "local" {
+        Some(
+            crate::settings::validate_local_base_url(settings.local_base_url.trim())
+                .ok()?
+                .as_str()
+                .trim_end_matches('/')
+                .to_owned(),
+        )
+    } else {
+        None
+    };
     let identity = serde_json::json!({
         "schema": EXTRACTION_CACHE_SCHEMA,
         "app_version": env!("CARGO_PKG_VERSION"),
-        "engine": "llm-pdf-bounded-v3",
+        "engine": "llm-pdf-bounded-v4",
         "provider": settings.preferred_provider,
         "transport": if provider_uses_direct_api(settings) { "api" } else { "cli" },
-        "model_policy": match settings.default_model.as_str() {
-            "" => "automatic",
-            model => model,
-        },
+        "model_policy": settings.model_selection(&settings.preferred_provider),
+        "local_endpoint": local_endpoint,
         "effort_policy": settings.model_effort(&settings.preferred_provider),
         "chunk_pages": LLM_CHUNK_MAX_PAGES,
         "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,
@@ -92,6 +101,30 @@ pub(in crate::pipeline::extract) fn activate_paddle_full_cache(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_cache_tracks_the_effective_model_and_endpoint() {
+        let mut settings = crate::settings::Settings {
+            preferred_provider: "local".into(),
+            local_model: "model-a".into(),
+            local_base_url: "http://localhost:1234/v1".into(),
+            ..Default::default()
+        };
+        let key = |s: &crate::settings::Settings| llm_extraction_cache_path("1234567890abcdef", s);
+        let first = key(&settings).unwrap();
+        settings.local_model = "model-b".into();
+        let second = key(&settings).unwrap();
+        assert_ne!(first, second);
+        settings.local_base_url = "http://localhost:4321/v1".into();
+        let third = key(&settings).unwrap();
+        assert_ne!(second, third);
+        settings.local_base_url = "  http://LOCALHOST:4321/v1/  ".into();
+        settings.local_model = " model-b ".into();
+        settings.default_model = "unused-local-default".into();
+        settings.anthropic_api_key = "unrelated secret".into();
+        assert_eq!(third, key(&settings).unwrap());
+        settings.local_base_url = "http://user:secret@localhost:4321/v1".into();
+        assert_eq!(key(&settings), None);
+    }
     #[test]
     fn thinking_changes_the_cache_but_credentials_and_ui_settings_do_not() {
         let mut settings = crate::settings::Settings {

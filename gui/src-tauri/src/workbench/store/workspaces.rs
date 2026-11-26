@@ -47,6 +47,10 @@ impl Store {
         request: CreateWorkspaceRequest,
     ) -> WorkbenchResult<Mutation<Workspace>> {
         let pending = self.prepare_workspace(request)?;
+        self.insert_workspace(pending)
+    }
+
+    fn insert_workspace(&self, pending: PendingWorkspace) -> WorkbenchResult<Mutation<Workspace>> {
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -66,6 +70,20 @@ impl Store {
         &self,
         request: CreateWorkspaceRequest,
     ) -> WorkbenchResult<PendingWorkspace> {
+        if request
+            .root
+            .as_deref()
+            .is_none_or(|root| root.trim().is_empty())
+        {
+            return Err(WorkbenchError::invalid("Choose a folder for this project"));
+        }
+        self.prepare_workspace_record(request)
+    }
+
+    fn prepare_workspace_record(
+        &self,
+        request: CreateWorkspaceRequest,
+    ) -> WorkbenchResult<PendingWorkspace> {
         validate_id("operation id", &request.operation_id)?;
         let name = validate_workspace_name(&request.name)?;
         let (root, root_identity) = resolve_optional_root(request.root.as_deref(), &self.root)?;
@@ -76,6 +94,15 @@ impl Store {
             root_identity,
             operation_id: request.operation_id,
         })
+    }
+
+    /// Fixtures for data saved before Projects required folders.
+    #[cfg(test)]
+    pub(crate) fn create_legacy_workspace(
+        &self,
+        request: CreateWorkspaceRequest,
+    ) -> WorkbenchResult<Mutation<Workspace>> {
+        self.insert_workspace(self.prepare_workspace_record(request)?)
     }
 
     pub fn register_workspace_root(
@@ -125,49 +152,24 @@ impl Store {
 
     pub fn clear_workspace_root(
         &self,
-        request: ClearWorkspaceRootRequest,
+        _request: ClearWorkspaceRootRequest,
     ) -> WorkbenchResult<Mutation<Workspace>> {
-        validate_id("workspace id", &request.workspace_id)?;
-        validate_id("operation id", &request.operation_id)?;
-        let timestamp = now();
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| WorkbenchError::storage("Failed to start root removal", error))?;
-        ensure_operation_unused(&transaction, &request.operation_id)?;
-        let current = load_workspace(&transaction, &request.workspace_id)?;
-        require_revision(current.revision, request.expected_revision, "Workspace")?;
-        let next_revision = current.revision + 1;
-        transaction
-            .execute(
-                "UPDATE workspaces SET root = NULL, root_identity = NULL, missing_root_at = NULL, revision = ?1, updated_at = ?2 WHERE id = ?3",
-                params![next_revision, timestamp, request.workspace_id],
-            )
-            .map_err(|error| WorkbenchError::storage("Failed to remove workspace root", error))?;
-        let workspace = load_workspace(&transaction, &request.workspace_id)?;
-        let sequence = insert_change(
-            &transaction,
-            &request.operation_id,
-            "workspace",
-            &request.workspace_id,
-            "workspace_root_cleared",
-            Some(&request.workspace_id),
-            None,
-            &json!({ "revision": next_revision }),
-            &timestamp,
-        )?;
-        transaction
-            .commit()
-            .map_err(|error| WorkbenchError::storage("Failed to commit root removal", error))?;
-        Ok(Mutation {
-            record: workspace,
-            sequence,
-        })
+        Err(WorkbenchError::invalid(
+            "Projects require a folder. Choose another folder to change its location.",
+        ))
     }
 
     pub fn workspace(&self, workspace_id: &str) -> WorkbenchResult<Workspace> {
         validate_id("workspace id", workspace_id)?;
-        load_workspace(&self.connection()?, workspace_id)
+        Self::workspace_on(&self.connection()?, workspace_id)
+    }
+
+    pub(crate) fn workspace_on(
+        connection: &rusqlite::Connection,
+        workspace_id: &str,
+    ) -> WorkbenchResult<Workspace> {
+        validate_id("workspace id", workspace_id)?;
+        load_workspace(connection, workspace_id)
     }
 
     pub fn list_workspaces(&self, include_archived: bool) -> WorkbenchResult<WorkspaceList> {
@@ -261,5 +263,57 @@ impl Store {
             record: workspace,
             sequence,
         })
+    }
+}
+
+#[cfg(test)]
+mod folder_tests {
+    use super::*;
+
+    #[test]
+    fn new_projects_validate_the_folder_before_inserting_anything() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("store")).unwrap();
+        let file = temporary.path().join("paper.txt");
+        std::fs::write(&file, "paper").unwrap();
+        for root in [
+            None,
+            Some(String::new()),
+            Some("   ".into()),
+            Some(file.to_string_lossy().into_owned()),
+            Some(
+                temporary
+                    .path()
+                    .join("missing")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ] {
+            let failure = store
+                .create_workspace(CreateWorkspaceRequest {
+                    name: "Study".into(),
+                    root,
+                    operation_id: "create".into(),
+                })
+                .unwrap_err();
+            assert_eq!(failure.code, "invalid_input");
+            assert!(store.list_workspaces(true).unwrap().workspaces.is_empty());
+        }
+        let root = temporary.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let project = store
+            .create_workspace(CreateWorkspaceRequest {
+                name: "Study".into(),
+                root: Some(root.to_string_lossy().into_owned()),
+                operation_id: "create".into(),
+            })
+            .unwrap()
+            .record;
+        assert_eq!(project.revision, 1);
+        assert!(project.root_identity.is_some());
+        assert_eq!(
+            store.registered_root(&project).unwrap(),
+            root.canonicalize().unwrap()
+        );
     }
 }

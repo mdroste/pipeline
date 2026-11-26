@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { connectionAvailability, providerAvailability } from "./connections";
+import {
+  connectionAvailability,
+  providerAvailability,
+  reviewConnectionId,
+} from "./connections";
 import type { DepsReport, DepStatus, Settings } from "./settingsTypes";
 
 const settings = {
@@ -115,4 +119,37 @@ describe("providerAvailability", () => {
     ).toBe("missing");
     expect(providerAvailability("antigravity", settings, null)).toBe("missing");
   });
+});
+
+it("keeps the three Claude connections separate regardless of saved keys", () => {
+  const keyed = { ...settings, anthropic_api_key: "saved-direct-key" };
+  expect(reviewConnectionId(keyed, "claude")).toBe("claude");
+  expect(
+    reviewConnectionId({ ...keyed, claude_access_mode: "code_api" }, "claude"),
+  ).toBe("claude-code-api");
+  expect(
+    reviewConnectionId({ ...keyed, claude_access_mode: "api" }, "claude"),
+  ).toBe("anthropic-api");
+  const signedIn = report({
+    name: "Claude CLI",
+    found: true,
+    cli_auth_status: "signed_in",
+  });
+  expect(connectionAvailability("claude-code-api", settings, signedIn)).toBe(
+    "unknown",
+  );
+  expect(
+    connectionAvailability(
+      "claude-code-api",
+      { ...settings, claude_access_mode: "code_api" },
+      signedIn,
+    ),
+  ).toBe("ready");
+  expect(
+    connectionAvailability(
+      "claude",
+      { ...settings, claude_access_mode: "code_api" },
+      signedIn,
+    ),
+  ).toBe("unknown");
 });

@@ -52,7 +52,7 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
     let pending = codex_home.join("config.toml.pending");
     let launcher_permissions = launcher_read_grants(launcher)?;
     let mut config = format!(
-        "cli_auth_credentials_store = \"ephemeral\"\n\
+        "{}cli_auth_credentials_store = \"ephemeral\"\n\
          default_permissions = \"workbench-inspect\"\n\
          \n\
          [permissions.workbench-inspect]\n\
@@ -90,7 +90,11 @@ pub(crate) fn write_runtime_config(codex_home: &Path, launcher: &Path) -> Result
          \".\" = \"write\"\n\
          [permissions.workbench-edit-network.network]\n\
          enabled = true\n",
-        launcher_permissions, launcher_permissions, launcher_permissions, launcher_permissions,
+        crate::agent_runtime::codex::process::platform_config(),
+        launcher_permissions,
+        launcher_permissions,
+        launcher_permissions,
+        launcher_permissions,
     );
     // Same confined filesystem rules as ordinary Workspace, with no network.
     // Only host-created discovery role records can select these profiles.
@@ -187,7 +191,7 @@ mod tests {
             let descendant = line.trim().parse::<u32>().unwrap();
             assert!(process_is_running(leader));
             assert!(process_is_running(descendant));
-            crate::commands::lifecycle::kill_all_children();
+            crate::process_tree::kill_all_children();
             tokio::time::sleep(Duration::from_millis(50)).await;
             assert!(
                 process_is_running(leader) && process_is_running(descendant),

@@ -14,6 +14,7 @@ export function NavRow({
   suffix,
   title,
   expanded,
+  "data-review-tour": reviewTour,
 }: {
   icon: IconName;
   label: string;
@@ -24,6 +25,7 @@ export function NavRow({
   suffix?: ReactNode;
   title?: string;
   expanded?: boolean;
+  "data-review-tour"?: string;
 }) {
   return (
     <button
@@ -32,6 +34,7 @@ export function NavRow({
       aria-current={current ? "page" : undefined}
       aria-expanded={expanded}
       data-active={active || undefined}
+      data-review-tour={reviewTour}
       disabled={disabled}
       onClick={onClick}
       title={title ?? label}

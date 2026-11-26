@@ -6,6 +6,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { packageUrl, updateManifest, updatePackages, updaterPublicKey, verifyUpdateSignature } from "./update-manifest.mjs";
+import { gpuRuntimeAssets, gpuRuntimeName, gpuRuntimeManifestName, verifyGpuRuntime } from "./gpu-runtime.mjs";
 
 export function verifyTag(ref, annotated, expectedCommit) {
   if (ref.object?.type !== "tag" || annotated.sha !== ref.object.sha)
@@ -25,6 +26,7 @@ export const installerNames = version => [
 const digest = file => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 const MANIFEST = "latest.json";
 const uploadable = version => new Set([...installerNames(version),
+  ...gpuRuntimeAssets(version),
   ...updatePackages(version).flatMap(({ name }) => [name, `${name}.sig`])]);
 
 export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), updaterKey = updaterPublicKey()) {
@@ -103,6 +105,16 @@ export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", arg
         if (entry?.url !== packageUrl(version, name)) throw new Error(`Manifest has the wrong package for ${platform}`);
         verifyUpdateSignature(fs.readFileSync(path.join(temp, name)), entry.signature, updaterKey, version);
       }
+      for (const name of gpuRuntimeAssets(version))
+        gh(["release", "download", tag, "--pattern", name, "--dir", temp]);
+      for (const name of [gpuRuntimeName(version), gpuRuntimeManifestName(version)]) {
+        gh(["release", "download", tag, "--pattern", `${name}.sha256`, "--dir", temp]);
+        if (fs.readFileSync(path.join(temp, `${name}.sha256`), "utf8") !== `${digest(path.join(temp, name))}  ${name}\n`)
+          throw new Error(`Checksum mismatch: ${name}`);
+      }
+      verifyGpuRuntime(fs.readFileSync(path.join(temp, gpuRuntimeName(version))),
+        fs.readFileSync(path.join(temp, gpuRuntimeManifestName(version))),
+        fs.readFileSync(path.join(temp, `${gpuRuntimeManifestName(version)}.sig`), "utf8"), version, updaterKey);
       requireDraft(view());
     } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   } else throw new Error(`Unknown draft operation: ${mode}`);

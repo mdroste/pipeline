@@ -178,27 +178,7 @@ impl Store {
             .transpose()
             .map_err(err)?;
         let c = self.connection()?;
-        let predicate = match view {
-            "session" => "1=1",
-            "projectActivity" => "state IN ('finished','failed','cancelled','attention')",
-            "history" => "state IN ('finished','cancelled','failed')",
-            "drafts" => "state='draft'",
-            "ready" => "state IN ('queued','running','waiting')",
-            _ => "state NOT IN ('finished','cancelled','failed')",
-        };
-        // Bodies are parsed only for the page, not for every candidate row.
-        let sql = format!(
-            "SELECT r.id,r.revision,json_extract(r.body,'$.name'),r.state,
-            json_extract(r.body,'$.reason'),json_extract(r.body,'$.createdAt'),
-            r.updated_at,r.due_at,r.session_id,r.schedule_id FROM (
-                SELECT id FROM runs WHERE {predicate} AND state<>'unreadable' AND json_valid(body)
-                AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id)
-                AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id)
-                AND (?1 IS NULL OR session_id=?1)
-                AND (?3 IS NULL OR session_id IN (SELECT value FROM json_each(?3)))
-                ORDER BY updated_at DESC,id LIMIT ?4 OFFSET ?2
-            ) page JOIN runs r ON r.id=page.id ORDER BY r.updated_at DESC,r.id"
-        );
+        let sql = summaries_sql(view, session.is_some());
         let mut s = c.prepare(&sql).map_err(err)?;
         let result = s
             .query_map(params![session, offset, sessions, limit], |r| {
@@ -331,4 +311,39 @@ pub(crate) fn insert_run(
     )
     .map_err(err)?;
     Ok(())
+}
+
+/// The page of task summaries for one view, newest first.
+pub(super) fn summaries_sql(view: &str, session: bool) -> String {
+    // Finished runs accumulate, so their views read newest first and stop
+    // at the page: `+state` keeps the planner off the state index, which
+    // would validate and sort every finished run before applying LIMIT.
+    // Drafts and ready runs are few, so the state index serves them.
+    let predicate = match view {
+        "session" => "1=1",
+        "projectActivity" => "+state IN ('finished','failed','cancelled','attention')",
+        "history" => "+state IN ('finished','cancelled','failed')",
+        "drafts" => "state='draft'",
+        "ready" => "state IN ('queued','running','waiting')",
+        _ => "state NOT IN ('finished','cancelled','failed')",
+    };
+    // A disjunction would keep SQLite off the session index.
+    let session_filter = if session {
+        "session_id=?1"
+    } else {
+        "?1 IS NULL"
+    };
+    // Bodies are parsed only for the page, not for every candidate row.
+    format!(
+        "SELECT r.id,r.revision,json_extract(r.body,'$.name'),r.state,
+        json_extract(r.body,'$.reason'),json_extract(r.body,'$.createdAt'),
+        r.updated_at,r.due_at,r.session_id,r.schedule_id FROM (
+            SELECT id FROM runs WHERE {predicate} AND state<>'unreadable' AND json_valid(body)
+            AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id)
+            AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id)
+            AND {session_filter}
+            AND (?3 IS NULL OR session_id IN (SELECT value FROM json_each(?3)))
+            ORDER BY updated_at DESC,id LIMIT ?4 OFFSET ?2
+        ) page JOIN runs r ON r.id=page.id ORDER BY r.updated_at DESC,r.id"
+    )
 }

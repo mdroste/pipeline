@@ -296,7 +296,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open_at(temp.path()).unwrap();
         let ws = store
-            .create_workspace(CreateWorkspaceRequest {
+            .create_legacy_workspace(CreateWorkspaceRequest {
                 name: "Draft".into(),
                 root: None,
                 operation_id: "create".into(),
@@ -388,7 +388,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open_at(temp.path()).unwrap();
         let ws = store
-            .create_workspace(CreateWorkspaceRequest {
+            .create_legacy_workspace(CreateWorkspaceRequest {
                 name: "Draft".into(),
                 root: None,
                 operation_id: "create".into(),

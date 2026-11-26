@@ -1,7 +1,10 @@
 import { artifactClient } from "../../lib/artifactClient";
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { FileNavigationContext } from "./FileNavigation";
-import { artifactFileAdapter } from "../../lib/fileWorkspaceClient";
+import {
+  readArtifactImage,
+  UNRETAINED_ARTIFACT,
+} from "../../lib/fileWorkspaceClient";
 import type { FileLocation } from "../../lib/fileLinks";
 export default function RunMarkdown({
   runId,
@@ -14,28 +17,45 @@ export default function RunMarkdown({
   onOpen: (location: FileLocation) => void;
   children: ReactNode;
 }) {
+  // Callers pass inline handlers. Reading the latest one through a ref keeps
+  // the navigation value stable, so a parent re-render does not reset every
+  // image in the document and read it again.
+  const openRef = useRef(onOpen);
+  openRef.current = onOpen;
   const navigation = useMemo(() => {
-    const adapter = async () => {
-      const manifest = await artifactClient.manifest(runId);
-      return artifactFileAdapter(
-        runId,
-        manifest.artifacts.map((a) => a.rel_path),
-      );
+    // One manifest read serves every link and image in this document. A miss
+    // reads it again, so an artifact retained after the first read still opens.
+    let retained: Promise<Set<string>> | null = null;
+    const manifestPaths = (fresh: boolean): Promise<Set<string>> => {
+      if (!fresh && retained) return retained;
+      const read = artifactClient
+        .manifest(runId)
+        .then((manifest) => new Set(manifest.artifacts.map((a) => a.rel_path)));
+      retained = read;
+      // A failed read is not kept, so the next image tries again.
+      read.catch(() => {
+        if (retained === read) retained = null;
+      });
+      return read;
+    };
+    const requireRetained = async (target: string) => {
+      if ((await manifestPaths(false)).has(target)) return;
+      if (!(await manifestPaths(true)).has(target))
+        throw new Error(UNRETAINED_ARTIFACT);
     };
     return {
       path,
       open: async (location: FileLocation) => {
-        await (await adapter()).read(location.path);
-        onOpen(location);
+        await requireRetained(location.path);
+        await artifactClient.read(runId, location.path);
+        openRef.current(location);
       },
-      image: async (path: string) => {
-        const file = await (await adapter()).read(path);
-        if (!file.base64 || !file.mime.startsWith("image/"))
-          throw new Error("Image not retained in this run");
-        return `data:${file.mime};base64,${file.base64}`;
+      image: async (target: string) => {
+        await requireRetained(target);
+        return readArtifactImage(runId, target);
       },
     };
-  }, [runId, path, onOpen]);
+  }, [runId, path]);
   return (
     <FileNavigationContext.Provider value={navigation}>
       {children}

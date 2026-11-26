@@ -1,19 +1,25 @@
+import { providerFamilies } from "../../lib/connections";
 import {
-  connectionAvailability,
-  connectionDescription,
-  connections,
-  type ConnectionId,
-} from "../../lib/connections";
-import {
-  defaultConnectionId,
   effortOptions,
   PROVIDER_LABELS,
   withDefaultConnection,
+  withDefaultProvider,
   type Provider,
 } from "../../lib/providers";
 import type { DepsReport, Settings } from "../../lib/settingsTypes";
 import type { ModelCatalog } from "../../lib/reviewModelTypes";
+import {
+  unsetEffortLabel,
+  unsetEffortOption,
+  unsetModelOption,
+  unsetModelSummary,
+  withoutDefaultModel,
+} from "../../lib/modelChoice";
 import { SectionHeader, selectClass } from "./controls";
+import {
+  ModelConnectionField,
+  SETTINGS_PROVIDERS,
+} from "./ModelConnectionSettings";
 
 const labelClass =
   "flex min-w-0 flex-col gap-1 text-xs text-gray-600 dark:text-neutral-400";
@@ -41,13 +47,10 @@ export default function DefaultModelSettings({
   const local = provider === "local";
   const model = (local ? settings.local_model : settings.default_model) ?? "";
   const catalog = catalogBlocked[provider] ? undefined : catalogs[provider];
+  const providerDefaults = withoutDefaultModel(settings);
   const efforts = (next: string) =>
     next ? effortOptions(catalog, { mode: "pinned", model: next }, []) : [];
   const supported = efforts(model);
-  const isMissing = (id: ConnectionId) =>
-    dependencies !== undefined &&
-    connectionAvailability(id, settings, dependencies) === "missing";
-  const connection = defaultConnectionId(settings);
 
   const chooseModel = (next: string) =>
     setSettings({
@@ -65,19 +68,16 @@ export default function DefaultModelSettings({
         title="Default model"
         description="Used for reviews and new conversations."
       />
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
         <label className={labelClass}>
           Provider
           <select
             aria-label="Default provider"
             className={selectClass}
-            value={chosen ? connection : ""}
+            value={chosen ? provider : ""}
             onChange={(event) =>
               setSettings(
-                withDefaultConnection(
-                  settings,
-                  event.target.value as ConnectionId,
-                ),
+                withDefaultProvider(settings, event.target.value as Provider),
               )
             }
           >
@@ -86,24 +86,42 @@ export default function DefaultModelSettings({
                 Choose a provider
               </option>
             )}
-            {connections.map(({ id, label }) => (
+            {providerFamilies.map(({ id }) => (
               <option key={id} value={id}>
-                {label}
-                {isMissing(id) ? " (not connected)" : ""}
+                {SETTINGS_PROVIDERS[id].label}
               </option>
             ))}
           </select>
         </label>
+        {chosen && (
+          <ModelConnectionField
+            provider={provider as Provider}
+            settings={settings}
+            dependencies={dependencies}
+            ariaLabel="Default connection"
+            showSetup
+            onChange={(id) => setSettings(withDefaultConnection(settings, id))}
+          />
+        )}
+      </div>
+      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2">
         <label className={labelClass}>
           Model
           <select
             aria-label="Default model"
+            title={
+              model || unsetModelSummary(providerDefaults, provider, catalog)
+            }
             className={selectClass}
             value={model}
             disabled={!chosen}
             onChange={(event) => chooseModel(event.target.value)}
           >
-            <option value="">Automatic</option>
+            <option value="">
+              {local
+                ? "Automatic"
+                : unsetModelOption(providerDefaults, provider, catalog)}
+            </option>
             {catalog?.models.map((item) => (
               <option key={item.id} value={item.id} disabled={item.deprecated}>
                 {item.display_name || item.id}
@@ -120,6 +138,15 @@ export default function DefaultModelSettings({
           Thinking
           <select
             aria-label="Default thinking"
+            title={
+              settings.default_effort ||
+              unsetEffortLabel(
+                providerDefaults,
+                provider,
+                catalog,
+                model ? { mode: "pinned", model } : undefined,
+              )
+            }
             className={selectClass}
             value={settings.default_effort ?? ""}
             disabled={!chosen || !supported.length}
@@ -127,7 +154,14 @@ export default function DefaultModelSettings({
               setSettings({ ...settings, default_effort: event.target.value })
             }
           >
-            <option value="">Default</option>
+            <option value="">
+              {unsetEffortOption(
+                providerDefaults,
+                provider,
+                catalog,
+                model ? { mode: "pinned", model } : undefined,
+              )}
+            </option>
             {supported.map((effort) => (
               <option key={effort} value={effort}>
                 {effort.charAt(0).toUpperCase() + effort.slice(1)}
@@ -141,11 +175,6 @@ export default function DefaultModelSettings({
           Until you choose, reviews use{" "}
           {PROVIDER_LABELS[provider as Provider] ?? provider} and new
           conversations start on ChatGPT.
-        </p>
-      ) : isMissing(connection) ? (
-        <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
-          {connectionDescription(connection).label} isn’t connected. Connect it
-          below before starting a review.
         </p>
       ) : (
         !model && (

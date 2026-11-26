@@ -1,9 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useAppTheme } from "./useAppTheme";
+import { saveAppPreferences } from "../../lib/appPreferences";
+import { THEME_STORAGE_KEY } from "../../lib/theme";
+
+const setWindowTheme = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setTheme: vi.fn().mockResolvedValue(undefined) }),
+  getCurrentWindow: () => ({ setTheme: setWindowTheme }),
 }));
 
 const root = document.documentElement;
@@ -23,10 +27,12 @@ function mockCrossfade(ready: Promise<void> = Promise.resolve()) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   reducedMotion = false;
   localStorage.clear();
   root.className = "";
   root.style.colorScheme = "";
+  delete root.dataset.colorTheme;
   vi.stubGlobal("matchMedia", (query: string) => ({
     matches: query.includes("reduced-motion") && reducedMotion,
     addEventListener: vi.fn(),
@@ -92,14 +98,14 @@ it("ends on the newest theme when a pending crossfade is overtaken", () => {
   expect(root.style.colorScheme).toBe("light");
 });
 
-it("ignores a crossfade the webview skips", async () => {
+it("applies the theme even when the webview skips the crossfade", async () => {
   const skipped = Promise.reject(new DOMException("Skipped", "AbortError"));
   const catchReady = vi.spyOn(skipped, "catch");
-  const { callbacks } = mockCrossfade(skipped);
+  mockCrossfade(skipped);
   const { result } = renderHook(() => useAppTheme());
 
   act(() => result.current.handleThemeChange("dark"));
-  callbacks[0]();
+  await act(async () => {});
 
   expect(catchReady).toHaveBeenCalledOnce();
   expect(root).toHaveClass("dark");
@@ -123,4 +129,84 @@ it("switches at once in a webview without crossfades", () => {
 
   expect(root).toHaveClass("dark");
   expect(root).not.toHaveClass("theme-switching");
+});
+
+it("applies the selected palette and mode together and restores them on remount", () => {
+  const first = renderHook(() => useAppTheme());
+  act(() => first.result.current.handleThemeChange("harbor-dark"));
+  expect(root).toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("harbor");
+  expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("harbor-dark");
+  expect(setWindowTheme).toHaveBeenLastCalledWith("dark");
+  first.unmount();
+  const second = renderHook(() => useAppTheme());
+  expect(root.dataset.colorTheme).toBe("harbor");
+  expect(root).toHaveClass("dark");
+  act(() => second.result.current.handleThemeChange("parchment-light"));
+  expect(root.dataset.colorTheme).toBe("parchment");
+  expect(root).not.toHaveClass("dark");
+  expect(setWindowTheme).toHaveBeenLastCalledWith("light");
+});
+
+it("follows OS changes with default colors only in System mode", () => {
+  let systemChanged: (event: { matches: boolean }) => void = () => {};
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener: (_event: string, handler: typeof systemChanged) => {
+      systemChanged = handler;
+    },
+    removeEventListener: vi.fn(),
+  }));
+  const { result } = renderHook(() => useAppTheme());
+  expect(setWindowTheme).toHaveBeenLastCalledWith(null);
+  act(() => systemChanged({ matches: true }));
+  expect(root).toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("default");
+  act(() => result.current.handleThemeChange("parchment-light"));
+  act(() => systemChanged({ matches: true }));
+  expect(root).not.toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("parchment");
+  act(() => result.current.handleThemeChange("system"));
+  expect(root).toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("default");
+});
+
+it("keeps the latest mode and palette when pending crossfades are overtaken", () => {
+  const { callbacks, startViewTransition } = mockCrossfade();
+  const { result } = renderHook(() => useAppTheme());
+  expect(startViewTransition).not.toHaveBeenCalled();
+  expect(root.dataset.colorTheme).toBe("default");
+  act(() => result.current.handleThemeChange("iris-dark"));
+  act(() => result.current.handleThemeChange("harbor-dark"));
+  act(() => result.current.handleThemeChange("parchment-light"));
+  callbacks.forEach((callback) => callback());
+  expect(root).not.toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("parchment");
+  expect(root).not.toHaveClass("theme-switching");
+});
+
+it("applies a palette if starting a view transition throws", () => {
+  const { startViewTransition } = mockCrossfade();
+  startViewTransition.mockImplementation(() => {
+    throw new Error("unavailable");
+  });
+  const { result } = renderHook(() => useAppTheme());
+  act(() => result.current.handleThemeChange("iris-dark"));
+  expect(root).toHaveClass("dark");
+  expect(root.dataset.colorTheme).toBe("iris");
+});
+
+it("migrates the old selection before unrelated preferences can replace legacy fields", () => {
+  localStorage.setItem("theme", "dark");
+  localStorage.setItem(
+    "pipeline.ui.preferences",
+    '{"darkColorTheme":"harbor"}',
+  );
+  const first = renderHook(() => useAppTheme());
+  expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("harbor-dark");
+  act(() => saveAppPreferences({ editorFontSize: 18 }));
+  first.unmount();
+  renderHook(() => useAppTheme());
+  expect(root.dataset.colorTheme).toBe("harbor");
+  expect(root).toHaveClass("dark");
 });

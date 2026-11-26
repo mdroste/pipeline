@@ -579,7 +579,7 @@ pub fn synchronize(store: &Store, request: SyncRequest) -> WorkbenchResult<Value
     }
     let mut child = cmd.spawn().map_err(err)?;
     let pid = child.id();
-    crate::commands::lifecycle::register_independent_child_pid(pid);
+    crate::process_tree::register_independent_child_pid(pid);
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(err)? {
@@ -590,9 +590,9 @@ pub fn synchronize(store: &Store, request: SyncRequest) -> WorkbenchResult<Value
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    crate::commands::lifecycle::kill_independent_process(pid);
+    crate::process_tree::kill_independent_process(pid);
     let _ = child.wait();
-    crate::commands::lifecycle::unregister_independent_child_pid(pid);
+    crate::process_tree::unregister_independent_child_pid(pid);
     if !status.is_some_and(|s| s.success()) {
         return Err(WorkbenchError::invalid(
             "SyncTeX failed or timed out; use source/page navigation",
@@ -653,6 +653,15 @@ pub fn editor_external_path(
 ) -> WorkbenchResult<String> {
     editor_file(store, ws, checkpoint, path)?;
     let root = editor_root(store, ws, checkpoint)?;
+    if checkpoint.is_some() {
+        // A task copy stays writable by its conversation; never hand the
+        // system its live file (see `snapshot_for_opening`).
+        let snapshot =
+            crate::workbench::project::file_workspace::snapshot_for_opening(store, &root, path)?;
+        return Ok(crate::file_viewer::system_path(&snapshot)
+            .to_string_lossy()
+            .into_owned());
+    }
     let program = files::SafeRoot::open(&root)?.marked_as_program(path)?;
     crate::file_viewer::check_openable(path, program).map_err(WorkbenchError::invalid)?;
     Ok(root.join(path).to_string_lossy().into_owned())

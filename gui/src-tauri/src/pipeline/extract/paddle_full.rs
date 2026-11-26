@@ -66,15 +66,10 @@ pub(crate) async fn extract_paddle_full(
         "Verifying the PaddleOCR-VL runtime (the first use each session may take a while)…",
     );
     let use_gpu = settings.paddle_use_gpu;
-    let (paths, engine_lease) = crate::commands::await_or_cancel(
+    let (paths, engine_lease) = crate::cancellation::await_or_cancel(
         crate::engines::acquire_waiting_on_engine_gate(
             move || crate::engines::paddle_full_parser_lease(use_gpu),
-            || {
-                extraction_log(
-                    app,
-                    "Waiting for the PDF parser to finish another document…",
-                )
-            },
+            |message| extraction_log(app, message),
         ),
         None,
     )

@@ -76,6 +76,19 @@ describe("HistoryPage", () => {
     expect(screen.queryByText("three.pdf")).not.toBeInTheDocument();
   });
 
+  it("shows run rows while disk accounting and collections are still pending", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs")
+        return Promise.resolve([run({ title: "Ready immediately" })]);
+      if (command === "runs_disk_usage" || command === "list_projects")
+        return new Promise(() => {});
+      return Promise.reject(new Error(command));
+    });
+    render(<HistoryPage onClose={vi.fn()} />);
+    expect(await screen.findByText("Ready immediately")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  });
+
   it("decomposes tokens without showing detailed model activity in the run list", async () => {
     const cachedRun = run({
       input_tokens: 50_000,
@@ -163,19 +176,17 @@ describe("HistoryPage", () => {
     render(<HistoryPage onClose={vi.fn()} onRerun={onRerun} runInProgress />);
 
     const resume = await screen.findByRole("button", { name: "Resume" });
-    const regenerate = screen.getByRole("button", { name: "Regenerate" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /More actions for/ }));
+    const regenerate = screen.getByRole("menuitem", { name: /Regenerate/ });
     expect(resume).toBeDisabled();
     expect(regenerate).toBeDisabled();
     expect(resume).toHaveAttribute(
       "title",
       "A report is already being generated",
     );
-    expect(regenerate).toHaveAttribute(
-      "title",
-      "A report is already being generated",
-    );
+    expect(regenerate).toHaveTextContent("A report is already being generated");
 
-    const user = userEvent.setup();
     await user.click(resume);
     await user.click(regenerate);
     expect(onRerun).not.toHaveBeenCalled();
@@ -254,8 +265,9 @@ describe("HistoryPage", () => {
     expect(screen.getByText("2 of 2 selected")).toBeVisible();
 
     await user.click(
-      screen.getAllByRole("button", { name: "Move to Trash" })[1],
+      screen.getByRole("button", { name: "More actions for Gone run" }),
     );
+    await user.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
 
     expect(await screen.findByText("1 of 2 selected")).toBeVisible();
     expect(

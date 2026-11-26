@@ -6,6 +6,7 @@ use serde::Deserialize;
 pub struct Start {
     pub definition: Definition,
     pub session_id: Option<String>,
+    pub project_root: Option<String>,
     pub operation_id: String,
 }
 #[tauri::command]
@@ -24,7 +25,16 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
     validate::text(&request.operation_id, 128)?;
     let c = super::super::manager(app).await?;
     let _gate = c.gate.lock().await;
-    let fp = store::hash(&(&request.definition, &request.session_id))?;
+    // Preserve replay fingerprints for saved operations from before folder selection.
+    let fp = if request.project_root.is_some() {
+        store::hash(&(
+            &request.definition,
+            &request.session_id,
+            &request.project_root,
+        ))?
+    } else {
+        store::hash(&(&request.definition, &request.session_id))?
+    };
     let op = request.operation_id.clone();
     let fingerprint = fp.clone();
     if let Some(r) = c
@@ -37,6 +47,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
     }
     let operation = request.operation_id.clone();
     let selected = request.session_id.clone();
+    let project_root = request.project_root.clone();
     let acquire = request.definition.acquire_literature;
     let title = request
         .definition
@@ -49,11 +60,11 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         let session = if let Some(id) = selected {
             id
         } else {
-            workspace::source(&s, &operation, &title, acquire)?
+            workspace::source(&s, &operation, &title, acquire, project_root.as_deref())?
         };
         let b = crate::workbench::tasks::binding(&s, &session)?;
         crate::workbench::tasks::validate_binding(&s, &b)?;
-        if idea_agents > 0 && !matches!(b.connection_id, Some(crate::connections::ConnectionId::Chatgpt | crate::connections::ConnectionId::ClaudeCode)) {
+        if idea_agents > 0 && !matches!(b.connection_id, Some(crate::connections::ConnectionId::Chatgpt | crate::connections::ConnectionId::ClaudeCode | crate::connections::ConnectionId::ClaudeCodeApi)) {
             return Err(crate::workbench::store::WorkbenchError::invalid("Idea subagents require a ChatGPT or Claude Code conversation. Choose one or set Idea subagents to 0."));
         }
         let h = crate::workbench::research::resolve_harness(&s, &session)?;

@@ -325,6 +325,13 @@ pub(super) fn verified_parser_sidecar_at(
     root: &Path,
 ) -> Option<(VerifiedParserRuntime, PathBuf, String)> {
     let verified = verified_parser_runtime_at(root)?;
+    let (script, script_digest) = current_parser_sidecar(&verified)?;
+    Some((verified, script, script_digest))
+}
+
+/// Check an already verified runtime's sidecar against this binary's bundled
+/// copy, returning the script and its digest.
+fn current_parser_sidecar(verified: &VerifiedParserRuntime) -> Option<(PathBuf, String)> {
     let script = verified.version_root.join("paddle_parser_sidecar.py");
     if !script.is_file() || std::fs::metadata(&script).ok()?.len() > 2 * 1024 * 1024 {
         return None;
@@ -350,11 +357,19 @@ pub(super) fn verified_parser_sidecar_at(
     {
         return None;
     }
-    Some((verified, script, script_digest))
+    Some((script, script_digest))
 }
 
 pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParserPaths> {
     let (verified, script, script_digest) = verified_parser_sidecar_at(root)?;
+    full_parser_paths(verified, script, script_digest)
+}
+
+fn full_parser_paths(
+    verified: VerifiedParserRuntime,
+    script: PathBuf,
+    script_digest: String,
+) -> Option<PaddleFullParserPaths> {
     let version_root = verified.version_root;
     let recognition = match RecognitionBackend::from_manifest(&verified.manifest)? {
         RecognitionBackend::ManagedLlama => PaddleRecognition::Llama(paddle_engine_paths().ok()?),
@@ -472,17 +487,7 @@ pub(crate) fn paddle_full_parser_lease(
     let lease = std::sync::Arc::new(acquire_engine_guard(false)?);
     full_parser_support()?;
     let root = paddle_parser_root()?;
-    // An app update may bundle a newer sidecar than the one on disk. When the
-    // pinned runtime still verifies, refresh the sidecar in place so installs
-    // provisioned by older app builds keep working without a reinstall; on
-    // any failure is surfaced instead of being collapsed into a generic
-    // "not installed" message.
-    if parser_runtime_reusable_for_sidecar_refresh(&root)
-        && paddle_full_parser_paths_at(&root).is_none()
-    {
-        refresh_paddle_parser_sidecar_locked(&root)?;
-    }
-    let mut paths = paddle_full_parser_paths_at(&root).ok_or_else(|| {
+    let mut paths = resolve_full_parser_locked(&root)?.ok_or_else(|| {
         "PaddleOCR-VL Full Parser is not installed or failed verification. \
          Install or repair it from Settings → PDF extraction."
             .to_string()
@@ -493,6 +498,34 @@ pub(crate) fn paddle_full_parser_lease(
         }
     }
     Ok((paths, lease))
+}
+
+/// Resolve the parser for one lease from a single verification of the pinned
+/// runtime. A full verification walks every runtime file, so repeating it
+/// within one guard hold only adds latency. Caller must hold the
+/// managed-engine guard, which keeps the verified tree fixed until extraction
+/// ends.
+pub(super) fn resolve_full_parser_locked(
+    root: &Path,
+) -> Result<Option<PaddleFullParserPaths>, String> {
+    let Some(verified) = verified_parser_runtime_at(root) else {
+        return Ok(None);
+    };
+    let resolved = match current_parser_sidecar(&verified) {
+        Some((script, script_digest)) => Some((verified, script, script_digest)),
+        // An app update may bundle a newer sidecar than the one on disk. The
+        // pinned runtime verified, so refresh the sidecar in place and installs
+        // provisioned by older app builds keep working without a reinstall. A
+        // failure is surfaced instead of being collapsed into a generic "not
+        // installed" message. Refreshing writes files, so verify again after.
+        None => {
+            refresh_paddle_parser_sidecar_locked(root)?;
+            verified_parser_sidecar_at(root)
+        }
+    };
+    Ok(resolved.and_then(|(verified, script, script_digest)| {
+        full_parser_paths(verified, script, script_digest)
+    }))
 }
 
 /// Runtime environment for the private parser process. Model weights and
@@ -586,17 +619,26 @@ pub(super) fn dir_size(root: &Path) -> u64 {
 
 // ── Status ──────────────────────────────────────────────────────────
 
+/// How long an extraction waits for the optional graphics-card step to yield.
+const GPU_STEP_YIELD_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Acquire through `acquire`, waiting while the engine gate is held by anything
-/// but an install: another extraction, which can take as long as its document,
-/// or a detached runtime verification that a cancelled extraction left running.
-/// `on_wait` runs once, when the first attempt finds the gate busy. Dropping
-/// the future stops the wait, so cancellation works at any point.
+/// but a user's install: another extraction, which can take as long as its
+/// document, a detached runtime verification that a cancelled extraction left
+/// running, or the optional graphics-card step, which yields to the document.
+/// `on_wait` runs once, with what the wait is for, when the first attempt finds
+/// the gate busy. Dropping the future stops the wait, so cancellation works at
+/// any point.
 pub(crate) async fn acquire_waiting_on_engine_gate<T: Send + 'static>(
     acquire: impl Fn() -> Result<T, String> + Send + Sync + Clone + 'static,
-    on_wait: impl FnOnce() + Send,
+    on_wait: impl FnOnce(&'static str) + Send,
 ) -> Result<T, String> {
     let mut on_wait = Some(on_wait);
+    let mut yielding_since = None;
     loop {
+        tokio::task::spawn_blocking(super::installer_io::record_engine_demand)
+            .await
+            .map_err(|error| format!("Engine gate task failed: {error}"))?;
         let attempt = acquire.clone();
         match tokio::task::spawn_blocking(attempt)
             .await
@@ -608,7 +650,19 @@ pub(crate) async fn acquire_waiting_on_engine_gate<T: Send + 'static>(
                     && super::installer_io::engine_gate_busy_without_install() =>
             {
                 if let Some(on_wait) = on_wait.take() {
-                    on_wait();
+                    on_wait("Waiting for the PDF parser to finish another document…");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(error) if super::installer_io::gpu_step_holds_gate(&error) => {
+                let since = *yielding_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() > GPU_STEP_YIELD_WAIT {
+                    return Err(error);
+                }
+                if let Some(on_wait) = on_wait.take() {
+                    on_wait(
+                        "Pausing graphics card setup so the PDF parser can read this document…",
+                    );
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }

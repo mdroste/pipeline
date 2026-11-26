@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import ReportNotices from "./report-workspace/ReportNotices";
 import {
   reportTitle,
@@ -16,7 +17,15 @@ import useReportResources from "./report-workspace/useReportResources";
 import type { WorkspaceTab, OutputView } from "./report-workspace/types";
 import useTabList from "../hooks/useTabList";
 import RunMarkdown from "./file-workspace/RunMarkdown";
-import { Fragment, lazy, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { detectReportIssues, type IssueEvidence } from "../lib/issues";
 import { reportExportClient } from "../lib/reportExportClient";
 import { buildRunProvenance } from "../lib/runProvenance";
@@ -28,6 +37,8 @@ import type {
   ArtifactSelectionTarget,
 } from "../lib/artifactTypes";
 import ReportIssueLink from "./ReportIssueLink";
+import useRouteSnapshot from "../hooks/useRouteSnapshot";
+import ProjectBreadcrumb from "./ProjectBreadcrumb";
 
 const loadArtifactExplorer = () => import("./ArtifactExplorer");
 const ArtifactExplorer = lazy(loadArtifactExplorer);
@@ -46,6 +57,11 @@ interface Props {
   initialSourceSelection?: ArtifactSelectionTarget | null;
   /** Shown above the report header; receives the open tab. */
   notice?: (tab: WorkspaceTab) => ReactNode;
+  /** Optional navigation control for an embedded guided workspace. */
+  selectedTab?: WorkspaceTab;
+  onTabChange?: (tab: WorkspaceTab) => void;
+  /** Embedded examples can keep all file operations unavailable. */
+  exportEnabled?: boolean;
 }
 
 const TAB_LABELS = Object.fromEntries(
@@ -96,9 +112,26 @@ export default function ReportWorkspace({
   onBack,
   initialSourceSelection = null,
   notice,
+  selectedTab,
+  onTabChange,
+  exportEnabled = true,
 }: Props) {
-  const [tab, setTab] = useState<WorkspaceTab>(
+  const location = useRouteSnapshot();
+  const origin =
+    location.route.page === "history" && location.route.runId === runId
+      ? location.route
+      : null;
+  const findingId = origin?.findingId;
+  const [localTab, setLocalTab] = useState<WorkspaceTab>(
     initialSourceSelection ? "sources" : "report",
+  );
+  const tab = selectedTab ?? localTab;
+  const setTab = useCallback(
+    (next: WorkspaceTab) => {
+      setLocalTab(next);
+      onTabChange?.(next);
+    },
+    [onTabChange],
   );
   const [sourceRequest, setSourceRequest] =
     useState<ArtifactSelectionRequest | null>(
@@ -133,6 +166,9 @@ export default function ReportWorkspace({
     () => (report ? detectReportIssues(report) : null),
     [report],
   );
+  useEffect(() => {
+    if (findingId && issues?.length) setTab("issues");
+  }, [findingId, location.revision, issues, setTab]);
   const canOpenEvidence = !!runId || hasPageHeadings(extractedText);
   // Without saved page images a page citation has nothing to open. An unloaded
   // manifest proves nothing, so its chips stay live and Sources explains.
@@ -247,6 +283,8 @@ export default function ReportWorkspace({
         issues && (
           <div className="h-full overflow-auto">
             <IssuesTable
+              initialFindingId={findingId}
+              exportEnabled={exportEnabled}
               issues={issues}
               runId={runId ?? null}
               onOpenEvidence={canOpenEvidence ? openEvidence : undefined}
@@ -299,21 +337,8 @@ export default function ReportWorkspace({
             {reportProblem ? (
               <div className="flex h-full items-center justify-center p-8 text-center">
                 <div role="alert" className="max-w-lg">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                    <svg
-                      aria-hidden="true"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                      strokeWidth={1.8}
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M12 9v4m0 4h.01M10.3 3.6 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"
-                      />
-                    </svg>
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-warning-soft text-warning">
+                    <Icon name="warning" className="h-5 w-5" />
                   </div>
                   <p className="mt-3 font-medium text-gray-800 dark:text-gray-100">
                     No final report was produced.
@@ -379,8 +404,16 @@ export default function ReportWorkspace({
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
-        Loading report…
+      <div className="ui-layout-workspace flex h-full flex-col text-sm text-ink-muted">
+        {origin?.projectId && (
+          <ProjectBreadcrumb
+            projectId={origin.projectId}
+            location={findingId ? "Reviews / Finding" : "Reviews"}
+          />
+        )}
+        <div role="status" className="flex flex-1 items-center justify-center">
+          Loading report…
+        </div>
       </div>
     );
   }
@@ -390,7 +423,7 @@ export default function ReportWorkspace({
       <div className="flex h-full items-center justify-center p-8">
         <div
           role="alert"
-          className="max-w-md rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          className="max-w-md rounded-xl border border-danger bg-danger-soft p-4 text-sm text-danger"
         >
           <p className="font-medium">Could not open this report.</p>
           <p className="mt-1 text-xs">The structured report is unavailable.</p>
@@ -410,9 +443,24 @@ export default function ReportWorkspace({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-950">
+    <div className="ui-layout-workspace flex h-full min-h-0 flex-col bg-surface">
+      {origin?.projectId && (
+        <ProjectBreadcrumb
+          projectId={origin.projectId}
+          location={findingId ? "Reviews / Finding" : "Reviews"}
+        />
+      )}
+      {findingId &&
+        !loading &&
+        report &&
+        !issues?.some((issue) => issue.id === findingId) && (
+          <p role="status" className="ui-notice ui-notice--warning">
+            This finding is no longer available in the saved report.
+          </p>
+        )}
       {notice?.(activeTab)}
       <ReportHeader
+        exportEnabled={exportEnabled}
         onBack={onBack}
         status={status}
         title={title}
@@ -453,6 +501,7 @@ export default function ReportWorkspace({
       <div
         role="tablist"
         aria-label="Report workspace"
+        data-review-tour="report-tabs"
         className="flex min-h-11 shrink-0 items-stretch gap-4 overflow-x-auto border-b border-line bg-surface px-[var(--ui-page-gutter)]"
       >
         <TabButton
@@ -471,7 +520,12 @@ export default function ReportWorkspace({
           <TabButton
             active={tab === "issues"}
             count={issues.length}
-            tabProps={tabList.tabProps("issues")}
+            tabProps={
+              {
+                ...tabList.tabProps("issues"),
+                "data-review-tour": "report-issues",
+              } as React.ComponentPropsWithRef<"button">
+            }
             label={TAB_LABELS.issues}
           />
         )}

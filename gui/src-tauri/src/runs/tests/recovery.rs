@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn history_recovers_and_lists_in_one_pass_without_touching_a_live_run() {
+    use fs2::FileExt as _;
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    fs::create_dir(&runs).unwrap();
+    let lock_path = temp.path().join("run.lock");
+    let mut writer = RunWriter::create_in(&runs, "history_recovery").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Document", "document", "body")
+        .unwrap();
+    let dir = writer.dir().to_path_buf();
+    std::mem::forget(writer);
+    let lock = open_run_lock(&lock_path).unwrap();
+    lock.try_lock_exclusive().unwrap();
+    let active = super::super::history::list_with_recovery_at(&runs, &lock_path).unwrap();
+    assert_eq!(active[0].status, "running");
+    assert!(!dir.join("report.json").exists());
+    fs2::FileExt::unlock(&lock).unwrap();
+    let recovered = super::super::history::list_with_recovery_at(&runs, &lock_path).unwrap();
+    assert_eq!(recovered[0].status, "interrupted");
+    assert!(recovered[0].resumable);
+    assert!(dir.join("report.json").is_file());
+    assert_eq!(
+        serde_json::to_value(recovered).unwrap(),
+        serde_json::to_value(
+            super::super::history::list_runs_in(&runs, super::super::history::listing_walk())
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let foreign = runs.join("foreign");
+    fs::create_dir(&foreign).unwrap();
+    fs::write(foreign.join("manifest.json"), r#"{"future_schema":true}"#).unwrap();
+    let listed = super::super::history::list_with_recovery_at(&runs, &lock_path).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        fs::read_to_string(foreign.join("manifest.json")).unwrap(),
+        r#"{"future_schema":true}"#
+    );
+}
+
+#[test]
+fn history_does_not_publish_recovery_state_that_failed_to_save() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    fs::create_dir(&runs).unwrap();
+    let writer = RunWriter::create_in(&runs, "recovery_cannot_grow").unwrap();
+    let dir = writer.dir().to_path_buf();
+    let mut manifest = writer.current_manifest();
+    std::mem::forget(writer);
+    // "interrupted" is longer than "running": recovery cannot publish it to
+    // this valid manifest at the size limit, so the saved status must win.
+    let size = serde_json::to_vec_pretty(&manifest).unwrap().len();
+    manifest.title = "x".repeat(MAX_MANIFEST_BYTES - size);
+    write_manifest(&dir, &manifest).unwrap();
+    let listed =
+        super::super::history::list_with_recovery_at(&runs, &temp.path().join("run.lock")).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].status, "running");
+    let saved: RunManifest =
+        serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved.status, listed[0].status);
+}
+
+#[test]
 fn document_path_selection_is_versioned_at_the_legacy_boundary() {
     let temp = tempfile::tempdir().unwrap();
     let writer = RunWriter::create_in(temp.path(), "versioned_document_run").unwrap();

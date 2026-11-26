@@ -330,7 +330,7 @@ it("compares a conflicting draft with the current file, then saves against the c
     "aria-pressed",
     "true",
   );
-  expect(screen.getByText("Other edit")).toBeInTheDocument();
+  expect(await screen.findByText("Other edit")).toBeInTheDocument();
   await waitFor(() =>
     expect(
       JSON.parse(localStorage.getItem("pipeline.files.draft.rebase.a.py")!),

@@ -69,6 +69,12 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     crate::safety::validate_runtime_context(&variables, "Run variables")?;
     crate::safety::validate_runtime_context(&provided_inputs, "Named input paths")?;
     crate::safety::validate_run_budget(&config, &settings)?;
+    // A design runs as bound here: refuse an invalid one after the input checks
+    // but before extraction or orientation spend anything. Adaptive reviews are
+    // checked once orientation has assembled their steps.
+    if !crate::auto_review::uses_auto_review_contract(&config) {
+        crate::pipeline_config::validate_runtime_config(&config)?;
+    }
     let input_interpretation = resolved_input_interpretation(
         &config.extraction.input_mode,
         paper_path,
@@ -525,24 +531,26 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     contract.save(writer, std::iter::empty())?;
     let result = executor::budget::counted_from(
         budget_start,
-        executor::execute_steps(
+        executor::execute_steps(crate::pipeline::executor::ExecutionRequest {
             app,
-            &execution_config,
-            &orientation_path,
-            &orientation,
-            &paper_text_path,
-            &document_bundle_path,
-            &scoped_source_path,
-            &paper_type,
-            &survey_hint,
-            &variables,
-            &resolved_inputs,
-            &runtime_extra_sources,
-            &std::collections::HashMap::new(), // no preloaded steps for a fresh run
-            artifact_write_dir.as_deref(),
-            &settings,
-            author_note.as_deref(),
-        ),
+            config: &execution_config,
+            variables: &variables,
+            extra_inputs: &resolved_inputs,
+            extra_input_sources: &runtime_extra_sources,
+            preloaded: &std::collections::HashMap::new(),
+            write_dir: artifact_write_dir.as_deref(),
+            settings: &settings,
+            author_note: author_note.as_deref(),
+            sources: crate::pipeline::executor::ExecutionSources {
+                orientation_path: &orientation_path,
+                orientation_value: &orientation,
+                paper_text_path: &paper_text_path,
+                document_bundle_path: &document_bundle_path,
+                source_path: &scoped_source_path,
+                paper_type: &paper_type,
+                survey_hint: &survey_hint,
+            },
+        }),
     )
     .await?;
     drop(extra_tmps); // keep temp files alive until steps have run

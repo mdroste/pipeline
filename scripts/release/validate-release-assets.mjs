@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { installerNames } from "./draft-release.mjs";
 import { updatePackages } from "./update-manifest.mjs";
+import { gpuRuntimeAssets, gpuRuntimeName, gpuRuntimeManifestName } from "./gpu-runtime.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -20,6 +21,9 @@ export function expectedReleaseAssets(version) {
   return [
     ...checksummed.flatMap((name) => [name, `${name}.sha256`]),
     ...updates.map((name) => `${name}.sig`),
+    ...gpuRuntimeAssets(version),
+    `${gpuRuntimeName(version)}.sha256`,
+    `${gpuRuntimeManifestName(version)}.sha256`,
     "latest.json",
   ].sort();
 }

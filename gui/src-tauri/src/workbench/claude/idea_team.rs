@@ -1,4 +1,4 @@
-//! Subscription-only Claude idea team. The lead has only Agent(idea-researcher);
+//! Native Claude Code idea team. The lead has only Agent(idea-researcher);
 //! children have no tools. CLI task/result envelopes establish who actually ran.
 use super::{budget::OutputBudget, protocol, transport::Process};
 use crate::workbench::discovery::idea_team::{Children, INSTRUCTIONS};
@@ -133,14 +133,20 @@ impl Activity {
 }
 
 pub(crate) async fn run(
+    auth_mode: crate::agent_runtime::claude::AuthMode,
     prompt: String,
     model: Option<String>,
     effort: Option<String>,
     count: u8,
     progress: Option<tokio::sync::watch::Sender<crate::workbench::tasks::activity::Snapshot>>,
 ) -> Result<(String, Children), String> {
-    let mut process =
-        Process::start(&arguments(model.as_deref(), effort.as_deref()), None, None).await?;
+    let mut process = Process::start(
+        auth_mode,
+        &arguments(model.as_deref(), effort.as_deref()),
+        None,
+        None,
+    )
+    .await?;
     let result = collect(
         &mut process,
         &prompt,
@@ -251,7 +257,14 @@ async fn live_claude_idea_team() {
     let prompt = "Use exactly two foreground idea-researcher subagents. Assign one historical and one mathematical angle on calendars. Ask each for one short research question. Wait for both and return JSON with an ideas array of two strings.";
     let (text, children) = tokio::time::timeout(
         std::time::Duration::from_secs(180),
-        run(prompt.into(), None, None, 2, None),
+        run(
+            crate::agent_runtime::claude::AuthMode::Subscription,
+            prompt.into(),
+            None,
+            None,
+            2,
+            None,
+        ),
     )
     .await
     .expect("Claude idea team timed out")

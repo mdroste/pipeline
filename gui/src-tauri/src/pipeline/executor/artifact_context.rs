@@ -32,6 +32,8 @@ pub(super) struct ArtifactRuntime<'a> {
 /// cannot expose unselected siblings from the run temp directory.
 pub(super) struct ResolvedArtifactContext {
     pub(super) _view: tempfile::TempDir,
+    /// Immutable captured input identity, shared by all staged unit views.
+    primary_text_source: Option<String>,
     pub(super) orientation_path: String,
     pub(super) paper_text_path: String,
     pub(super) document_bundle_path: String,
@@ -436,6 +438,9 @@ pub(super) fn resolve_artifact_context(
 
     Ok(ResolvedArtifactContext {
         _view: view,
+        primary_text_source: primary_parts
+            .contains(&PrimaryArtifactPart::Text)
+            .then(|| runtime.paper_text_path.to_string()),
         orientation_path,
         paper_text_path,
         document_bundle_path,
@@ -478,21 +483,19 @@ pub(super) fn prepare_selected_shared_context(
         );
         None
     };
-    let text = if resolved.includes_primary_text && !resolved.paper_text_path.is_empty() {
-        match std::fs::read_to_string(&resolved.paper_text_path) {
-            Ok(text) => text,
-            Err(error) => return degrade(&error.to_string()),
-        }
-    } else {
-        String::new()
-    };
     let empty_survey = serde_json::Value::Null;
     let survey = if resolved.includes_survey {
         orientation
     } else {
         &empty_survey
     };
-    match pool.prepare(&text, survey) {
+    match pool.prepare_captured_input(resolved.primary_text_source.as_deref(), survey, || {
+        if resolved.includes_primary_text && !resolved.paper_text_path.is_empty() {
+            std::fs::read_to_string(&resolved.paper_text_path).map_err(|error| error.to_string())
+        } else {
+            Ok(String::new())
+        }
+    }) {
         Ok(prepared) => Some(prepared),
         Err(error) => degrade(&error),
     }

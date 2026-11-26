@@ -331,16 +331,16 @@ pub const ENGINES: &[EngineSpec] = &[
     EngineSpec {
         id: "paddleocr-vl-parser",
         label: "PaddleOCR-VL 1.6 Full Parser",
-        description: "Reads PDFs on this computer. Pipeline installs everything it needs.",
+        description: "Reads PDFs on this computer. On supported Windows computers, graphics card recognition is set up automatically unless you turn it off (up to 2 GB extra).",
         est_download_mb: 2900,
         est_disk_mb: 3800,
     },
     EngineSpec {
         id: GPU_RECOGNITION_ID,
         label: "Graphics card recognition",
-        description: "Reads pages with your graphics card instead of the processor. Works with NVIDIA, AMD, and Intel graphics.",
-        est_download_mb: 1900,
-        est_disk_mb: 1900,
+        description: "Downloads graphics card support and its model. Enabled by default with the Full Parser on supported NVIDIA, AMD, and Intel graphics; processor parsing remains available.",
+        est_download_mb: 2000,
+        est_disk_mb: 2100,
     },
 ];
 
@@ -349,7 +349,7 @@ const PADDLE_PARSER_ADDON_INSTALLED_MB: u64 = 1500;
 const PADDLE_BASE_STAGING_HEADROOM_MB: u64 = 600;
 const PADDLE_PARSER_STAGING_HEADROOM_MB: u64 = 700;
 const PADDLE_SIDECAR_REFRESH_HEADROOM_MB: u64 = 16;
-const GPU_RECOGNITION_INSTALLED_MB: u64 = 1900;
+const GPU_RECOGNITION_INSTALLED_MB: u64 = 2100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallSpacePlan {
@@ -541,6 +541,8 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
 
 mod download;
 mod gpu_recognition;
+mod gpu_runtime;
+mod gpu_setup;
 mod installer_io;
 mod integrity;
 mod layout_model;
@@ -553,6 +555,7 @@ mod rename;
 mod runtime;
 mod storage;
 
+pub use gpu_setup::schedule_default_gpu_setup;
 pub use installer_io::*;
 pub(crate) use native_paths::native_path;
 pub use operations::*;
@@ -562,6 +565,8 @@ pub use storage::*;
 
 use download::*;
 use gpu_recognition::*;
+use gpu_runtime::*;
+use gpu_setup::*;
 use integrity::*;
 use layout_model::*;
 use native_paths::ensure_native_path;

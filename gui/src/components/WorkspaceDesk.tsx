@@ -14,6 +14,8 @@ import {
   type ReactNode,
 } from "react";
 import { WorkspacePaneVisibility } from "./workspacePaneVisibility";
+import ProjectLocation from "./ProjectLocation";
+import "../ui/page.css";
 import useContainerWidth from "../hooks/useContainerWidth";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import ResizeHandle from "./ResizeHandle";
@@ -210,7 +212,7 @@ export default function WorkspaceDesk({
     <div
       ref={root}
       hidden={hidden}
-      className="workspace-desk-area"
+      className="workspace-desk-area ui-layout-workspace"
       data-workspace-desk
     >
       {/* On macOS the toolbar's background also drags the window ("deep":
@@ -220,9 +222,15 @@ export default function WorkspaceDesk({
         aria-label="Desk views"
         data-tauri-drag-region={isMac ? "deep" : undefined}
       >
-        <span className="workspace-desk-title" title={projectName ?? undefined}>
-          {projectName ?? "Unfiled conversations"}
-        </span>
+        {workspaceId && projectName ? (
+          <ProjectLocation
+            projectId={workspaceId}
+            name={projectName}
+            disabled={toolsDisabled}
+          />
+        ) : (
+          <span className="workspace-desk-title">Unfiled conversations</span>
+        )}
         {project && onTools && (
           <button
             type="button"

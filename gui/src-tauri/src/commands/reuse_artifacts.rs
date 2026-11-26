@@ -154,7 +154,7 @@ fn snapshot_folder(
         .map_err(|error| format!("Failed to resolve selected folder: {error}"))?;
     let destination = root.join("source-snapshot/tree");
     std::fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
-    let mut plan = plan_folder_copy(&selected, max_files, crate::commands::is_cancelled)?;
+    let mut plan = plan_folder_copy(&selected, max_files, crate::cancellation::is_cancelled)?;
     let mut budget = WalkBudget::new_cancellable("Review folder copy").without_time_limit();
     let mut remaining = crate::pipeline::extract::MAX_FOLDER_COPY_BYTES;
     for relative in &plan.files {

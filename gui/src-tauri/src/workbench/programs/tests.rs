@@ -26,15 +26,20 @@ fn fixture(rooted: bool) -> Fixture {
     let root = temp.path().join("project");
     fs::create_dir(&root).unwrap();
     let store = Store::open_at(&temp.path().join("store")).unwrap();
-    let ws = store
-        .create_workspace(CreateWorkspaceRequest {
-            name: "Research programs".into(),
-            root: rooted.then(|| root.to_string_lossy().into_owned()),
-            operation_id: "workspace".into(),
-        })
-        .unwrap()
-        .record
-        .id;
+    let request = CreateWorkspaceRequest {
+        name: "Research programs".into(),
+        root: rooted.then(|| root.to_string_lossy().into_owned()),
+        operation_id: "workspace".into(),
+    };
+    let ws = if rooted {
+        store.create_workspace(request)
+    } else {
+        // Exercise saved projects from before folders became required.
+        store.create_legacy_workspace(request)
+    }
+    .unwrap()
+    .record
+    .id;
     let session = store
         .create_session(CreateSessionRequest {
             workspace_id: Some(ws.clone()),

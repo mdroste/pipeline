@@ -9,7 +9,8 @@ import {
   type DiscoveryRun,
   type Candidate,
 } from "../../lib/discoveryClient";
-const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
@@ -72,6 +73,7 @@ const candidates: Candidate[] = [1, 2, 3].map((id) => ({
   previousVersions: [],
 }));
 beforeEach(() => {
+  mocks.open.mockReset().mockResolvedValue("/research/discovery");
   mocks.invoke.mockReset();
   mocks.invoke.mockImplementation(async (name: string) => {
     if (name === "task_sessions")
@@ -235,6 +237,13 @@ it("starts prompt-only unsupervised research once with the exact name and defaul
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "Study source transmission in medieval archives" },
   });
+  expect(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  ).toBeDisabled();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Choose project folder…" }),
+  );
+  await screen.findByText("/research/discovery");
   fireEvent.click(
     screen.getByRole("button", { name: "Start research discovery" }),
   );
@@ -245,6 +254,7 @@ it("starts prompt-only unsupervised research once with the exact name and defaul
   expect(starts).toHaveLength(1);
   expect(starts[0][1].request).toMatchObject({
     sessionId: null,
+    projectRoot: "/research/discovery",
     definition: {
       mode: "unsupervised",
       candidateCount: 75,
@@ -347,6 +357,10 @@ it("retains the operation identity when a Start response is uncertain", async ()
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "A theoretical physics question" },
   });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Choose project folder…" }),
+  );
+  await screen.findByText("/research/discovery");
   fireEvent.click(
     screen.getByRole("button", { name: "Start research discovery" }),
   );

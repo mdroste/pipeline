@@ -12,6 +12,7 @@ import {
 import { SectionHeader, SettingsCard, Toggle } from "./controls";
 import { ReviewSaveFeedback } from "./SaveState";
 import ReportIssueLink from "../ReportIssueLink";
+import CommandLineSettings from "./CommandLineSettings";
 
 export default function AdvancedSettings({
   settings,
@@ -122,6 +123,7 @@ export default function AdvancedSettings({
           </p>
         )}
       </SettingsCard>
+      <CommandLineSettings />
       <SettingsCard id="app-version">
         <SectionHeader
           title="Pipeline"

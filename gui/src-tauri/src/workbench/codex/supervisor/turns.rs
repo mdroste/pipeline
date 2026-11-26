@@ -66,7 +66,7 @@ pub(super) async fn reconcile(
 ) -> Result<Vec<String>, RequestError> {
     let lookup = binding_id.to_string();
     let projected =
-        crate::workbench::commands::run_store(move |store| store.projected_turn_states(&lookup))
+        crate::workbench::runtime::run_store(move |store| store.projected_turn_states(&lookup))
             .await
             .map_err(|error| RequestError::unavailable(error.message))?;
     let located = unreconciled(client, thread_id, &projected).await?;
@@ -84,7 +84,7 @@ pub(super) async fn reconcile(
         .collect();
     let binding_id = binding_id.to_string();
     let thread_id = thread_id.to_string();
-    crate::workbench::commands::run_store(move |store| {
+    crate::workbench::runtime::run_store(move |store| {
         project_turns(&store, &binding_id, &thread_id, epoch, &pending)
     })
     .await
@@ -119,7 +119,7 @@ pub(super) async fn repair(
     let binding_id = binding_id.to_string();
     let thread_id = thread_id.to_string();
     let turn_id = turn_id.to_string();
-    crate::workbench::commands::run_store(move |store| {
+    crate::workbench::runtime::run_store(move |store| {
         project_items(&store, &binding_id, &thread_id, epoch, &turn_id, &turn)
     })
     .await

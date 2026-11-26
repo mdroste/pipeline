@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { coalescedRefresh } from "../../lib/coalescedRefresh";
 import type { Dispatch, SetStateAction } from "react";
 import { confirmDialog, notify } from "../DialogService";
 import { reviewCollectionClient } from "../../lib/reviewCollectionClient";
@@ -21,24 +22,42 @@ export function useHistoryData(
   const [trashedRuns, setTrashedRuns] = useState<TrashedRun[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
   const refreshRequestRef = useRef(0);
+  const metadataRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const storage = coalescedRefresh(
+      () => reviewHistoryClient.usage(),
+      setUsage,
+    );
+    const collections = coalescedRefresh(
+      () => reviewCollectionClient.list(),
+      (value) => setProjects(value.projects),
+    );
+    metadataRef.current = () => {
+      void storage.refresh();
+      void collections.refresh();
+    };
+    return () => {
+      storage.dispose();
+      collections.dispose();
+      metadataRef.current = null;
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     const request = ++refreshRequestRef.current;
     setLoading(true);
+    // Storage accounting can walk thousands of artifacts on a slow volume.
+    // Neither it nor collection metadata gates the run rows. Keep last-known
+    // values on failure and ignore responses from superseded refreshes.
+    metadataRef.current?.();
     try {
-      const [nextRuns, nextUsage, nextProjects] = await Promise.all([
-        reviewHistoryClient.list(),
-        reviewHistoryClient.usage().catch(() => null),
-        reviewCollectionClient.list().catch(() => null),
-      ]);
+      const nextRuns = await reviewHistoryClient.list();
       if (request !== refreshRequestRef.current) return;
       setRuns(nextRuns);
       // A report that left the list cannot be compared, and its row is gone.
       setCompareIds((prev) =>
         prev.filter((id) => nextRuns.some((run) => run.run_id === id)),
       );
-      setUsage(nextUsage);
-      if (nextProjects) setProjects(nextProjects.projects);
       setError(null);
     } catch (e) {
       if (request === refreshRequestRef.current) {

@@ -202,6 +202,19 @@
   font-weight: 500;
 }
 
+/* A quiet tag beside a choice's label, such as the workflow's default. */
+:root .ui-select-badge {
+  flex-shrink: 0;
+  border-radius: 999px;
+  background-color: var(--ui-accent-soft);
+  color: var(--ui-accent);
+  padding: 0.0625rem 0.4375rem;
+  font-size: 0.6875rem;
+  font-weight: 550;
+  line-height: 1rem;
+  letter-spacing: 0.01em;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root select,
   :root .ui-select-trigger {

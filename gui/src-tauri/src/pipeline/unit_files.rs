@@ -103,9 +103,12 @@ pub(crate) async fn set_aside_files(unit_root: &str) -> Result<(), String> {
             }
         }
     };
-    crate::commands::await_or_cancel(crate::engines::rename_when_free(&files, &destination), None)
-        .await?
-        .map_err(|error| format!("Could not set aside a rejected attempt's files: {error}"))
+    crate::cancellation::await_or_cancel(
+        crate::engines::rename_when_free(&files, &destination),
+        None,
+    )
+    .await?
+    .map_err(|error| format!("Could not set aside a rejected attempt's files: {error}"))
 }
 
 /// Ends a unit without an accepted response. The marker stays until the run

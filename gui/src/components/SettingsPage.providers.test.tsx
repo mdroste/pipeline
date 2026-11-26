@@ -239,21 +239,19 @@ describe("SettingsPage providers", () => {
     expect(screen.queryByLabelText("OpenAI API Key")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Gemini API Key")).toBeVisible();
     expect(screen.getByLabelText("Local API Key")).toBeVisible();
-    expect(
-      screen.getAllByRole("radio", { name: "Subscription" })[0],
-    ).toBeChecked();
-
-    const claudeModes = screen.getByRole("radiogroup", {
-      name: "Claude connection mode",
-    });
-    const api =
-      claudeModes.querySelector<HTMLInputElement>('input[value="api"]');
-    expect(api).not.toBeNull();
-    // A hidden radio placed outside the settings pane scrolls the whole window
-    // when it takes focus.
-    expect(api!.closest("label")).toHaveClass("relative");
-    await user.click(api!);
-    expect(api).toBeChecked();
+    const connection = screen.getByLabelText("Anthropic connection");
+    expect(connection).toHaveValue("claude");
+    await user.selectOptions(connection, "claude-code-api");
+    expect(connection).toHaveValue("claude-code-api");
+    expect(screen.getByText("claude auth login --console")).toBeVisible();
+    expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: expect.objectContaining({ claude_access_mode: "code_api" }),
+      }),
+    );
+    await user.selectOptions(connection, "anthropic-api");
+    expect(connection).toHaveValue("anthropic-api");
     expect(screen.getByLabelText("Claude API Key")).toBeVisible();
   });
 
@@ -274,17 +272,11 @@ describe("SettingsPage providers", () => {
         await screen.findByRole("navigation", { name: "Settings categories" }),
       ).getByRole("button", { name: "Models" }),
     );
-    const modes = screen.getByRole("radiogroup", {
-      name: "Gemini connection mode",
-    });
-    const subscription = modes.querySelector<HTMLInputElement>(
-      'input[value="subscription"]',
-    );
-    const api = modes.querySelector<HTMLInputElement>('input[value="api"]');
-    expect(subscription).toBeDisabled();
-    expect(subscription).not.toBeChecked();
-    expect(api).toBeChecked();
-    expect(screen.getByText(/Gemini needs a Google API key/)).toBeVisible();
+    expect(
+      screen.queryByRole("radiogroup", { name: "Gemini connection mode" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Gemini API Key")).toBeVisible();
+    expect(screen.getByText(/Gemini uses the Google API key/)).toBeVisible();
   });
 
   it("lists discovered models without stable role options", async () => {
@@ -505,11 +497,9 @@ describe("SettingsPage providers", () => {
         await screen.findByRole("navigation", { name: "Settings categories" }),
       ).getByRole("button", { name: "Models" }),
     );
-    const claudeModes = screen.getByRole("radiogroup", {
-      name: "Claude connection mode",
-    });
-    await user.click(
-      claudeModes.querySelector<HTMLInputElement>('input[value="api"]')!,
+    await user.selectOptions(
+      screen.getByLabelText("Anthropic connection"),
+      "anthropic-api",
     );
     await user.type(screen.getByLabelText("Claude API Key"), "sk-complete-key");
     await user.click(

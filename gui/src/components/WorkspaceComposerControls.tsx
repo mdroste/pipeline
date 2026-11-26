@@ -449,7 +449,7 @@ export default function WorkspaceComposerControls({
                 ? "Runs allowed commands in the sandbox without approval prompts."
                 : approvalMode === "auto"
                   ? "The provider reviews tool approvals for you."
-                  : runtime === "claude"
+                  : runtime === "claude" || runtime === "claude-code-api"
                     ? "Asks before running a sandboxed shell command."
                     : "ChatGPT can ask you to approve a command or additional access."}
             </p>

@@ -12,11 +12,16 @@ import {
   type ProjectAction,
   type ProjectHome,
 } from "../../lib/projectClient";
-import { workspaceClient } from "../../lib/workbench/workspaceClient";
+import {
+  readProjectHome,
+  invalidatesProjectHome,
+} from "../../lib/projectQueries";
+import { listenConversationEvents } from "../../lib/workbench/events";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { Workspace } from "../../lib/workbench/sessionTypes";
 import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../../lib/appEvents";
+import { currentManuscript } from "../../lib/project-overview/manuscript";
 
 import { useWorkspacePaneVisible } from "../workspacePaneVisibility";
 
@@ -40,16 +45,13 @@ export function useProjectSurfaceData(
   );
   const clearError = useCallback(() => setError(null), []);
   const refresh = useCallback(async () => {
-    const [home, ws] = await Promise.all([
-      projectClient.home(workspaceId),
-      workspaceClient.getWorkspace(workspaceId),
-    ]);
+    const { home, workspace: ws } = await readProjectHome(workspaceId);
     setData(home);
     setWorkspace(ws);
     setRevisionId(
       (current) =>
         current ??
-        home.settings.body.manuscriptRevisionId ??
+        currentManuscript(home).paper?.revision?.id ??
         home.papers.find((document) => !document.paper.archived)?.revision
           ?.id ??
         null,
@@ -80,10 +82,15 @@ export function useProjectSurfaceData(
     const offNavigation = appEvents.on("workspace-destination", (event) => {
       if (event.workspaceId === workspaceId && event.tab === "edits") reload();
     });
-    const offTurn = listen<{ kind: string }>(
-      "workbench:event",
+    const offTurn = listenConversationEvents(({ payload }) => {
+      if (invalidatesProjectHome(payload, workspaceId)) reload();
+    }).catch(() => () => {});
+    const offChecks = listen<{ workspaceId: string; error?: string }>(
+      "project-check-completed",
       ({ payload }) => {
-        if (payload.kind === "turnCompleted") reload();
+        if (payload.workspaceId !== workspaceId) return;
+        if (payload.error) reportError(payload.error);
+        reload();
       },
     ).catch(() => () => {});
     return () => {
@@ -91,6 +98,7 @@ export function useProjectSurfaceData(
       clearTimeout(timer);
       offNavigation();
       void offTurn.then((off) => off()).catch(() => {});
+      void offChecks.then((off) => off()).catch(() => {});
     };
   }, [workspaceId, refresh, reportError, visible]);
   const run = useCallback(

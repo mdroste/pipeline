@@ -26,6 +26,7 @@ export default function HomePage({
   onNavigate,
   onSetUp,
   onExampleReview,
+  onExampleProject,
 }: {
   projects: RecentProject[];
   projectsLoading: boolean;
@@ -43,10 +44,12 @@ export default function HomePage({
   onSetUp?: () => void;
   /** Open the bundled Example Review (no model call). */
   onExampleReview?: () => void;
+  /** Open the disposable Projects walkthrough. */
+  onExampleProject?: () => void;
 }) {
   const actions = [
     {
-      title: "Chat",
+      title: "Conversation",
       description: "Work on a project with your choice of model.",
       label: "New conversation",
       icon: "assistant" as const,
@@ -72,22 +75,23 @@ export default function HomePage({
       label: "Open automations",
       icon: "tasks" as const,
       accent:
-        "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:from-neutral-400/15 dark:via-neutral-400/5 dark:text-neutral-300",
+        "from-emerald-500/15 via-emerald-500/5 to-transparent text-success dark:from-neutral-400/15 dark:via-neutral-400/5 dark:text-neutral-300",
       onClick: () => onNavigate("tasks"),
     },
   ];
 
   return (
     <div className="min-h-full bg-surface text-ink [container-type:inline-size]">
-      <div className="mx-auto w-full max-w-6xl px-[var(--ui-page-gutter)] py-[var(--ui-space-8)]">
+      <div className="ui-page ui-page--index">
         {hasCurrentReview && (
           <button
             type="button"
             onClick={onContinueReview}
+            data-review-tour="resume-review"
             className="flex w-full items-center gap-3 rounded-ui-md border border-blue-200/80 bg-blue-50/70 px-4 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-blue-900/80 dark:bg-blue-950/25 dark:hover:border-blue-800 dark:hover:bg-blue-950/40"
           >
             <span
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${reviewRunning ? "animate-pulse bg-blue-500" : "bg-emerald-500"}`}
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${reviewRunning ? "animate-pulse bg-running motion-reduce:animate-none" : "bg-success"}`}
             />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold">
@@ -123,6 +127,9 @@ export default function HomePage({
                 key={action.title}
                 type="button"
                 onClick={action.onClick}
+                data-review-tour={
+                  action.label === "New review" ? "new-review" : undefined
+                }
                 className="group relative min-h-48 overflow-hidden rounded-ui-lg border border-gray-200 bg-white p-5 text-left shadow-ui-1 transition duration-200 hover:border-gray-300 hover:shadow-ui-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-neutral-800 dark:bg-neutral-900/70 dark:hover:border-neutral-700 dark:hover:shadow-black/30"
               >
                 <span
@@ -150,7 +157,7 @@ export default function HomePage({
               </button>
             ))}
           </div>
-          {(onSetUp || onExampleReview) && (
+          {(onSetUp || onExampleReview || onExampleProject) && (
             <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-neutral-400">
               <span>New to Pipeline?</span>
               {onSetUp && (
@@ -169,6 +176,15 @@ export default function HomePage({
                   className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
                 >
                   See an example review
+                </button>
+              )}
+              {onExampleProject && (
+                <button
+                  type="button"
+                  onClick={onExampleProject}
+                  className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
+                >
+                  Explore an example project
                 </button>
               )}
             </p>
@@ -208,7 +224,7 @@ export default function HomePage({
                       {project.name}
                     </span>
                     <span
-                      className={`mt-1 block truncate text-xs ${project.missingRootAt ? "text-amber-600 dark:text-amber-400" : "text-ink-muted"}`}
+                      className={`mt-1 block truncate text-xs ${project.missingRootAt ? "text-warning" : "text-ink-muted"}`}
                     >
                       {projectLocation(project)}
                     </span>
@@ -239,6 +255,7 @@ export default function HomePage({
             <button
               type="button"
               onClick={onNewProject}
+              data-project-tour="new-project"
               className="mt-3 inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:border-gray-300 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-700 dark:hover:bg-neutral-800"
             >
               <span aria-hidden="true" className="text-base leading-none">

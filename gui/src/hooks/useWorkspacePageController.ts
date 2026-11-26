@@ -1,3 +1,4 @@
+import { useConversationTransitions } from "./workspace/useConversationTransitions";
 import { useWorkspaceConversationRuntime } from "./workspace/useWorkspaceConversationRuntime";
 import { useWorkspaceConversationEvents } from "./workspace/useWorkspaceConversationEvents";
 import { createWorkspaceSubmission } from "./workspace/createWorkspaceSubmission";
@@ -117,11 +118,8 @@ export function useWorkspacePageController({
     draft,
     setDraft,
     streamStore,
-    clearStream,
     pendingUser,
-    setPendingUser,
     active,
-    setActive,
     submitting,
     setSubmitting,
     requests,
@@ -129,18 +127,14 @@ export function useWorkspacePageController({
     error,
     setError,
     notice,
-    setNotice,
     warnings,
-    setWarnings,
     submissionOwner,
     activeTurn,
     fileChanges,
-    missedProblemsRef,
     sessionRef,
     snapshotRef,
     activeRef,
     submittingRef,
-    hydrationGeneration,
     hydrate,
     refreshSessionRecord,
     acceptSnapshot,
@@ -296,49 +290,16 @@ export function useWorkspacePageController({
 
   useWorkspaceChromeSession(chrome, sessionId);
 
-  useEffect(() => {
-    // Errors speak for the conversation that was on screen, and warnings too.
-    // One this conversation raised while it was left waits here.
-    const missed = sessionId ? missedProblemsRef.current.get(sessionId) : null;
-    if (sessionId) missedProblemsRef.current.delete(sessionId);
-    setError(missed ?? null);
-    setWarnings([]);
-    if (!sessionId) {
-      // Hydration resets these for a conversation; with none selected, a
-      // response running elsewhere must not stay on this page. Its submission
-      // stays, so the background notice can still point to it.
-      activeRef.current = null;
-      setActive(null);
-      setPendingUser(null);
-      setSubmitting(false);
-      clearStream();
-      setSnapshot(null);
-      return;
-    }
-    setTranscriptPage(0);
-    setSelectedMessage(null);
-    setJumpTarget(null);
-    setNotice(null);
-    followLatestRef.current = true;
-    // A slow reconcile for a conversation the user has already left must
-    // neither report its error here nor start a load.
-    let cancelled = false;
-    const current = () => !cancelled && sessionRef.current === sessionId;
-    void runtimeClient
-      .reconcileSession(sessionId)
-      .catch((cause) => {
-        if (current())
-          setError(
-            `Could not refresh the conversation. Showing the saved transcript: ${workbenchErrorMessage(cause)}`,
-          );
-      })
-      .finally(() => {
-        if (current()) void hydrate(sessionId);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [hydrate, sessionId]);
+  useEffect(
+    () =>
+      conversation.reconcileSelection(() => {
+        setTranscriptPage(0);
+        setSelectedMessage(null);
+        setJumpTarget(null);
+        followLatestRef.current = true;
+      }),
+    [conversation.reconcileSelection],
+  );
 
   useEffect(() => {
     if (!sessionId || snapshot?.session.id !== sessionId) return;
@@ -350,8 +311,10 @@ export function useWorkspacePageController({
   useWorkspaceDraftAutosave(conversation, persistence, contextBusy);
 
   const { finishSubmission } = useWorkspaceConversationEvents(
-    conversation,
-    persistence,
+    useConversationTransitions({
+      ...conversation,
+      persistDraft: persistence.persistDraft,
+    }),
   );
 
   const selectProject = useCallback(
@@ -586,7 +549,7 @@ export function useWorkspacePageController({
     loadingEarlier,
   } = useWorkspaceTranscript(snapshot, setSnapshot, setError);
   const send = createWorkspaceSubmission(
-    conversation,
+    conversation.submission,
     persistence,
     finishSubmission,
     {
@@ -712,7 +675,7 @@ export function useWorkspacePageController({
             (target.sessionId !== undefined &&
               target.sessionId !== sessionRef.current))
         ) {
-          hydrationGeneration.current++;
+          conversation.navigateTo(target.sessionId ?? null);
           sessionListSequence.current++;
           routedSession.current =
             project !== workspaceRef.current
@@ -720,10 +683,6 @@ export function useWorkspacePageController({
               : null;
           composerFocusFor.current = target.sessionId ?? null;
           setWorkspaceId(project);
-          setSnapshot(null);
-          snapshotRef.current = null;
-          setDraft("");
-          sessionRef.current = target.sessionId ?? null;
           setSessionId(target.sessionId ?? null);
           if (project !== workspaceId) setSessions([]);
           // The sequence above retired any list load in flight, and an

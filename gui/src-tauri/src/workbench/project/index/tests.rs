@@ -3,7 +3,7 @@ use crate::workbench::store::CreateWorkspaceRequest;
 
 fn workspace(store: &Store, name: &str) -> String {
     store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: name.into(),
             root: None,
             operation_id: name.into(),

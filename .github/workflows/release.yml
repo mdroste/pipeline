@@ -121,7 +121,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: gui/src-tauri/resources/poppler
-          key: poppler-inventory-v2-${{ matrix.id }}-${{ hashFiles('scripts/release/bundle-poppler.sh', 'scripts/release/poppler-lock.json', 'scripts/release/poppler-inventory.mjs') }}
+          key: poppler-inventory-v3-${{ matrix.id }}-${{ hashFiles('scripts/release/bundle-poppler.sh', 'scripts/release/poppler-lock.json', 'scripts/release/poppler-inventory.mjs', 'scripts/release/poppler-windows*', 'scripts/release/qualify-poppler.mjs', 'scripts/release/fixtures/poppler/**') }}
 
       - name: Bundle Poppler when not cached
         if: steps.poppler-cache.outputs.cache-hit != 'true'
@@ -130,6 +130,10 @@ jobs:
 
       - name: Verify bundled Poppler inventory (including cache hits)
         run: node scripts/release/poppler-inventory.mjs --verify
+
+      - name: Check Windows PDF corpus (including cache hits)
+        if: matrix.id == 'windows'
+        run: node scripts/release/qualify-poppler.mjs gui/src-tauri/resources/poppler gui/src-tauri/resources/poppler
 
       - name: Bundle llama.cpp Vulkan build
         if: matrix.id == 'windows'
@@ -197,6 +201,7 @@ jobs:
           bash scripts/release/validate-macos-machos.sh --root "$poppler" \
             --expected-arch "$EXPECTED_ARCH" --max-minos 15.0 --poppler-layout --require-developer-id
           node scripts/release/smoke-poppler.mjs "$poppler"
+          node scripts/release/verify-cli-launcher.mjs "$PWD/$app/Contents/MacOS/pipeline-cli"
           node scripts/release/smoke-packaged-app.mjs "$PWD/$app/Contents/MacOS/pipeline-gui"
 
       - name: Build unsigned package
@@ -218,6 +223,7 @@ jobs:
           appimage="$(find gui/src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' -print -quit)"
           test -n "$appimage"
           node scripts/release/smoke-poppler.mjs gui/src-tauri/resources/poppler
+          node scripts/release/verify-cli-launcher.mjs --appimage "$PWD/$appimage"
           xvfb-run -a node scripts/release/smoke-packaged-app.mjs --process-stability-only "$PWD/$appimage"
 
       - name: Compile Windows application before signing login
@@ -257,6 +263,14 @@ jobs:
           node scripts/release/prepare-windows-signing.mjs "$env:RUNNER_TEMP/windows-signing.json"
           if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare signing configuration' }
 
+      - name: Package signed optional GPU runtime
+        if: matrix.id == 'windows'
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/release/package-gpu-runtime.ps1 -OutputDirectory "$env:RUNNER_TEMP/gpu-runtime"
+
       - name: Build signed Windows package
         if: matrix.id == 'windows'
         working-directory: gui
@@ -275,6 +289,17 @@ jobs:
         if: matrix.id == 'windows'
         shell: pwsh
         run: ./scripts/release/verify-windows-package.ps1 -InstallDirectory "$env:RUNNER_TEMP/pipeline-signature-check"
+
+      - name: Upload immutable GPU runtime to draft
+        if: matrix.id == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Get-ChildItem -LiteralPath "$env:RUNNER_TEMP/gpu-runtime" -File | ForEach-Object {
+            node scripts/release/draft-release.mjs upload $env:GITHUB_REF_NAME $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Cannot upload GPU runtime asset: $($_.Name)" }
+          }
 
       - name: Upload immutable installer to draft
         shell: bash

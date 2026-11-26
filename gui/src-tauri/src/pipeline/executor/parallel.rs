@@ -1,21 +1,15 @@
 //! Concurrent wave dispatch with per-unit selector isolation.
-use super::artifact_context::{
-    normalized_path, prepare_selected_shared_context, resolve_artifact_context, ArtifactRuntime,
-};
+use super::artifact_context::normalized_path;
 use super::checkpoints::{checkpoint_outputs, OutputBudget};
-use super::outputs::{effective_output_schema, step_output};
-use super::paths::step_write_dir;
-use super::prompts::{
-    append_evidence_retrieval_guidance, append_shared_context_note,
-    build_parallel_prompt_with_context, output_format_block, tools_with_write,
-};
+use super::outputs::step_output;
+use super::parallel_prepare::WaveInputs;
 use super::step_call::{
     cancellation_error, execute_metered_step_call, is_cancellation_error, StepCallFailure,
     StepCallRequest,
 };
 use super::units::build_units;
 use crate::models::{StepCallRecord, StepFailure, StepOutput};
-use crate::output::{capitalize, new_report_nonce};
+use crate::output::capitalize;
 use crate::pipeline::claude::cli_parent_dir;
 use crate::pipeline_config::StepConfig;
 use std::sync::Arc;
@@ -83,6 +77,24 @@ pub(super) async fn run_parallel_wave(
     shared_context_pool: &crate::pipeline::context_cache::PreparedContextPool,
     author_note: Option<&str>,
 ) -> Result<WaveResult, String> {
+    // Copy immutable inputs once per wave, rather than once per queued unit.
+    let inputs = Arc::new(WaveInputs {
+        orientation_path: orientation_path.into(),
+        orientation_value: orientation_value.clone(),
+        paper_text_path: paper_text_path.into(),
+        document_bundle_path: document_bundle_path.into(),
+        source_path: source_path.into(),
+        paper_type: paper_type.into(),
+        survey_hint: survey_hint.into(),
+        context_template: context_template.into(),
+        variables: variables.clone(),
+        extra_inputs: extra_inputs.clone(),
+        extra_input_sources: extra_input_sources.clone(),
+        prior_outputs: prior_outputs.to_vec(),
+        write_dir: write_dir.map(str::to_string),
+        context_cache_enabled,
+        shared_context_pool: shared_context_pool.clone(),
+    });
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
     let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
     let mut failures: Vec<StepFailure> = Vec::new();
@@ -104,7 +116,7 @@ pub(super) async fn run_parallel_wave(
             .and_then(|for_each| for_each.artifact.as_ref())
             .map(|source| super::units::source_artifacts(prior_outputs, &source.step))
             .unwrap_or_default();
-        let discovery = crate::commands::await_or_cancel(
+        let discovery = crate::cancellation::await_or_cancel(
             crate::run_scope::spawn_blocking(move || {
                 build_units(
                     &step_owned,
@@ -174,7 +186,8 @@ pub(super) async fn run_parallel_wave(
             continue;
         }
 
-        for unit in &units {
+        let step_config = Arc::new((*step).clone());
+        for unit in units {
             let id = step.id.clone();
             let label = step.label.clone();
             let agent_name = unit.agent.clone();
@@ -209,137 +222,8 @@ pub(super) async fn run_parallel_wave(
             } else {
                 format!("{} [{}]", label, unit.display)
             };
-            // Everything that can fail before the unit is announced. A failure
-            // here belongs to this unit alone, as a discovery error belongs to
-            // its step: units already running keep their provider calls.
-            let prepared = (|| -> Result<_, String> {
-                let output_schema = effective_output_schema(step)?;
-                let mut resolved = resolve_artifact_context(
-                    step,
-                    ArtifactRuntime {
-                        orientation_path,
-                        paper_text_path,
-                        document_bundle_path,
-                        source_path,
-                        extra_inputs,
-                        extra_input_sources,
-                        outputs: prior_outputs,
-                        run_artifact_dir: write_dir,
-                        context_pool: shared_context_pool,
-                    },
-                )?;
-                resolved.log_warnings(app);
-                // File fan-out stages the matched file into the artifact view and
-                // binds its path; artifact fan-out binds the element text itself.
-                let item_path = match unit.item.as_deref() {
-                    Some(item) => resolved.stage_current_item(item)?,
-                    None => unit.inline_item.clone().unwrap_or_default(),
-                };
-                let shared_context = prepare_selected_shared_context(
-                    app,
-                    context_cache_enabled,
-                    &resolved,
-                    orientation_value,
-                    shared_context_pool,
-                );
-                let task_write_dir = step_write_dir(write_dir, &step_key)?;
-                let tools = tools_with_write(
-                    &step.tools,
-                    !resolved.read_dirs.is_empty(),
-                    resolved.has_visuals,
-                    task_write_dir.as_deref(),
-                );
-                let report_nonce = new_report_nonce()?;
-                let output_format = output_format_block(
-                    task_write_dir.as_deref(),
-                    &report_nonce,
-                    output_schema.as_ref(),
-                );
-                let mut prompt = build_parallel_prompt_with_context(
-                    step,
-                    if resolved.includes_survey {
-                        paper_type
-                    } else {
-                        ""
-                    },
-                    &resolved.orientation_path,
-                    if resolved.includes_survey {
-                        survey_hint
-                    } else {
-                        ""
-                    },
-                    &resolved.paper_text_path,
-                    &resolved.document_bundle_path,
-                    &resolved.source_path,
-                    context_template,
-                    &output_format,
-                    resolved.artifact_root.as_deref(),
-                    variables,
-                    &resolved.extra_inputs,
-                    &item_path,
-                )?;
-                crate::safety::push_str_limited(
-                    &mut prompt,
-                    &format!("\n\n{}", resolved.manifest),
-                    crate::safety::MAX_EXPANDED_PROMPT_BYTES,
-                    "Parallel artifact context",
-                )?;
-                let prompt = if shared_context.is_some() {
-                    append_shared_context_note(
-                        prompt,
-                        resolved.includes_primary_text,
-                        resolved.includes_survey,
-                    )?
-                } else {
-                    prompt
-                };
-                let prompt = append_evidence_retrieval_guidance(prompt, &tools)?;
-                Ok((
-                    output_schema,
-                    resolved,
-                    shared_context,
-                    task_write_dir,
-                    tools,
-                    report_nonce,
-                    prompt,
-                ))
-            })();
-            let (
-                output_schema,
-                resolved,
-                shared_context,
-                task_write_dir,
-                tools,
-                report_nonce,
-                prompt,
-            ) = match prepared {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    let _ = app.emit_event(
-                        "pipeline:pass",
-                        serde_json::json!({"name": step_key, "status": "error"}),
-                    );
-                    failures.push(StepFailure {
-                        step_id: step_key,
-                        step_label: display_label,
-                        phase: "parallel".to_string(),
-                        error,
-                    });
-                    continue;
-                }
-            };
-            let editorial_inputs = output_schema
-                .as_ref()
-                .and_then(crate::pipeline::editorial::stage)
-                .map(|_| crate::pipeline::editorial::Inputs {
-                    paper_path: resolved.paper_text_path.clone(),
-                    orientation_path: resolved.orientation_path.clone(),
-                    prior_outputs: resolved.prior_outputs.clone(),
-                    view_dir: resolved._view.path().to_path_buf(),
-                });
             let run_artifact_dir = write_dir.map(str::to_string);
             let report_rel = "report.md".to_string();
-            let task_read_dirs = resolved.read_dirs.clone();
 
             let app_handle = app.clone();
             let step_key_emit = step_key.clone();
@@ -357,33 +241,19 @@ pub(super) async fn run_parallel_wave(
             };
             let sort_key = (idx, unit.suffix.clone());
             let sem = semaphore.clone();
-            let task_cwd = if resolved.source_path.is_empty() {
-                Some(normalized_path(resolved._view.path()))
-            } else {
-                let source = std::path::Path::new(&resolved.source_path);
-                if source.is_dir() {
-                    Some(resolved.source_path.clone())
-                } else {
-                    cli_parent_dir(&resolved.source_path)
-                }
-            };
             // display_label is moved into the success StepOutput; keep a copy
             // for failure reporting.
             let fail_label = display_label.clone();
             let settled_as = (step_key.clone(), fail_label.clone());
             let settings = settings.clone();
             let output_budget = output_budget.clone();
-            // Keep the staged artifact view alive until the provider call and
-            // all retries have completed.
-            let context_view = resolved._view;
             let system_prompt = step.system_prompt.clone();
             let author_note = author_note.map(str::to_string);
 
             // Publish every concrete provider/fan-out unit before it waits for
             // a worker permit. The progress view can then distinguish queued
             // work from a logical step that never expanded into provider calls.
-            // Announced only after preparation, so a unit that is announced
-            // always reaches a terminal status below.
+            // Preparation and provider failures both settle the announced unit.
             let _ = app.emit_event(
                 "pipeline:pass",
                 serde_json::json!({
@@ -392,8 +262,9 @@ pub(super) async fn run_parallel_wave(
                 }),
             );
 
+            let inputs = inputs.clone();
+            let step_config = step_config.clone();
             let task = crate::run_scope::spawn_in(&mut tasks, async move {
-                let _context_view = context_view;
                 // Every early return settles the announced unit, so the
                 // progress view never shows it running after it stopped.
                 let failed = |error: String| {
@@ -411,16 +282,73 @@ pub(super) async fn run_parallel_wave(
                 if let Some(error) = cancellation_error(&step_key_emit) {
                     return Err(failed(error).into());
                 }
-                let _permit = crate::commands::await_or_cancel(sem.acquire(), Some(&step_key_emit))
-                    .await
-                    .map_err(failed)?
-                    .map_err(|_| failed("Semaphore closed".to_string()))?;
+                let permit =
+                    crate::cancellation::await_or_cancel(sem.acquire_owned(), Some(&step_key_emit))
+                        .await
+                        .map_err(failed)?
+                        .map_err(|_| failed("Semaphore closed".to_string()))?;
                 // Cancellation can happen while this unit is queued for the
                 // worker permit. Re-check after acquisition before starting a
                 // provider call (and therefore before incurring cost).
                 if let Some(error) = cancellation_error(&step_key_emit) {
                     return Err(failed(error).into());
                 }
+                let prepare_app = app_handle.clone();
+                let prepare_key = step_key.clone();
+                // The blocking worker owns its permit: cancelling the async
+                // waiter must not admit another preparation while it is still
+                // copying artifacts. Only lightweight units wait in the queue.
+                let prepared = crate::cancellation::await_or_cancel(
+                    crate::run_scope::spawn_blocking(move || {
+                        if let Some(error) = cancellation_error(&prepare_key) {
+                            return Err(error);
+                        }
+                        let prepared =
+                            inputs.prepare(&step_config, &unit, &prepare_key, &prepare_app)?;
+                        Ok((permit, prepared))
+                    }),
+                    Some(&step_key_emit),
+                )
+                .await
+                .map_err(failed)?
+                .map_err(|error| failed(format!("Unit preparation task failed: {error}")))?
+                .map_err(failed)?;
+                let (
+                    _permit,
+                    super::parallel_prepare::PreparedUnit {
+                        output_schema,
+                        resolved,
+                        shared_context,
+                        task_write_dir,
+                        tools,
+                        report_nonce,
+                        prompt,
+                    },
+                ) = prepared;
+                if let Some(error) = cancellation_error(&step_key_emit) {
+                    return Err(failed(error).into());
+                }
+                let editorial_inputs = output_schema
+                    .as_ref()
+                    .and_then(crate::pipeline::editorial::stage)
+                    .map(|_| crate::pipeline::editorial::Inputs {
+                        paper_path: resolved.paper_text_path.clone(),
+                        orientation_path: resolved.orientation_path.clone(),
+                        prior_outputs: resolved.prior_outputs.clone(),
+                        view_dir: resolved._view.path().to_path_buf(),
+                    });
+                let task_cwd = if resolved.source_path.is_empty() {
+                    Some(normalized_path(resolved._view.path()))
+                } else {
+                    let source = std::path::Path::new(&resolved.source_path);
+                    if source.is_dir() {
+                        Some(resolved.source_path.clone())
+                    } else {
+                        cli_parent_dir(&resolved.source_path)
+                    }
+                };
+                let task_read_dirs = resolved.read_dirs.clone();
+                let _context_view = resolved._view;
                 let _ = app_handle.emit_event(
                     "pipeline:pass",
                     serde_json::json!({
@@ -429,7 +357,7 @@ pub(super) async fn run_parallel_wave(
                     }),
                 );
                 let provider = agent_name.clone();
-                let resolution = crate::commands::await_or_cancel(
+                let resolution = crate::cancellation::await_or_cancel(
                     crate::model_catalog::resolve(&provider, &settings, model_selection.as_ref()),
                     Some(&step_key_emit),
                 )

@@ -1,36 +1,27 @@
-import { currentManuscript } from "../../lib/project-overview/manuscript";
+import { useManuscriptNavigation } from "./useManuscriptNavigation";
+import { useManuscriptBuilds } from "./useManuscriptBuilds";
+import { useManuscriptDocument } from "./useManuscriptDocument";
+import { manuscriptDraftStorage } from "../../lib/manuscriptDraftStorage";
 import { saveRetainedManuscriptDrafts } from "./manuscriptDrafts";
-import { useDraftFlush } from "../../hooks/useDraftFlush";
-import type { PdfPosition } from "../file-workspace/PdfReader";
+import Citations from "./Citations";
+import RecoveredManuscriptDraft from "./RecoveredManuscriptDraft";
 import SourceEditor, {
   type SourceEditorHandle,
-  type SourceLineRequest,
 } from "../file-workspace/SourceEditor";
 import SourceDiff from "../file-workspace/SourceDiff";
 import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 const PdfReader = lazy(() => import("../file-workspace/PdfReader"));
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { confirmDialog } from "../DialogService";
 import { EmptyState, IconButton, Menu, MenuItem, Sheet } from "../../ui";
 import { Icon } from "../../ui/icons";
-import {
-  studioClient,
-  type BuildReceipt,
-  type BuildRecord,
-  type EditorFile,
-} from "../../lib/studioClient";
+import { studioClient } from "../../lib/studioClient";
 import { proseForDiff } from "../../lib/studioPresentation";
 import { lineDiff } from "../../lib/diff";
-import { projectClient, type ProjectRecord } from "../../lib/projectClient";
-import { executionClient } from "../../lib/workbench/executionClient";
-import type { ExecutionProfile } from "../../lib/workbench/executionTypes";
+import { projectClient } from "../../lib/projectClient";
 import useReopenCount from "../../hooks/useReopenCount";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { ErrorNotice, useAction, type StudioProps } from "./shared";
-import ManuscriptBuildSheet, {
-  initialBuild,
-  suggestBuild,
-} from "./ManuscriptBuildSheet";
+import ManuscriptBuildSheet, { suggestBuild } from "./ManuscriptBuildSheet";
 import ManuscriptBuilds from "./ManuscriptBuilds";
 import "./manuscript.css";
 
@@ -51,22 +42,6 @@ export function buildFolder(cwd: string | undefined, directories: string[]) {
     .sort((a, b) => b.length - a.length)[0];
   return folder ? `${folder}/` : "";
 }
-function readDraft(key: string): { file: EditorFile; draft: string } | null {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) ?? "null");
-    return value &&
-      typeof value.draft === "string" &&
-      typeof value.file?.path === "string" &&
-      typeof value.file.hash === "string" &&
-      typeof value.file.content === "string" &&
-      (value.file.checkpointId === null ||
-        typeof value.file.checkpointId === "string")
-      ? value
-      : null;
-  } catch {
-    return null;
-  }
-}
 export default function Manuscript({
   workspaceId,
   documentId,
@@ -74,32 +49,12 @@ export default function Manuscript({
   data,
   onRefresh,
   onDocument,
+  onAskSource,
   active,
 }: StudioProps) {
   /* The file opens by itself, so the page starts on the manuscript rather than
      on a form. Build opens a sheet, which still shows the exact command for
      approval. The side panel holds the build's PDF and its results. */
-  const draftKey = `pipeline.manuscriptDraft.${workspaceId}`;
-  const selectionKey = documentId
-    ? `${draftKey}.document.${documentId}`
-    : draftKey;
-  const [initialDraft] = useState(() => readDraft(selectionKey));
-  const cached = useRef(initialDraft);
-  const [path, setPath] = useState(cached.current?.file.path ?? "");
-  const [checkpoint, setCheckpoint] = useState(
-    cached.current?.file.checkpointId ?? "",
-  );
-  const [file, setFile] = useState<EditorFile | null>(null);
-  const [draft, setDraft] = useState("");
-  // How the file on disk relates to the text the open draft started from.
-  const [fileState, setFileState] = useState<
-    "current" | "changed" | "compared"
-  >("current");
-  const [notice, setNotice] = useState(
-    cached.current
-      ? "An unsaved draft is retained. Load its file to restore it."
-      : "",
-  );
   const [diffMode, setDiffMode] = useState("source");
   const [showChanges, setShowChanges] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -111,37 +66,73 @@ export default function Manuscript({
   const editor = useRef<SourceEditorHandle>(null);
   const saveButton = useRef<HTMLButtonElement>(null);
   const [completionTexts, setCompletionTexts] = useState<string[]>([]);
-  const [builds, setBuilds] = useState<
-    ProjectRecord<BuildRecord | BuildReceipt>[]
-  >([]);
-  const [buildsLoaded, setBuildsLoaded] = useState(false);
-  const [config, setConfig] = useState(initialBuild);
-  const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
-  const [configId, selectConfigId] = useState("");
-  const configKey = `pipeline.manuscriptBuild.${workspaceId}${documentId ? `.${documentId}` : ""}`;
-  const setConfigId = (id: string) => {
-    selectConfigId(id);
-    try {
-      localStorage.setItem(configKey, id);
-    } catch {
-      /* Saved configurations remain in the project. */
-    }
-  };
-  const [advanced, setAdvanced] = useState("");
-  const [selectedBuild, setSelectedBuild] = useState("");
-  const [compareBuild, setCompareBuild] = useState("");
-  const [sync, setSync] = useState("");
-  const [syncCandidates, setSyncCandidates] = useState<
-    import("../../lib/studioClient").SyncResult["candidates"]
-  >([]);
-  // The Source line field stays local; only explicit actions move the editor.
-  const [sourceLine, setSourceLine] = useState("1");
-  const [sourceRequest, setSourceRequest] = useState<SourceLineRequest | null>(
-    null,
-  );
-  const [pdfPage, setPdfPage] = useState(1);
-  const pdfPosition = useRef<PdfPosition>({ page: 1 });
   const { error, busy, run, setError } = useAction();
+  const reopened = useReopenCount(active);
+  const draftStorage = manuscriptDraftStorage(workspaceId, documentId);
+  const {
+    buildsLoaded,
+    config,
+    setConfig,
+    profiles,
+    configId,
+    setConfigId,
+    advanced,
+    setAdvanced,
+    compareBuild,
+    setCompareBuild,
+    setSelectedBuild,
+    configs,
+    receipts,
+    chosen,
+    finished,
+    latestBuild,
+    shownBuild,
+    receipt,
+    comparison,
+    refresh,
+  } = useManuscriptBuilds({
+    workspaceId,
+    documentId,
+    data,
+    onRefresh,
+    setError,
+    reopened,
+  });
+  const {
+    path,
+    setPath,
+    checkpoint,
+    setCheckpoint,
+    file,
+    draft,
+    recoveredDraft,
+    setRecoveredDraft,
+    fileState,
+    notice,
+    setNotice,
+    dirty,
+    editDraft,
+    stashDraft,
+    openFile,
+    forgetDraft,
+    discard,
+    load,
+    switchFile,
+    compare,
+    saveCurrent,
+    save,
+    hasRetainedDraft,
+  } = useManuscriptDocument({
+    workspaceId,
+    documentId,
+    active,
+    onRefresh,
+    reopened,
+    run,
+    setError,
+    onOpen: () => setSourcePassage(null),
+    onCompare: () => setShowChanges(true),
+  });
   // New projects need an inventory before the file switcher can list sections.
   const inventoryRequested = useRef(false);
   useEffect(() => {
@@ -153,60 +144,31 @@ export default function Manuscript({
       .then(onRefresh)
       .catch((cause) => setError(workbenchErrorMessage(cause)));
   }, [workspaceId, active, data.inventory, onRefresh, setError]);
-  const refresh = async () =>
-    setBuilds(await studioClient.records(workspaceId, "build"));
-  const reopened = useReopenCount(active);
-  useEffect(() => {
-    let stopped = false;
-    void Promise.all([
-      studioClient.records<BuildRecord | BuildReceipt>(workspaceId, "build"),
-      executionClient.listExecutionProfiles(workspaceId),
-    ])
-      .then(([v, p]) => {
-        if (!stopped) {
-          setBuilds(v);
-          setProfiles(p);
-          setBuildsLoaded(true);
-        }
-      })
-      .catch((e) => {
-        if (!stopped) setError(workbenchErrorMessage(e));
-      });
-    return () => {
-      stopped = true;
-    };
-  }, [workspaceId, data.executions, setError, reopened]);
-  const legacyDocument = currentManuscript(data).paper?.paper.id;
-  const belongsToDocument = (id?: string | null) =>
-    documentId
-      ? id === documentId || (!id && documentId === legacyDocument)
-      : !id;
-  const configs = builds.filter(
-    (r): r is ProjectRecord<BuildRecord> =>
-      r.body.recordType === "configuration" &&
-      belongsToDocument(r.body.config.documentId),
-  );
-  const receipts = builds.filter(
-    (r): r is ProjectRecord<BuildReceipt> =>
-      r.body.recordType === "receipt" && belongsToDocument(r.body.documentId),
-  );
-  const chosen = configs.find((r) => r.id === configId);
-  const finished = data.executions.filter(
-    (e) =>
-      e.adapter === "latex" &&
-      !["queued", "running"].includes(e.outcome) &&
-      (!documentId || configs.some((c) => c.body.profile.id === e.profileId)),
-  );
-  const latestBuild = receipts.some((r) => r.id === `build_${finished[0]?.id}`)
-    ? `build_${finished[0].id}`
-    : receipts[0]?.id;
-  const shownBuild = selectedBuild || latestBuild || "";
-  const receipt = receipts.find((r) => r.id === shownBuild)?.body;
-  const comparison = receipts.find((r) => r.id === compareBuild)?.body;
   const prefix = buildFolder(
     data.executions.find((e) => e.id === receipt?.executionId)?.cwd,
     configs.map((c) => c.body.config.directory),
   );
+  const {
+    sync,
+    syncCandidates,
+    sourceLine,
+    setSourceLine,
+    sourcePassage,
+    setSourcePassage,
+    sourceRequest,
+    pdfPage,
+    setPdfPage,
+    pdfPosition,
+    showSync,
+    revealLine,
+    fromPdf,
+  } = useManuscriptNavigation({
+    workspaceId,
+    receipt,
+    prefix,
+    run,
+    navigateSource: (target, line) => navigateSource(target, line),
+  });
   const workingCopies = data.changes
     .filter((c) => ["isolated", "review"].includes(c.body.state))
     .map((c) => ({
@@ -222,55 +184,6 @@ export default function Manuscript({
     () => projectFiles.filter((p) => EDITABLE.test(p)),
     [projectFiles],
   );
-  const showSync = async (request: {
-    sourcePath?: string;
-    line?: number;
-    page?: number;
-    x?: number;
-    y?: number;
-  }) => {
-    if (!receipt) return;
-    const mapped = await studioClient.sync(
-      workspaceId,
-      receipt.executionId,
-      request.sourcePath?.startsWith(prefix)
-        ? { ...request, sourcePath: request.sourcePath.slice(prefix.length) }
-        : request,
-    );
-    setSync(mapped.result);
-    setSyncCandidates(mapped.candidates);
-    if (mapped.candidates[0]?.page) setPdfPage(mapped.candidates[0].page);
-  };
-  const dirty = file !== null && draft !== file.content;
-  const draftState = useRef({ file, draft });
-  draftState.current = { file, draft };
-  const persistDraft = () => {
-    const current = draftState.current;
-    try {
-      if (current.file) {
-        const key = `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`;
-        if (current.draft !== current.file.content) {
-          localStorage.setItem(selectionKey, JSON.stringify(current));
-          localStorage.setItem(key, JSON.stringify(current));
-        } else {
-          localStorage.removeItem(selectionKey);
-          localStorage.removeItem(key);
-        }
-      }
-    } catch {
-      if (!current.file || current.draft === current.file.content) return true;
-      setError(
-        "Draft storage is full. Keep this editor open until the file is saved.",
-      );
-      return false;
-    }
-    return true;
-  };
-  useEffect(() => {
-    const timer = setTimeout(persistDraft, 300);
-    return () => clearTimeout(timer);
-  }, [file, draft]);
-  useDraftFlush(persistDraft);
   const diff = useMemo(
     () =>
       file && showChanges && diffMode === "prose"
@@ -278,93 +191,6 @@ export default function Manuscript({
         : [],
     [file, draft, diffMode, showChanges],
   );
-  /** Keep the open draft so it returns when this file is opened again. */
-  const stashDraft = () => {
-    if (!persistDraft())
-      throw new Error("Save your draft before opening another file.");
-  };
-  const openFile = async (target: string, inCopy: string) => {
-    const next = await studioClient.editor(workspaceId, target, inCopy || null);
-    const retained =
-      readDraft(`${draftKey}.${inCopy || "working"}.${target}`) ??
-      cached.current;
-    setPath(next.path);
-    setCheckpoint(next.checkpointId ?? "");
-    if (
-      retained?.file.path === next.path &&
-      retained.file.checkpointId === next.checkpointId
-    ) {
-      setFile(retained.file);
-      setDraft(retained.draft);
-      setFileState(retained.file.hash === next.hash ? "current" : "changed");
-      setNotice("Restored unsaved draft");
-    } else {
-      setFile(next);
-      setDraft(next.content);
-      setFileState("current");
-      setNotice("");
-    }
-  };
-  const forgetDraft = () => {
-    cached.current = null;
-    try {
-      localStorage.removeItem(selectionKey);
-      if (file)
-        localStorage.removeItem(
-          `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
-        );
-    } catch {
-      /* Current draft is still discarded. */
-    }
-  };
-  // A confirmation applies to the text and file the user saw. Never clear
-  // retained text until the replacement has arrived and both still match.
-  const discard = async (reload = false) => {
-    const { file: opened, draft: confirmed } = draftState.current;
-    if (
-      !opened ||
-      !(await confirmDialog(
-        reload
-          ? `Reload ${opened.path} from the project and discard your unsaved draft?`
-          : `Discard your unsaved draft of ${opened.path}?`,
-        {
-          title: "Discard unsaved draft",
-          confirmLabel: reload ? "Discard and reload" : "Discard",
-          destructive: true,
-        },
-      ))
-    )
-      return;
-    await run(async () => {
-      const unchanged = () =>
-        draftState.current.file === opened &&
-        draftState.current.draft === confirmed;
-      if (!unchanged()) return;
-      const current = await studioClient.editor(
-        workspaceId,
-        opened.path,
-        opened.checkpointId,
-      );
-      if (!unchanged()) return;
-      forgetDraft();
-      setFile(current);
-      setDraft(current.content);
-      setFileState("current");
-      setNotice(reload ? "Reloaded from the project" : "Draft discarded");
-    });
-  };
-  const load = () =>
-    dirty
-      ? discard(true)
-      : run(async () => {
-          await openFile(path, checkpoint);
-          setNotice((old) => old || "Reloaded from the project");
-        });
-  const switchFile = (target: string, inCopy = checkpoint) =>
-    run(async () => {
-      stashDraft();
-      await openFile(target, inCopy);
-    });
   // Open the manuscript without asking: a retained draft's file, the saved
   // build's root, then the project's main TeX file. A project with none of
   // these starts on the file menu, which is not an error.
@@ -376,7 +202,7 @@ export default function Manuscript({
     autoOpened.current = true;
     let preferred: string | null = null;
     try {
-      preferred = localStorage.getItem(configKey);
+      preferred = draftStorage.readBuild();
     } catch {
       /* Use the latest saved configuration. */
     }
@@ -409,34 +235,13 @@ export default function Manuscript({
       try {
         await openFile(
           target,
-          cached.current ? checkpoint : (saved?.checkpointId ?? ""),
+          hasRetainedDraft ? checkpoint : (saved?.checkpointId ?? ""),
         );
       } catch {
         setPath(fileOptions.includes(target) ? target : "");
       }
     });
   }, [buildsLoaded, documentPath, data.inventory]);
-  // A finished build's result opens by itself. inspectBuild returns the saved
-  // record when one exists, so repeating it is harmless.
-  const inspected = useRef(new Set<string>());
-  useEffect(() => {
-    const latest = finished[0];
-    if (
-      !buildsLoaded ||
-      !latest ||
-      inspected.current.has(latest.id) ||
-      receipts.some((r) => r.id === `build_${latest.id}`)
-    )
-      return;
-    inspected.current.add(latest.id);
-    void studioClient
-      .mutate(workspaceId, { action: "inspectBuild", executionId: latest.id })
-      .then(async () => {
-        await refresh();
-        await onRefresh();
-      })
-      .catch(() => undefined);
-  }, [buildsLoaded, finished[0]?.id, builds]);
   // A new result opens the PDF, or the errors when there is no PDF. Choosing
   // an older build leaves the panel where it is.
   useEffect(() => {
@@ -447,11 +252,6 @@ export default function Manuscript({
     setSide(latest.pdf?.revision ? "pdf" : "builds");
   }, [latestBuild]);
   const jumpLine = (line: number) => editor.current?.goToLine(line);
-  // Reveal a line without taking focus from the control that asked for it.
-  const revealLine = (line: number) => {
-    setSourceLine(String(line));
-    setSourceRequest({ line });
-  };
   const navigateSource = async (target: string, line: number) => {
     if (file?.path === target) {
       revealLine(line);
@@ -484,96 +284,12 @@ export default function Manuscript({
     };
   }, [workspaceId, checkpoint, data.inventory]);
 
-  /** Notice a file that changed while this retained editor kept its text. A
-   * clean editor follows the file; a draft stays, and Compare can adopt it. */
-  const checkFile = async () => {
-    const opened = draftState.current.file;
-    if (!opened) return;
-    const current = await studioClient
-      .editor(workspaceId, opened.path, opened.checkpointId)
-      .catch(() => null);
-    // Typing can land during that read, and a save or another file replaces
-    // the record, so decide from the editor as it is now.
-    const now = draftState.current;
-    if (!current || now.file !== opened) return;
-    if (current.hash === opened.hash) {
-      setFileState((old) => (old === "changed" ? "current" : old));
-    } else if (now.draft !== opened.content) {
-      setFileState("changed");
-    } else {
-      setFile(current);
-      setDraft(current.content);
-      setFileState("current");
-      setNotice("Updated from the project");
-    }
-  };
-  const latestCheck = useRef(checkFile);
-  latestCheck.current = checkFile;
-  useEffect(() => {
-    if (active === false) return;
-    if (reopened) void latestCheck.current();
-    const focus = () => void latestCheck.current();
-    window.addEventListener("focus", focus);
-    return () => window.removeEventListener("focus", focus);
-  }, [active, reopened]);
-  /** Adopt the current file as the base, so Changes shows the draft against it
-   * and Save can replace it. */
-  const compare = () =>
-    run(async () => {
-      if (!file) return;
-      setFile(
-        await studioClient.editor(workspaceId, file.path, file.checkpointId),
-      );
-      setFileState("compared");
-      setShowChanges(true);
-    });
-  const saveCurrent = async () => {
-    if (!file) return true;
-    let response: { hash: string };
-    try {
-      response = await studioClient.mutate<{ hash: string }>(workspaceId, {
-        action: "saveText",
-        checkpointId: file.checkpointId,
-        path: file.path,
-        expectedHash: file.hash,
-        content: draft,
-      });
-    } catch (e) {
-      // A conflict is a newer file, or a save refused while a response runs.
-      if ((e as { code?: unknown } | null)?.code !== "storage_conflict")
-        throw e;
-      const current = await studioClient.editor(
-        workspaceId,
-        file.path,
-        file.checkpointId,
-      );
-      if (current.hash === file.hash) throw e;
-      setFileState("changed");
-      return false;
-    }
-    setFile({ ...file, content: draft, hash: response.hash });
-    setFileState("current");
-    forgetDraft();
-    setNotice("Saved. Rebuild the manuscript to check the updated files.");
-    await onRefresh();
-    return true;
-  };
-  const save = () => run(saveCurrent);
-  /** Follow a click in the PDF back to its source line. */
-  const fromPdf = (point: { page: number; x: number; y: number }) =>
-    run(async () => {
-      if (!receipt) return;
-      const mapped = await studioClient.sync(
-        workspaceId,
-        receipt.executionId,
-        point,
-      );
-      setSyncCandidates(mapped.candidates);
-      const first = mapped.candidates.find((c) => c.sourcePath && c.line);
-      if (first) await navigateSource(prefix + first.sourcePath!, first.line!);
-    });
   const openBuild = () =>
     run(async () => {
+      if (recoveredDraft !== null)
+        throw new Error(
+          "Resolve the earlier manuscript draft before preparing a build. Both versions are still available.",
+        );
       sideClosed.current = false;
       setBuildPrepared(false);
       if (configId && (config.checkpointId ?? "") !== checkpoint) {
@@ -781,6 +497,51 @@ export default function Manuscript({
         </Menu>
       </div>
       <ErrorNotice error={error} />
+      {file && (
+        <Citations
+          key={`${workspaceId}/${file.checkpointId ?? "working"}/${file.path}`}
+          workspaceId={workspaceId}
+          paths={(data.inventory?.body.files ?? [])
+            .filter((entry) => entry.path.endsWith(".bib"))
+            .map((entry) => entry.path)}
+          sourcePath={file.path}
+          sourceText={draft}
+          checkpointId={file.checkpointId}
+          disabled={busy}
+          onInsert={(text) => editor.current?.insertText(text)}
+        />
+      )}
+      {file && sourcePassage?.quote && onAskSource && (
+        <button
+          type="button"
+          className="file-action self-start"
+          onClick={() =>
+            onAskSource({
+              ...sourcePassage,
+              path: file.path,
+              hash: file.hash,
+              draft: dirty,
+              checkpointId: file.checkpointId,
+            })
+          }
+        >
+          Ask about selected source
+        </button>
+      )}
+      {recoveredDraft !== null && (
+        <RecoveredManuscriptDraft
+          text={recoveredDraft}
+          onUse={() => {
+            editDraft(recoveredDraft);
+            forgetDraft();
+            setRecoveredDraft(null);
+          }}
+          onKeep={() => {
+            forgetDraft();
+            setRecoveredDraft(null);
+          }}
+        />
+      )}
       <div className="manuscript-body" data-side={Boolean(side)}>
         <div className="manuscript-source">
           {file ? (
@@ -792,7 +553,10 @@ export default function Manuscript({
                   readOnly={busy}
                   path={`${workspaceId}/${file.checkpointId ?? "working"}/${file.path}`}
                   value={draft}
-                  onChange={setDraft}
+                  onChange={editDraft}
+                  onSelection={({ text, ...position }) =>
+                    setSourcePassage({ ...position, quote: text })
+                  }
                   reveal={sourceRequest}
                   onSave={() => saveButton.current?.click()}
                   completionTexts={completionTexts}

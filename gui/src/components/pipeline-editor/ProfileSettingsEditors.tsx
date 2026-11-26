@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 import { memo, useId, useState } from "react";
 import {
   workflowProfileClient,
@@ -42,7 +44,7 @@ function CalibrateSection({
         Calibrate from feedback
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 leading-relaxed">
-        Draft an instruction from the issues you've rejected (in the Issues
+        Draft an instruction from the findings you've rejected (in the Findings
         view) so this review stops flagging them, and append it to the synthesis
         step.
       </p>
@@ -52,11 +54,9 @@ function CalibrateSection({
         disabled={loading}
         className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
       >
-        {loading ? "Drafting…" : "Draft from my rejected issues"}
+        {loading ? "Drafting…" : "Draft from my rejected findings"}
       </button>
-      {error && (
-        <p className="text-xs text-red-600 dark:text-red-400 mt-1.5">{error}</p>
-      )}
+      {error && <p className="text-xs text-danger mt-1.5">{error}</p>}
 
       {draft && (
         <div
@@ -119,7 +119,7 @@ function CalibrateSection({
                   setDraft(null);
                 }}
                 disabled={!text.trim()}
-                className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
+                className="ui-button ui-button--primary"
               >
                 Append &amp; keep
               </button>
@@ -275,14 +275,13 @@ function ExtraInputsEditor({
               <option value="confidential">confidential</option>
               <option value="secret">secret</option>
             </select>
-            <button
+            <IconButton
               type="button"
               onClick={() => remove(i)}
-              aria-label={`Remove extra input ${s.label || s.key || i + 1}`}
-              className="text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 px-1"
+              label={`Remove extra input ${s.label || s.key || i + 1}`}
             >
-              ✕
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
         ))}
       </div>
@@ -391,14 +390,13 @@ function VariablesEditor({
               />
               secret
             </label>
-            <button
+            <IconButton
               type="button"
               onClick={() => remove(i)}
-              aria-label={`Remove variable ${v.label || v.key || i + 1}`}
-              className="text-xs text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 px-1"
+              label={`Remove variable ${v.label || v.key || i + 1}`}
             >
-              ✕
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
             {v.kind === "choice" && (
               <CommaListInput
                 aria-label={`Variable ${v.label || v.key || i + 1} choices`}

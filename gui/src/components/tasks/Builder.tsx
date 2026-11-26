@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 import { AllowanceField } from "./Budget";
 import { workflowProfileClient } from "../../lib/workflowProfileClient";
 /** Compact setup separates instructions and timing from the complete step editor. */
@@ -241,13 +243,13 @@ export default function Builder({
               Change type
             </button>
           )}
-          <button
+          <IconButton
             type="button"
             onClick={onClose}
-            aria-label="Close new automation"
+            label="Close new automation"
           >
-            ×
-          </button>
+            <Icon name="close" className="h-4 w-4" />
+          </IconButton>
         </div>
       </div>
       <div className="task-template-picker" aria-label="Automation template">
@@ -336,7 +338,7 @@ export default function Builder({
                     <>
                       <div className="task-form-row">
                         <label>
-                          Review workflow
+                          Review design
                           <select
                             value={profile}
                             onChange={(e) => setProfile(e.target.value)}

@@ -8,7 +8,7 @@ use super::omissions::{
     archived_references, make_references_portable, missing_files, missing_files_error, FILE_COLUMNS,
 };
 use super::transcripts::stage_transcripts;
-use super::{conversation_files, hash_reader, now, validate_absolute_file};
+use super::{conversation_files, hash_reader, now, project_copies, validate_absolute_file};
 use crate::workbench::research::without_page_images;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult, CURRENT_SCHEMA_VERSION};
 use rusqlite::{backup::Backup, params, Connection};
@@ -332,10 +332,20 @@ pub fn export_archive_without(
         .map_err(|error| {
             WorkbenchError::storage("Failed to discard saved chat approvals from archive", error)
         })?;
+    let project_copies = project_copies::stage(store, &snapshot, temporary.path())?;
+    let copy_entries = project_copies
+        .iter()
+        .map(|copy| copy.files.len())
+        .sum::<usize>();
+    let copy_bytes = project_copies
+        .iter()
+        .flat_map(|copy| &copy.files)
+        .map(|file| file.size_bytes)
+        .sum::<u64>();
     let portable_snapshot_path = temporary.path().join("portable-research.sqlite3");
     snapshot_database(&snapshot, &portable_snapshot_path)?;
-    let note="Conversations from this backup may not continue on another computer or account. If one can't, start a new conversation from your notes and evidence.".to_string();
-    let reserved = 2 + session_count * 2 + blobs.len();
+    let note="Conversations from this backup may not continue on another computer or account. If one can't, start a new conversation from your notes and evidence. Private Git edit worktrees restore as ordinary edit copies; external repository history is not included.".to_string();
+    let reserved = 2 + session_count * 2 + blobs.len() + copy_entries;
     let blob_bytes = blobs.iter().map(|blob| blob.size_bytes).sum::<u64>();
     let database_bytes = fs::metadata(&portable_snapshot_path)
         .map_err(|error| WorkbenchError::storage("Failed to inspect archive database", error))?
@@ -355,6 +365,7 @@ pub fn export_archive_without(
         workspace_roots,
         blobs,
         conversation_files: Vec::new(),
+        project_copies,
         omitted_references,
         portability_note: note.clone(),
     };
@@ -369,13 +380,20 @@ pub fn export_archive_without(
         temporary.path(),
         conversation_files::Budget {
             entries: MAX_ARCHIVE_ENTRIES.saturating_sub(reserved),
-            bytes: conversation_byte_budget(blob_bytes, database_bytes, transcript_bytes),
+            bytes: conversation_byte_budget(
+                blob_bytes.saturating_add(copy_bytes),
+                database_bytes,
+                transcript_bytes,
+            ),
             manifest_bytes: MAX_MANIFEST_BYTES.saturating_sub(manifest_base),
         },
     )?;
     let omitted = staged.omitted;
     manifest.conversation_files = staged.files;
-    if 2 + session_count * 2 + manifest.blobs.len() + manifest.conversation_files.len()
+    if 2 + session_count * 2
+        + manifest.blobs.len()
+        + manifest.conversation_files.len()
+        + copy_entries
         > MAX_ARCHIVE_ENTRIES
     {
         return Err(WorkbenchError::invalid(
@@ -392,6 +410,11 @@ pub fn export_archive_without(
     }
     for file in manifest.blobs.iter().chain(&manifest.conversation_files) {
         names.insert(&file.archive_path)?;
+    }
+    for copy in &manifest.project_copies {
+        for file in &copy.files {
+            names.insert(&copy.archive_path(file))?;
+        }
     }
     let parent = target
         .parent()
@@ -448,6 +471,7 @@ pub fn export_archive_without(
             .map(|f| f.size_bytes)
             .sum::<u64>(),
     );
+    expanded_bytes = expanded_bytes.saturating_add(copy_bytes);
     if expanded_bytes > MAX_ARCHIVE_BYTES {
         return Err(WorkbenchError::invalid("Expanded archive exceeds 2 GiB"));
     }
@@ -486,6 +510,19 @@ pub fn export_archive_without(
             &mut zip,
         )
         .map_err(|e| WorkbenchError::storage("Write conversation file", e))?;
+    }
+    for copy in &manifest.project_copies {
+        for file in &copy.files {
+            let name = copy.archive_path(file);
+            zip.start_file(&name, options)
+                .map_err(|e| WorkbenchError::storage("Add private project copy file", e))?;
+            std::io::copy(
+                &mut File::open(temporary.path().join(name))
+                    .map_err(|e| WorkbenchError::storage("Open staged private copy file", e))?,
+                &mut zip,
+            )
+            .map_err(|e| WorkbenchError::storage("Write private project copy file", e))?;
+        }
     }
     let file = zip
         .finish()

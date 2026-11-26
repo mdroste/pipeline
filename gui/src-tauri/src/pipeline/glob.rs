@@ -97,7 +97,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
     let started = Instant::now();
     let mut limited_by = None;
     'walk: while let Some(dir) = stack.pop() {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             limited_by = Some("cancelled");
             break;
         }
@@ -115,7 +115,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
                 break 'walk;
             }
             if visited.is_multiple_of(256) {
-                if crate::commands::is_cancelled() {
+                if crate::cancellation::is_cancelled() {
                     limited_by = Some("cancelled");
                     break 'walk;
                 }

@@ -46,8 +46,8 @@ export default function ProviderLimitBanner({
       data-tauri-drag-region={isMac ? "deep" : undefined}
       className={`flex shrink-0 items-center gap-3 border-b px-5 py-2.5 text-xs ${
         blocking
-          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/45 dark:text-red-300"
-          : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+          ? "border-danger bg-danger-soft text-danger"
+          : "border-warning bg-warning-soft text-warning"
       }`}
     >
       <span className="min-w-0 flex-1">

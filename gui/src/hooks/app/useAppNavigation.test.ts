@@ -60,6 +60,24 @@ it("opens a saved run on its cited source from the first render", async () => {
   expect(result.current.historySourceSelection).toBeNull();
 });
 
+it("carries project origin into a saved review", async () => {
+  const { result } = renderNavigation();
+  await act(() =>
+    router.navigate({
+      page: "workspace",
+      projectId: "trade",
+      surface: "project",
+      destination: "reviews",
+    }),
+  );
+  await act(() => result.current.openHistoryRun("run-a", null));
+  expect(router.route).toEqual({
+    page: "history",
+    runId: "run-a",
+    projectId: "trade",
+  });
+});
+
 it("restores the earlier source when leaving the current page is declined", async () => {
   const { result } = renderNavigation();
   await act(() => router.navigate({ page: "tasks" }));
@@ -156,7 +174,15 @@ it("leaves a project's saved tab alone when opening its conversation", async () 
   );
   expect(loadDeskLayout("project").tab).toBe("reviews");
 
-  // A route that names no conversation still opens where it says.
+  // Ordinary reopening preserves the working view; an explicit overview wins.
   await act(() => router.navigate({ page: "workspace", projectId: "project" }));
+  expect(loadDeskLayout("project").tab).toBe("reviews");
+  await act(() =>
+    router.navigate({
+      page: "workspace",
+      projectId: "project",
+      destination: "overview",
+    }),
+  );
   expect(loadDeskLayout("project").tab).toBe("overview");
 });

@@ -85,7 +85,7 @@ fn fail_capture_late(f: &Fixture, backend: &str) -> Vec<String> {
     )
     .unwrap_err();
     assert!(!error.message.is_empty());
-    fs::read_dir(f.root.join(SCRATCH))
+    fs::read_dir(f.store.root_path().join("project-copies").join(&f.ws))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|name| name != ".gitignore")

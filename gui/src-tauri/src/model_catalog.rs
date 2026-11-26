@@ -54,6 +54,10 @@ pub struct ModelCatalogEntry {
     pub description: String,
     #[serde(default)]
     pub is_default: bool,
+    /// Provider-reported thinking default for this model; never inferred from
+    /// the order of supported levels or Pipeline's recommendation policy.
+    #[serde(default)]
+    pub default_effort: Option<String>,
     #[serde(default)]
     pub supported_efforts: Vec<String>,
     #[serde(default)]

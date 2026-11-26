@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { appClient } from "../lib/appClient";
-import { onFileDrop } from "../lib/fileDrop";
+import { useReviewSetupEnvironment } from "./reviewSetupEnvironment";
 import type {
   InputInterpretation,
   PrimaryInputSelection,
 } from "../lib/workflowTypes";
 import ReportIssueLink from "./ReportIssueLink";
 import { Icon } from "../ui/icons";
+import { Menu, MenuItem } from "../ui/Menu";
 
 const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx", "pptx"];
 
@@ -18,13 +17,6 @@ const isDocumentPath = (path: string) => {
     dot > 0 && DOCUMENT_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase())
   );
 };
-
-// Listing a folder's documents fails for anything that is not a folder.
-const isFolder = (path: string) =>
-  appClient.inputFiles(path).then(
-    () => true,
-    () => false,
-  );
 
 interface Props {
   /** The selection the caller holds. When given, the selector is controlled
@@ -43,6 +35,13 @@ export default function PaperSelector({
   disabled,
   inputMode = "document",
 }: Props) {
+  const environment = useReviewSetupEnvironment();
+  const openDialog = environment.chooseFiles;
+  const isFolder = (path: string) =>
+    environment.inputFiles(path).then(
+      () => true,
+      () => false,
+    );
   const [ownSelection, setOwnSelection] =
     useState<PrimaryInputSelection | null>(null);
   const controlled = heldSelection !== undefined;
@@ -52,6 +51,8 @@ export default function PaperSelector({
   };
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  const [inputOptionsOpen, setInputOptionsOpen] = useState(false);
+  const optionsRef = useRef<HTMLButtonElement>(null);
   const applySelection = (next: PrimaryInputSelection) => {
     setSelection(next);
     onPathChange(next.paths[0] ?? null);
@@ -164,20 +165,24 @@ export default function PaperSelector({
   useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
-    void onFileDrop((event) => {
-      if (disposed || event.type !== "drop" || event.paths.length === 0) return;
-      const root = rootRef.current;
-      const hit = document.elementFromPoint?.(event.x, event.y);
-      if (root && hit && root.contains(hit)) void dropRef.current(event.paths);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unsubscribe = stop;
-    });
+    void environment
+      .onFileDrop((event) => {
+        if (disposed || event.type !== "drop" || event.paths.length === 0)
+          return;
+        const root = rootRef.current;
+        const hit = document.elementFromPoint?.(event.x, event.y);
+        if (root && hit && root.contains(hit))
+          void dropRef.current(event.paths);
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unsubscribe = stop;
+      });
     return () => {
       disposed = true;
       unsubscribe?.();
     };
-  }, []);
+  }, [environment]);
 
   return (
     <div ref={rootRef} className="review-input-picker">
@@ -187,7 +192,7 @@ export default function PaperSelector({
             type="button"
             onClick={handleFile}
             disabled={disabled || picking}
-            className="review-file-button flex min-w-0 flex-1 items-center gap-3 rounded-ui-md border border-line px-3 py-3 text-left text-ui-body text-ink transition-colors hover:bg-sunken disabled:opacity-50"
+            className="review-file-button flex min-w-0 flex-1 items-center gap-2 rounded-ui-sm border border-line px-2.5 py-2 text-left text-ui-label text-ink transition-colors hover:bg-sunken disabled:opacity-50"
           >
             <span className="review-file-icon">
               <Icon name="file" className="h-5 w-5" />
@@ -208,20 +213,7 @@ export default function PaperSelector({
           className={`ui-button shrink-0 ${inputMode === "folder" ? "flex-1 justify-start" : ""}`}
           title="Select folder"
         >
-          <svg
-            aria-hidden="true"
-            className="inline w-4 h-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.5}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
-            />
-          </svg>
+          <Icon name="folder-open" className="inline w-4 h-4" />
           {inputMode === "folder" && (
             <span className="ml-2">
               {selectedPath
@@ -237,15 +229,21 @@ export default function PaperSelector({
           : "Or drop files here · PDF, Word, PowerPoint, or LaTeX"}
       </p>
       {selectedPath && (
-        <div className="mt-2 space-y-1.5">
-          <div className="flex min-w-0 items-center gap-3 text-ui-meta">
+        <div className="review-selection-details mt-2 space-y-1.5">
+          <div
+            className={`review-selected-path flex min-w-0 items-center gap-3 text-ui-meta ${selection?.selectionKind === "file" && selection.paths.length === 1 ? "review-selected-path--single" : ""}`}
+          >
             <p
               className="min-w-0 flex-1 truncate text-ink-muted"
-              title={selectedPath}
+              title={selection?.paths.join(", ") ?? selectedPath}
             >
+              {selection?.selectionKind === "file" &&
+                selection.paths.length === 1 &&
+                selection.interpretation === "batch" &&
+                "One-item batch · "}
               {selection?.paths.length === 1
                 ? selectedPath
-                : selection?.paths.join(", ")}
+                : `Batch · ${selection?.paths.length} independent reviews`}
             </p>
             <div className="flex gap-2 text-xs">
               <button
@@ -254,7 +252,7 @@ export default function PaperSelector({
                   selection?.selectionKind === "folder" ? handleDir : handleFile
                 }
                 disabled={disabled || picking}
-                className="text-gray-600 underline underline-offset-2 dark:text-gray-300"
+                className="ui-button ui-button--quiet ui-button--sm"
               >
                 Replace
               </button>
@@ -262,59 +260,89 @@ export default function PaperSelector({
                 type="button"
                 onClick={clearSelection}
                 disabled={disabled}
-                className="text-red-600 underline underline-offset-2 dark:text-red-400"
+                className="ui-button ui-button--quiet ui-button--sm"
               >
-                Clear
+                Clear selection
               </button>
             </div>
           </div>
-          <label className="flex items-center gap-3 text-ui-meta text-ink-muted">
-            <span className="shrink-0">Use as</span>
-            <select
-              aria-label="Input interpretation"
-              value={selection?.interpretation}
-              onChange={(event) =>
-                setInterpretation(event.target.value as InputInterpretation)
-              }
-              className="min-w-0 flex-1"
+          {!(
+            selection?.selectionKind === "file" && selection.paths.length > 1
+          ) && (
+            <div
+              className={`review-input-options ${selection?.selectionKind === "file" ? "review-input-options--single" : ""}`}
             >
-              {selection?.selectionKind === "folder" ? (
-                <>
-                  <option value="latex_project">One LaTeX document</option>
-                  <option value="source_tree">Browsable source folder</option>
-                  <option value="batch">Batch of documents</option>
-                </>
-              ) : selection && selection.paths.length > 1 ? (
-                <option value="batch">Independent batch jobs</option>
-              ) : (
-                <>
-                  <option value="document">One document</option>
-                  <option value="batch">One-item batch</option>
-                </>
-              )}
-            </select>
-          </label>
-          <p
-            hidden={selection?.interpretation === "document"}
-            className="text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400"
-          >
-            {selection?.interpretation === "latex_project"
-              ? "Pipeline finds the main TeX file and reads the local files it includes."
-              : selection?.interpretation === "source_tree"
-                ? "The review can browse and read files in this folder as needed."
-                : selection?.interpretation === "batch"
-                  ? selection.selectionKind === "folder"
-                    ? "Each supported document directly inside this folder becomes an independent report."
-                    : "Each selected document becomes an independent report."
-                  : "Pipeline extracts this as one document."}
-          </p>
+              <button
+                type="button"
+                ref={optionsRef}
+                disabled={disabled || picking}
+                aria-label="Input options"
+                aria-haspopup="menu"
+                aria-expanded={inputOptionsOpen}
+                onClick={() => setInputOptionsOpen(!inputOptionsOpen)}
+              >
+                {selection?.selectionKind === "folder" ? (
+                  selection.interpretation === "latex_project" ? (
+                    "LaTeX project"
+                  ) : selection.interpretation === "source_tree" ? (
+                    "Source folder"
+                  ) : (
+                    "Batch of documents"
+                  )
+                ) : (
+                  <Icon name="more" className="h-4 w-4" />
+                )}
+                {selection?.selectionKind === "folder" && (
+                  <Icon name="chevron-down" className="h-3 w-3" />
+                )}
+              </button>
+              <Menu
+                open={inputOptionsOpen && !disabled && !picking}
+                onClose={() => setInputOptionsOpen(false)}
+                anchorRef={optionsRef}
+                label="Input options"
+              >
+                {(selection?.selectionKind === "folder"
+                  ? [
+                      [
+                        "latex_project",
+                        "One LaTeX document",
+                        "Finds the main TeX file and reads its local includes.",
+                      ],
+                      [
+                        "source_tree",
+                        "Browsable source folder",
+                        "Reviewers can browse and read files in this folder.",
+                      ],
+                      [
+                        "batch",
+                        "Batch of documents",
+                        "Each supported document directly inside the folder gets its own report.",
+                      ],
+                    ]
+                  : [
+                      ["document", "One document"],
+                      ["batch", "One-item batch"],
+                    ]
+                ).map(([mode, label, description]) => (
+                  <MenuItem
+                    key={mode}
+                    description={description}
+                    checked={selection?.interpretation === mode}
+                    onSelect={() =>
+                      setInterpretation(mode as InputInterpretation)
+                    }
+                  >
+                    {label}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </div>
+          )}
         </div>
       )}
       {pickerError && (
-        <p
-          role="alert"
-          className="mt-1.5 text-xs text-red-700 dark:text-red-400"
-        >
+        <p role="alert" className="mt-1.5 text-xs text-danger">
           {pickerError}
           <ReportIssueLink />
         </p>

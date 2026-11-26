@@ -8,7 +8,7 @@ import type {
   RunModelOverrides,
 } from "../lib/reviewModelTypes";
 import type { PipelineConfig, StepConfig } from "../lib/workflowTypes";
-import type { Settings } from "../lib/settingsTypes";
+import type { DepsReport, Settings } from "../lib/settingsTypes";
 import RunModelChoice from "./RunModelChoice";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -123,7 +123,11 @@ function roster(overrides: RunModelOverrides | null): RosterEntry[] {
 
 const calls: Array<RunModelOverrides | null> = [];
 
-function mockWorkflow(config: Partial<PipelineConfig>) {
+function mockWorkflow(
+  config: Partial<PipelineConfig>,
+  resolveRoster = roster,
+  savedSettings = settings,
+) {
   calls.length = 0;
   invoke.mockImplementation(
     (
@@ -131,7 +135,7 @@ function mockWorkflow(config: Partial<PipelineConfig>) {
       args?: { provider?: string; runParallelOverrides?: RunModelOverrides },
     ) => {
       if (command === "get_settings")
-        return Promise.resolve({ settings, warnings: [] });
+        return Promise.resolve({ settings: savedSettings, warnings: [] });
       if (command === "get_pipeline_config")
         return Promise.resolve({
           merge: { enabled: true, prompt: "", agents: [] },
@@ -141,122 +145,337 @@ function mockWorkflow(config: Partial<PipelineConfig>) {
         return Promise.resolve(catalog(args?.provider ?? "claude"));
       if (command === "get_model_roster") {
         calls.push(args?.runParallelOverrides ?? null);
-        return Promise.resolve(roster(args?.runParallelOverrides ?? null));
+        return Promise.resolve(
+          resolveRoster(args?.runParallelOverrides ?? null),
+        );
       }
       return Promise.reject(new Error(`Unexpected command ${command}`));
     },
   );
 }
 
-function Harness() {
-  const [value, setValue] = useState<RunModelOverrides | null>(null);
-  return <RunModelChoice value={value} onChange={setValue} />;
+function Harness({
+  initial = null,
+  disabled = false,
+  dependencies,
+  localLlmActive,
+  onConnectModel,
+}: {
+  initial?: RunModelOverrides | null;
+  disabled?: boolean;
+  dependencies?: DepsReport | null;
+  localLlmActive?: boolean;
+  onConnectModel?: () => void;
+} = {}) {
+  const [value, setValue] = useState<RunModelOverrides | null>(initial);
+  return (
+    <RunModelChoice
+      value={value}
+      onChange={setValue}
+      disabled={disabled}
+      dependencies={dependencies}
+      localLlmActive={localLlmActive}
+      onConnectModel={onConnectModel}
+    />
+  );
 }
 
-describe("RunModelChoice", () => {
-  it("names the default model the review starts from", async () => {
+describe("Review models", () => {
+  it("starts with one model for every stage and keeps backup details in Advanced", async () => {
     mockWorkflow({ steps: [step("review")] });
     render(<Harness />);
     expect(
-      await screen.findByText("GPT-5.6 Sol (ChatGPT's choice)"),
-    ).toBeVisible();
-    expect(screen.getByText(/Your default model/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Change" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
+      await screen.findByLabelText("Review models 1 provider"),
+    ).toHaveValue("codex");
+    await waitFor(() =>
+      expect(calls.at(-1)).toMatchObject({
+        review: { provider: "codex", model: "", effort: "" },
+        agents: [],
+        clear_settings_exceptions: true,
+        override_workflow_pins: true,
+      }),
     );
-    expect(await screen.findByText(/ChatGPT · GPT-5.6 Sol/)).toBeVisible();
+    expect(
+      screen.queryByRole("tab", { name: "Parallel" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Model settings" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("One model for the whole review."),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Usage-limit backup")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your default model")).not.toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("tab", { name: "Advanced" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Next models" }));
+    expect(screen.getByRole("list")).toHaveTextContent("Usage-limit backup");
   });
 
-  it("covers the whole review and lists what does not follow it", async () => {
+  it("adds opinions without changing primary and keeps primary edits out of parallel overrides", async () => {
     const user = userEvent.setup();
     mockWorkflow({ steps: [step("review")] });
     render(<Harness />);
-    await user.click(await screen.findByRole("button", { name: "Change" }));
-
-    const providers = screen.getByRole("group", {
-      name: "Review model providers",
-    });
-    await user.click(within(providers).getByRole("button", { name: "Claude" }));
-    const model = screen.getByLabelText("Review model Claude model");
-    await waitFor(() =>
-      expect(
-        within(model).getByRole("option", { name: "Opus 5.5" }),
-      ).toBeInTheDocument(),
-    );
-    await user.selectOptions(model, "pinned:claude-opus-5-5");
+    await user.click(await screen.findByRole("button", { name: /Add model/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Claude" }));
     await user.selectOptions(
-      screen.getByLabelText("Review model Claude thinking"),
+      screen.getByLabelText("Review models Claude model"),
+      "pinned:claude-opus-5-5",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Review models ChatGPT model"),
+      "pinned:gpt-5.6-sol",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Review models ChatGPT thinking"),
       "max",
     );
-
-    await waitFor(() =>
-      expect(calls.at(-1)?.review).toEqual({
-        provider: "claude",
-        model: "claude-opus-5-5",
-        effort: "max",
-      }),
-    );
-    // Orientation still follows a Settings exception, and says so.
-    const note = await screen.findByRole("note", {
-      name: "Calls on other models",
+    expect(calls.at(-1)).toMatchObject({
+      review: { provider: "codex", model: "gpt-5.6-sol", effort: "max" },
+      agents: ["codex", "claude"],
+      model_overrides: {
+        "claude:cli": { mode: "pinned", model: "claude-opus-5-5" },
+      },
     });
-    expect(note).toHaveTextContent(
-      "Document bundle preparation → ChatGPT · GPT-5.6 Sol (ChatGPT's choice) · ChatGPT default thinking (Settings exception)",
-    );
-
-    await user.click(
-      within(note).getByRole("button", {
-        name: "Use the review model for everything",
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("note", { name: "Calls on other models" }),
-      ).not.toBeInTheDocument(),
+    expect(calls.at(-1)?.model_overrides).not.toHaveProperty("codex:cli");
+    expect(calls.at(-1)?.merge_agent).toBeUndefined();
+    await user.selectOptions(
+      screen.getByLabelText("Review models 1 provider"),
+      "antigravity",
     );
     expect(calls.at(-1)).toMatchObject({
+      review: { provider: "antigravity", model: "", effort: "" },
+      agents: ["antigravity", "claude"],
+    });
+    expect(calls.at(-1)?.merge_agent).toBeUndefined();
+    expect(screen.getByLabelText("Review models 1 provider")).toHaveFocus();
+  });
+
+  it("protects the primary, limits the team to three and restores focus after removal", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({ steps: [step("review")] });
+    render(<Harness />);
+    await screen.findByLabelText("Review models 1 provider");
+    expect(
+      screen.queryByRole("button", { name: "Remove model 1" }),
+    ).not.toBeInTheDocument();
+    for (const provider of ["Claude", "Gemini"]) {
+      await user.click(screen.getByRole("button", { name: /Add model/ }));
+      await user.click(screen.getByRole("menuitem", { name: provider }));
+    }
+    expect(screen.getByRole("button", { name: /Add model/ })).toBeDisabled();
+    expect(screen.getByLabelText("Review models 3 provider")).toHaveFocus();
+    expect(
+      within(screen.getByLabelText("Review models 2 provider")).getByRole(
+        "option",
+        { name: "ChatGPT" },
+      ),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Remove model 2" }));
+    expect(calls.at(-1)?.agents).toEqual(["codex", "antigravity"]);
+    expect(screen.getByRole("button", { name: /Add model/ })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Remove model 2" }));
+    expect(calls.at(-1)).toMatchObject({
+      agents: [],
+      model_overrides: {},
+      effort_overrides: {},
+    });
+    expect(screen.getByLabelText("Review models 1 provider")).toHaveValue(
+      "codex",
+    );
+  });
+
+  it("discards a saved combining override and keeps primary edits authoritative", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({ steps: [step("review")] });
+    render(
+      <Harness
+        initial={{
+          review: { provider: "codex", model: "", effort: "" },
+          agents: ["codex", "claude"],
+          model_overrides: {
+            "claude:cli": { mode: "pinned", model: "claude-opus-5-5" },
+          },
+          effort_overrides: { "claude:cli": "high" },
+          clear_settings_exceptions: true,
+          override_workflow_pins: true,
+          extraction_method: "pdftotext",
+          merge_agent: "antigravity",
+          merge_model_overrides: {
+            "antigravity:cli": { mode: "pinned", model: "old-combiner" },
+          },
+          merge_effort_overrides: { "antigravity:cli": "high" },
+        }}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "Primary leads the review and combines feedback.",
+      ),
+    ).toBeVisible();
+    await user.click(await screen.findByRole("tab", { name: "Advanced" }));
+    expect(
+      screen.queryByRole("checkbox", { name: "Customize combining model" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Combine results 1 provider"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Models" }));
+    await user.selectOptions(
+      screen.getByLabelText("Review models 1 provider"),
+      "antigravity",
+    );
+    expect(calls.at(-1)).toMatchObject({
+      review: { provider: "antigravity", model: "", effort: "" },
+      agents: ["antigravity", "claude"],
+      model_overrides: {
+        "claude:cli": { mode: "pinned", model: "claude-opus-5-5" },
+      },
+      effort_overrides: { "claude:cli": "high" },
+      extraction_method: "pdftotext",
       clear_settings_exceptions: true,
       override_workflow_pins: true,
     });
-    await user.click(screen.getByText("Advanced options"));
-    const list = screen.getByRole("list", {
-      name: "Every model this review calls",
-    });
-    expect(list).toHaveTextContent("Claude · Opus 5.5 · Max");
-    expect(screen.getByRole("button", { name: "Reset" })).toBeVisible();
+    for (const call of calls) {
+      expect(call).not.toHaveProperty("merge_agent");
+      expect(call).not.toHaveProperty("merge_model_overrides");
+      expect(call).not.toHaveProperty("merge_effort_overrides");
+    }
   });
 
-  it("offers second-opinion models for parallel steps", async () => {
-    const user = userEvent.setup();
+  it("initializes Primary when an older draft only has combining choices", async () => {
     mockWorkflow({ steps: [step("review")] });
-    render(<Harness />);
-    await user.click(await screen.findByRole("button", { name: "Change" }));
-    await user.click(screen.getByText("Advanced options"));
-    await user.click(
-      screen.getByRole("checkbox", {
-        name: /Choose the models for parallel steps/,
-      }),
-    );
-    const parallel = screen.getByRole("group", {
-      name: "Parallel steps providers",
-    });
-    await user.click(within(parallel).getByRole("button", { name: "Claude" }));
-    await waitFor(() =>
-      expect(calls.at(-1)?.agents).toEqual(["codex", "claude"]),
+    render(
+      <Harness
+        initial={{
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+          merge_agent: "claude",
+          merge_model_overrides: {
+            "claude:cli": { mode: "pinned", model: "old-combiner" },
+          },
+          merge_effort_overrides: { "claude:cli": "high" },
+        }}
+      />,
     );
     expect(
-      screen.getByLabelText("Combine results ChatGPT model"),
+      await screen.findByLabelText("Review models 1 provider"),
+    ).toHaveValue("codex");
+    await waitFor(() =>
+      expect(calls.at(-1)).toEqual({
+        review: { provider: "codex", model: "", effort: "" },
+        agents: [],
+        model_overrides: {},
+        effort_overrides: {},
+        clear_settings_exceptions: true,
+        override_workflow_pins: true,
+      }),
+    );
+  });
+
+  it("makes saved exceptions opt-in and resets the team without losing PDF options", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({ steps: [step("review")] });
+    render(
+      <Harness
+        initial={{
+          agents: [],
+          model_overrides: {},
+          effort_overrides: {},
+          extraction_method: "pdftotext",
+        }}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: "Advanced" }));
+    await user.click(
+      screen.getByRole("checkbox", {
+        name: "Use saved Settings model choices",
+      }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Use design-pinned models" }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      clear_settings_exceptions: false,
+      override_workflow_pins: false,
+    });
+    await user.click(screen.getByRole("tab", { name: "Models" }));
+    expect(
+      screen.getByRole("button", {
+        name: "Custom model assignments · Advanced",
+      }),
     ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    expect(calls.at(-1)).toMatchObject({
+      extraction_method: "pdftotext",
+      review: { provider: "codex" },
+      agents: [],
+      clear_settings_exceptions: true,
+      override_workflow_pins: true,
+    });
+  });
+
+  it("retains older separate parallel choices in Advanced until explicitly reset", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({ steps: [step("review")] });
+    const initial: RunModelOverrides = {
+      review: { provider: "codex", model: "", effort: "" },
+      agents: ["claude"],
+      model_overrides: {
+        "claude:cli": { mode: "pinned", model: "older-saved-model" },
+      },
+      effort_overrides: {},
+    };
+    render(<Harness initial={initial} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Custom model assignments · Advanced",
+      }),
+    );
+    expect(
+      screen.getByLabelText("Custom review models Claude model"),
+    ).toHaveValue("pinned:older-saved-model");
+    expect(
+      calls.every((value) => JSON.stringify(value) === JSON.stringify(initial)),
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Use primary model" }));
+    expect(calls.at(-1)?.agents).toEqual([]);
+  });
+
+  it("supports keyboard navigation and disables edits during preparation", async () => {
+    mockWorkflow({ steps: [step("review")] });
+    render(<Harness disabled />);
+    const tab = await screen.findByRole("tab", { name: "Models" });
+    expect(screen.getByLabelText("Review models 1 provider")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Add model/ })).toBeDisabled();
+    tab.focus();
+    await userEvent.setup().keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Advanced" })).toHaveFocus();
+    expect(
+      screen.getByRole("checkbox", { name: "Use design-pinned models" }),
+    ).toBeDisabled();
+  });
+
+  it("does not offer extra reviewers when the workflow has no parallel calls", async () => {
+    mockWorkflow({ steps: [step("review", { phase: "sequential" })] });
+    render(<Harness />);
+    await screen.findByLabelText("Review models 1 provider");
+    expect(
+      screen.queryByRole("button", { name: /Add model/ }),
+    ).not.toBeInTheDocument();
   });
 });
 
 it("keeps failed model resolution visible and retries it", async () => {
   mockWorkflow({ steps: [step("review")] });
   const original = invoke.getMockImplementation()!;
-  let attempts = 0;
+  let failing = true;
   invoke.mockImplementation((command, args) =>
-    command === "get_model_roster" && attempts++ === 0
+    command === "get_model_roster" && failing
       ? Promise.reject(new Error("model service unavailable"))
       : original(command, args),
   );
@@ -264,11 +483,107 @@ it("keeps failed model resolution visible and retries it", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "model service unavailable",
   );
+  failing = false;
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Retry model check" }));
   await waitFor(() =>
     expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
   );
-  expect(await screen.findByText(/ChatGPT · GPT-5.6 Sol/)).toBeVisible();
+  expect(screen.getByLabelText("Review models 1 provider")).toHaveValue(
+    "codex",
+  );
 });
+const disconnected: DepsReport = {
+  ready: false,
+  deps: [
+    {
+      name: "Claude CLI",
+      found: true,
+      cli_auth_status: "signed_out",
+      version: "",
+      path: "",
+      required: false,
+      hint: "",
+    },
+    {
+      name: "ChatGPT (reviews)",
+      found: true,
+      authenticated: false,
+      version: "",
+      path: "",
+      required: false,
+      hint: "",
+    },
+  ],
+};
+
+it("replaces disconnected model controls with a concise connection action and recovers when connected", async () => {
+  mockWorkflow({ steps: [step("review")] });
+  const onConnectModel = vi.fn();
+  const { rerender } = render(
+    <Harness dependencies={disconnected} onConnectModel={onConnectModel} />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "No models connected",
+  );
+  expect(
+    screen.queryByLabelText("Review models 1 provider"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("tab", { name: "Parallel" }),
+  ).not.toBeInTheDocument();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Connect a model" }));
+  expect(onConnectModel).toHaveBeenCalledOnce();
+  expect(calls.at(-1)?.clear_settings_exceptions).toBe(true);
+  rerender(
+    <Harness
+      dependencies={{
+        ...disconnected,
+        deps: disconnected.deps.map((dep) =>
+          dep.name === "ChatGPT (reviews)"
+            ? { ...dep, authenticated: true }
+            : dep,
+        ),
+      }}
+      onConnectModel={onConnectModel}
+    />,
+  );
+  expect(screen.queryByText("No models connected")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Review models 1 provider")).toHaveValue(
+    "codex",
+  );
+});
+
+it.each([
+  ["pending readiness", settings, null, false],
+  [
+    "a saved Gemini API key",
+    { ...settings, google_api_key: "test-key" },
+    disconnected,
+    false,
+  ],
+  [
+    "a ready local model",
+    { ...settings, local_model: "test-local" },
+    {
+      ...disconnected,
+      deps: [...disconnected.deps, { name: "Local LLM server", found: true }],
+    } as DepsReport,
+    true,
+  ],
+] as const)(
+  "does not claim no connections with %s",
+  async (_, savedSettings, dependencies, localLlmActive) => {
+    mockWorkflow({ steps: [step("review")] }, roster, savedSettings);
+    render(
+      <Harness dependencies={dependencies} localLlmActive={localLlmActive} />,
+    );
+    expect(
+      await screen.findByLabelText("Review models 1 provider"),
+    ).toBeVisible();
+    expect(screen.queryByText("No models connected")).not.toBeInTheDocument();
+  },
+);

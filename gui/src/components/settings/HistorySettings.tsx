@@ -155,16 +155,13 @@ export function RunRetention({
         within these limits. Enter 0 for no limit.
       </p>
       {purgeError && (
-        <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
+        <p role="alert" className="mt-2 text-sm text-danger">
           {purgeError}
           <ReportIssueLink />
         </p>
       )}
       {purgeResult && (
-        <p
-          role="status"
-          className="mt-2 text-sm text-green-700 dark:text-green-400"
-        >
+        <p role="status" className="mt-2 text-sm text-success">
           {purgeResult}
         </p>
       )}

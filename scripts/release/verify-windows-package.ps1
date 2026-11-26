@@ -35,11 +35,13 @@ if ($LASTEXITCODE -ne 0 -or "$cliVersion".Trim() -cne "pipeline-cli $expectedVer
     throw "Installed CLI version does not match $expectedVersion : $cliVersion"
 }
 Write-Host "Verified installed GUI and CLI version: $expectedVersion"
+node (Join-Path $PSScriptRoot 'verify-cli-launcher.mjs') (Join-Path $InstallDirectory 'pipeline-cli.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Installed command launcher qualification failed' }
 $inventories = @(Get-ChildItem -LiteralPath $InstallDirectory -Filter 'BUNDLE_INVENTORY.json' -Recurse -File)
 if ($inventories.Count -ne 1) { throw 'Expected one installed Poppler inventory' }
 $poppler = $inventories[0].DirectoryName
 foreach ($name in @('pdftotext.exe', 'pdftoppm.exe')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $poppler $name) -PathType Leaf)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $poppler "Library/bin/$name") -PathType Leaf)) {
         throw "Missing installed Poppler tool: $name"
     }
 }
@@ -53,14 +55,7 @@ node --input-type=module -e 'import { pathToFileURL } from "node:url"; const { v
 if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler inventory verification failed' }
 node (Join-Path $PSScriptRoot 'smoke-poppler.mjs') $poppler
 if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler tools failed to read a PDF' }
+node (Join-Path $PSScriptRoot 'qualify-poppler.mjs') $poppler $poppler
+if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler PDF corpus failed' }
 $llama = Join-Path (Split-Path -Parent $poppler) 'llama-vulkan'
-$llamaServer = Join-Path $llama 'llama-server.exe'
-if (-not (Test-Path -LiteralPath $llamaServer -PathType Leaf)) { throw 'Missing installed llama.cpp Vulkan server' }
-Get-ChildItem -LiteralPath $llama -Recurse -File |
-    Where-Object { $_.Extension -in @('.exe', '.dll') } |
-    ForEach-Object {
-        & $verify -FilePath $_.FullName -VerifyOnly
-        if (-not $?) { throw "Installed resource signature verification failed: $($_.FullName)" }
-    }
-& $llamaServer --version
-if ($LASTEXITCODE -ne 0) { throw 'Installed llama.cpp Vulkan server failed to start' }
+if (Test-Path -LiteralPath $llama) { throw 'Optional GPU runtime must not be embedded in the desktop installer' }

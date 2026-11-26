@@ -33,6 +33,9 @@ import {
   unsavedManuscriptPaths,
 } from "../file-workspace/useFileBuffers";
 import ChangesPane from "./ChangesPane";
+import RemoteDestinations from "./RemoteDestinations";
+import GitHubCollaboration from "./GitHubCollaboration";
+import type { ProjectHome } from "../../lib/projectClient";
 import HistoryPane from "./HistoryPane";
 import { ConnectRemote, RepositorySetup } from "./RepositorySetup";
 import {
@@ -334,7 +337,9 @@ export default function VersionControl({
   active,
   onAttachFolder,
   onFilesChanged,
+  data,
 }: {
+  data?: ProjectHome;
   workspaceId: string;
   active: boolean;
   onAttachFolder: () => void;
@@ -439,6 +444,7 @@ export default function VersionControl({
         if (result.notice) notify(result.notice, "info");
         if (
           [
+            "clone",
             "pull",
             "switchBranch",
             "discard",
@@ -491,6 +497,7 @@ export default function VersionControl({
           </p>
         )}
         <RepositorySetup
+          onCancel={() => void versionControlClient.cancel(workspaceId)}
           state={state}
           busy={busy}
           onAct={act}
@@ -554,6 +561,23 @@ export default function VersionControl({
       )}
       {state.operation && (
         <OperationBanner view={state} busy={busy} onAct={act} />
+      )}
+      <RemoteDestinations
+        key={remote?.name ?? "local"}
+        workspaceId={workspaceId}
+        view={state}
+        busy={busy}
+        onAct={act}
+        onAdd={() => setConnecting(true)}
+      />
+      {remote?.provider === "github" && (
+        <GitHubCollaboration
+          key={`${workspaceId}/${remote.owner}/${remote.repo}`}
+          workspaceId={workspaceId}
+          head={status.head}
+          data={data}
+          onRefresh={onFilesChanged}
+        />
       )}
       <div className="vc-tabs">
         <SegmentedControl

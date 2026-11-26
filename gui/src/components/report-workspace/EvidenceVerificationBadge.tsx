@@ -7,25 +7,25 @@ const LABELS: Record<
   verified: {
     label: "Quote found",
     detail: "Pipeline found this text where it is cited.",
-    tone: "border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-300",
+    tone: "border-success text-success",
   },
   verified_with_normalization: {
     label: "Quote found",
     detail:
       "Pipeline found this text where it is cited after ignoring punctuation, case, hyphenation, LaTeX markup, or an ellipsis.",
-    tone: "border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-300",
+    tone: "border-success text-success",
   },
   partially_verified: {
     label: "Partial match",
     detail:
       "The text appears elsewhere in the document, its location does not exist, or only a close paraphrase was found.",
-    tone: "border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300",
+    tone: "border-warning text-warning",
   },
   not_found: {
     label: "Quote not found",
     detail:
       "Pipeline could not find this text in the extracted document. Check the source before relying on this comment.",
-    tone: "border-red-300 text-red-800 dark:border-red-800 dark:text-red-300",
+    tone: "border-danger text-danger",
   },
   not_checkable: {
     label: "Not checkable",

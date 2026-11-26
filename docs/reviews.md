@@ -5,7 +5,7 @@ checks their comments. Pipeline saves the report, each reviewer's response,
 and the source material. Start from **Home → New review**. You don't need a
 project.
 
-Choose your document, workflow, and model on **New review**. Use **Preview**
+Choose your document, review design, and model on **New review**. Use **Preview**
 below the setup choices to check model calls, estimated use, and data sharing
 before starting.
 
@@ -204,7 +204,7 @@ source or another extraction method and run the review again.
 
 ## Add a note from the author
 
-In **New review**, open **Additional instructions** below **Document**.
+In **New review**, use **Additional instructions** below **Review design**.
 Describe what you want reviewers to pay particular attention to, for example:
 “Prioritize critiques of the model, especially its assumptions and potential
 failure cases.” The note is optional and can contain up to 4,000 characters.
@@ -226,18 +226,28 @@ The CLI accepts `--author-note "Prioritize critiques of the model"` with `run`,
 
 ## Choose models for this review
 
-Reviews start with your [default model](settings.md#default-model). Use
-**Models for this review** on the setup screen to choose a provider, model,
-and thinking level for this review. This leaves your saved defaults unchanged.
+**New review → Model settings** starts with your [default model](settings.md#default-model)
+as **Primary model**. It handles the whole review, including orientation, reviewing,
+combining feedback, synthesis, and validation. Choose its provider, model, and
+thinking level here without changing your saved defaults.
 
-Stages assigned another model under **Settings → Models → Review models**,
-and steps pinned in the review designer, keep their choices. Use the control
-to apply the review model everywhere when you want to replace those exceptions
-too. Check the model list in the launch preview before starting.
+Use **Add model** for up to two additional models from different providers.
+Each additional model runs the parallel review steps again; the primary model
+continues to handle preparation and combining, including final synthesis.
+The model count is separate from the specialist-role count selected by the
+review design. Adaptive designs show their specialist range beside the design.
+Designs without parallel model steps do not offer additional models.
+Configure specialized model assignments
+in the review designer.
 
-Different steps can use different providers. See [Models](connections.md)
-for the options. Change the defaults in Settings only when you want future
-reviews to use the new choice.
+Under **Advanced**, you can opt into saved Settings model choices and
+design-pinned models. The full model list, including any usage-limit
+backup, is available there. Existing drafts with
+separate parallel assignments keep those choices under Advanced until you
+reset them. Check the model list in the launch preview before starting.
+
+If no models are connected, **Connect a model** opens Settings. See
+[Models](connections.md) for connection options.
 
 ## Run several reviews
 
@@ -413,8 +423,8 @@ run about one reference per second, within Crossref's public limits.
 
 ## Find past reviews
 
-In **Reviews → History**, search by name, workflow, or tag. Open **Filters**
-to narrow the list by status, provider, workflow, collection, or date. Active
+In **Reviews → History**, search by name, review design, or tag. Open **Filters**
+to narrow the list by status, provider, review design, collection, or date. Active
 filters stay visible when the controls are closed. Choose **Compare** to
 select two reports.
 

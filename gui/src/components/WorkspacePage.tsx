@@ -377,10 +377,7 @@ export default function WorkspacePage({
         stopping={stopping}
         feedback={
           actionError ? (
-            <p
-              role="alert"
-              className="p-3 text-sm text-red-700 dark:text-red-300"
-            >
+            <p role="alert" className="p-3 text-sm text-danger">
               {actionError}
               <ReportIssueLink />
             </p>
@@ -398,10 +395,7 @@ export default function WorkspacePage({
               </p>
             ))}
             {error && (
-              <p
-                role="alert"
-                className="p-3 text-sm text-red-700 dark:text-red-300"
-              >
+              <p role="alert" className="p-3 text-sm text-danger">
                 {error}{" "}
                 <button
                   type="button"

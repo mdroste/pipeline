@@ -36,9 +36,9 @@
   }
   .ui-button--primary,
   .settings-button-primary {
-    border-color: var(--ui-inverse);
-    background: var(--ui-inverse);
-    color: var(--ui-on-inverse);
+    border-color: var(--ui-action);
+    background: var(--ui-action);
+    color: var(--ui-on-action);
   }
   .ui-button--primary:hover:not(:disabled),
   .settings-button-primary:hover:not(:disabled) {
@@ -57,6 +57,19 @@
     padding-inline: 0;
     text-decoration: underline;
     text-underline-offset: 3px;
+  }
+  /* Local changes stay quiet; links are reserved for navigation. */
+  .ui-button--quiet,
+  .settings-button-quiet {
+    border-color: transparent;
+    color: var(--ui-muted);
+  }
+  .ui-button--quiet:hover:not(:disabled) {
+    color: var(--ui-text);
+  }
+  .ui-button:focus-visible {
+    outline: 2px solid var(--ui-focus);
+    outline-offset: 2px;
   }
   .ui-button:disabled,
   .settings-button:disabled,
@@ -142,10 +155,10 @@
       [aria-selected="true"],
       [aria-pressed="true"]
     ) {
-    color: var(--ui-text);
-    background: var(--ui-raised);
-    font-weight: 500;
-    box-shadow: var(--ui-shadow-1);
+    color: var(--ui-selection);
+    background: var(--ui-selection-soft);
+    font-weight: 600;
+    box-shadow: inset 0 -2px var(--ui-selection-indicator);
   }
   .ui-segmented > button:disabled {
     opacity: 0.45;
@@ -279,6 +292,47 @@
     background: var(--ui-success-soft);
     border-color: currentColor;
   }
+}
+
+/* State colors retain meaning across palettes. Text and an outline/indicator
+   accompany selection; content inside reports keeps its own styling. */
+.ui-tone-error {
+  color: var(--ui-danger);
+  background: var(--ui-danger-soft);
+}
+.ui-tone-attention {
+  color: var(--ui-warning);
+  background: var(--ui-warning-soft);
+}
+.ui-tone-success {
+  color: var(--ui-success);
+  background: var(--ui-success-soft);
+}
+.ui-tone-running {
+  color: var(--ui-running);
+  background: var(--ui-running-soft);
+}
+.ui-tone-idle {
+  color: var(--ui-muted);
+  background: var(--ui-sunken);
+}
+.ui-search-target,
+[data-review-issue][aria-current="location"] {
+  outline: 2px solid var(--ui-selection-indicator);
+  outline-offset: 2px;
+  box-shadow: inset 3px 0 var(--ui-selection-indicator);
+}
+.ui-decision-selected {
+  border-color: currentColor;
+  box-shadow: inset 0 -2px currentColor;
+  font-weight: 600;
+}
+.ui-selected {
+  color: var(--ui-selection);
+  background: var(--ui-selection-soft);
+  border-color: var(--ui-selection-indicator);
+  box-shadow: inset 3px 0 var(--ui-selection-indicator);
+  font-weight: 600;
 }
 
 :where(

@@ -26,3 +26,18 @@ it("requests bounded logs with an explicit cursor and project scope", async () =
     offset: 10,
   });
 });
+
+import fixture from "../../tests/fixtures/workbench/studio-contracts-v1.json";
+it("preserves the shared native action fixture and unchanged-save result", async () => {
+  invoke.mockResolvedValue(fixture.unchanged);
+  const action = { ...fixture.saveText, action: "saveText" as const };
+  expect(await studioClient.mutate("fixture", action)).toEqual(
+    fixture.unchanged,
+  );
+  expect(invoke).toHaveBeenCalledWith("workbench_studio_mutate", {
+    request: expect.objectContaining({
+      workspaceId: "fixture",
+      ...fixture.saveText,
+    }),
+  });
+});

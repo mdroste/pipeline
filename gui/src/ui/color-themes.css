@@ -1,0 +1,274 @@
+/* Default keeps the existing Tailwind neutral scale exactly. */
+:root {
+  --color-white: 255 255 255;
+  --color-neutral-50: 250 250 250;
+  --color-neutral-100: 245 245 245;
+  --color-neutral-200: 229 229 229;
+  --color-neutral-300: 212 212 212;
+  --color-neutral-400: 163 163 163;
+  --color-neutral-500: 115 115 115;
+  --color-neutral-600: 82 82 82;
+  --color-neutral-700: 64 64 64;
+  --color-neutral-800: 38 38 38;
+  --color-neutral-900: 23 23 23;
+  --color-neutral-950: 10 10 10;
+}
+
+/* Original palettes: a complete neutral ramp, accent ramp, and syntax colors.
+   Light/dark share a ramp so legacy gray/neutral utilities stay coherent. */
+:root[data-color-theme="harbor"] {
+  --color-neutral-50: 246 250 252;
+  --color-neutral-100: 232 240 245;
+  --color-neutral-200: 210 224 233;
+  --color-neutral-300: 178 199 213;
+  --color-neutral-400: 140 167 185;
+  --color-neutral-500: 94 124 144;
+  --color-neutral-600: 65 96 116;
+  --color-neutral-700: 49 74 92;
+  --color-neutral-800: 36 55 70;
+  --color-neutral-900: 25 40 52;
+  --color-neutral-950: 18 29 39;
+  --color-accent-50: 237 249 255;
+  --color-accent-100: 217 239 252;
+  --color-accent-200: 178 220 245;
+  --color-accent-300: 133 198 234;
+  --color-accent-400: 84 169 215;
+  --color-accent-500: 46 136 188;
+  --color-accent-600: 26 106 154;
+  --color-accent-700: 21 84 124;
+  --color-accent-800: 22 66 96;
+  --color-accent-900: 22 51 73;
+  --color-accent-950: 15 33 49;
+  --syntax-keyword: #7050a0;
+  --syntax-type: #176987;
+  --syntax-string: #28704f;
+  --syntax-number: #8a581c;
+  --syntax-comment: #587183;
+}
+:root.dark[data-color-theme="harbor"] {
+  --syntax-keyword: #c5aff0;
+  --syntax-type: #85c6e8;
+  --syntax-string: #9bcfae;
+  --syntax-number: #e4bd80;
+  --syntax-comment: #8ca7b9;
+}
+
+:root[data-color-theme="parchment"] {
+  --color-neutral-50: 252 249 242;
+  --color-neutral-100: 244 237 222;
+  --color-neutral-200: 227 216 196;
+  --color-neutral-300: 205 188 163;
+  --color-neutral-400: 175 158 135;
+  --color-neutral-500: 136 117 94;
+  --color-neutral-600: 107 89 68;
+  --color-neutral-700: 81 66 50;
+  --color-neutral-800: 61 49 39;
+  --color-neutral-900: 44 35 29;
+  --color-neutral-950: 31 26 22;
+  --color-accent-50: 255 248 232;
+  --color-accent-100: 251 234 201;
+  --color-accent-200: 242 209 154;
+  --color-accent-300: 226 182 112;
+  --color-accent-400: 205 149 70;
+  --color-accent-500: 172 116 39;
+  --color-accent-600: 140 87 24;
+  --color-accent-700: 113 66 24;
+  --color-accent-800: 88 52 26;
+  --color-accent-900: 65 40 24;
+  --color-accent-950: 41 27 18;
+  --syntax-keyword: #8d4c74;
+  --syntax-type: #376b7f;
+  --syntax-string: #526d33;
+  --syntax-number: #965222;
+  --syntax-comment: #7c6d57;
+}
+:root.dark[data-color-theme="parchment"] {
+  --syntax-keyword: #dba9c5;
+  --syntax-type: #95c3d2;
+  --syntax-string: #bdca90;
+  --syntax-number: #e2b181;
+  --syntax-comment: #af9e87;
+}
+
+:root[data-color-theme="iris"] {
+  --color-neutral-50: 250 248 253;
+  --color-neutral-100: 240 235 247;
+  --color-neutral-200: 224 215 235;
+  --color-neutral-300: 200 187 216;
+  --color-neutral-400: 170 154 189;
+  --color-neutral-500: 130 112 151;
+  --color-neutral-600: 103 83 124;
+  --color-neutral-700: 79 62 99;
+  --color-neutral-800: 57 44 74;
+  --color-neutral-900: 41 32 55;
+  --color-neutral-950: 29 23 40;
+  --color-accent-50: 248 244 255;
+  --color-accent-100: 237 227 255;
+  --color-accent-200: 218 199 250;
+  --color-accent-300: 195 167 239;
+  --color-accent-400: 168 130 222;
+  --color-accent-500: 139 94 197;
+  --color-accent-600: 113 66 169;
+  --color-accent-700: 91 49 139;
+  --color-accent-800: 71 41 108;
+  --color-accent-900: 54 34 80;
+  --color-accent-950: 35 23 54;
+  --syntax-keyword: #8346a0;
+  --syntax-type: #3a658e;
+  --syntax-string: #34725b;
+  --syntax-number: #98512e;
+  --syntax-comment: #786780;
+}
+:root.dark[data-color-theme="iris"] {
+  --syntax-keyword: #d6a9ed;
+  --syntax-type: #a3c2ec;
+  --syntax-string: #99d1b6;
+  --syntax-number: #e7b190;
+  --syntax-comment: #aa9abd;
+}
+
+:root[data-color-theme="grove"] {
+  --color-neutral-50: 246 250 245;
+  --color-neutral-100: 232 240 229;
+  --color-neutral-200: 213 226 206;
+  --color-neutral-300: 183 203 174;
+  --color-neutral-400: 151 177 141;
+  --color-neutral-500: 111 140 101;
+  --color-neutral-600: 81 109 69;
+  --color-neutral-700: 57 79 49;
+  --color-neutral-800: 42 58 37;
+  --color-neutral-900: 30 43 27;
+  --color-neutral-950: 21 31 20;
+  --color-accent-50: 242 250 233;
+  --color-accent-100: 225 241 205;
+  --color-accent-200: 201 227 171;
+  --color-accent-300: 175 209 136;
+  --color-accent-400: 139 181 97;
+  --color-accent-500: 102 145 65;
+  --color-accent-600: 70 111 43;
+  --color-accent-700: 48 86 32;
+  --color-accent-800: 38 65 29;
+  --color-accent-900: 31 49 26;
+  --color-accent-950: 20 32 18;
+  --syntax-keyword: #70538b;
+  --syntax-type: #2b6e69;
+  --syntax-string: #4b6d2a;
+  --syntax-number: #985427;
+  --syntax-comment: #5f7156;
+}
+:root.dark[data-color-theme="grove"] {
+  --syntax-keyword: #c8b3df;
+  --syntax-type: #91cfc2;
+  --syntax-string: #bdd793;
+  --syntax-number: #dfbd85;
+  --syntax-comment: #97b18d;
+}
+
+:root[data-color-theme="ember"] {
+  --color-neutral-50: 253 248 245;
+  --color-neutral-100: 247 234 226;
+  --color-neutral-200: 233 211 198;
+  --color-neutral-300: 213 181 162;
+  --color-neutral-400: 188 153 132;
+  --color-neutral-500: 151 114 94;
+  --color-neutral-600: 119 85 67;
+  --color-neutral-700: 91 62 50;
+  --color-neutral-800: 68 44 37;
+  --color-neutral-900: 48 31 27;
+  --color-neutral-950: 34 23 21;
+  --color-accent-50: 255 243 237;
+  --color-accent-100: 255 226 212;
+  --color-accent-200: 249 194 168;
+  --color-accent-300: 238 156 123;
+  --color-accent-400: 222 119 85;
+  --color-accent-500: 196 84 55;
+  --color-accent-600: 166 61 38;
+  --color-accent-700: 134 47 29;
+  --color-accent-800: 103 39 28;
+  --color-accent-900: 79 33 25;
+  --color-accent-950: 47 23 18;
+  --syntax-keyword: #95516f;
+  --syntax-type: #386a83;
+  --syntax-string: #4a703e;
+  --syntax-number: #9c4b27;
+  --syntax-comment: #7b6353;
+}
+:root.dark[data-color-theme="ember"] {
+  --syntax-keyword: #e4a8c0;
+  --syntax-type: #9fc7e0;
+  --syntax-string: #b7d29a;
+  --syntax-number: #eeb289;
+  --syntax-comment: #bc9984;
+}
+
+:root[data-color-theme="lagoon"] {
+  --color-neutral-50: 243 250 249;
+  --color-neutral-100: 226 241 237;
+  --color-neutral-200: 201 224 218;
+  --color-neutral-300: 164 201 191;
+  --color-neutral-400: 128 173 162;
+  --color-neutral-500: 87 133 122;
+  --color-neutral-600: 58 104 94;
+  --color-neutral-700: 42 79 70;
+  --color-neutral-800: 31 59 51;
+  --color-neutral-900: 21 43 39;
+  --color-neutral-950: 16 29 25;
+  --color-accent-50: 234 250 246;
+  --color-accent-100: 207 242 232;
+  --color-accent-200: 164 224 207;
+  --color-accent-300: 119 204 182;
+  --color-accent-400: 75 179 153;
+  --color-accent-500: 44 149 125;
+  --color-accent-600: 25 118 97;
+  --color-accent-700: 24 95 80;
+  --color-accent-800: 25 74 64;
+  --color-accent-900: 23 56 50;
+  --color-accent-950: 15 36 31;
+  --syntax-keyword: #80549e;
+  --syntax-type: #226e83;
+  --syntax-string: #357344;
+  --syntax-number: #935c28;
+  --syntax-comment: #506f66;
+}
+:root.dark[data-color-theme="lagoon"] {
+  --syntax-keyword: #ccb2ed;
+  --syntax-type: #8ccfe2;
+  --syntax-string: #abd9ac;
+  --syntax-number: #e6c08f;
+  --syntax-comment: #80ada2;
+}
+
+/* Higher specificity than App.css's defaults, independent of import order. */
+:root[data-color-theme]:not([data-color-theme="default"]) {
+  --color-white: var(--color-neutral-50);
+  --ui-surface: rgb(var(--color-neutral-50));
+  --ui-raised: rgb(var(--color-neutral-50));
+  --ui-sunken: rgb(var(--color-neutral-100));
+  --ui-border: rgb(var(--color-neutral-200));
+  --ui-border-strong: rgb(var(--color-neutral-300));
+  --ui-text: rgb(var(--color-neutral-900));
+  --ui-muted: rgb(var(--color-neutral-600));
+  --ui-accent: rgb(var(--color-accent-600));
+  --ui-accent-soft: rgb(var(--color-accent-500) / 0.14);
+  --ui-inverse: rgb(var(--color-accent-700));
+  --ui-on-inverse: #ffffff;
+  --ui-focus: rgb(var(--color-accent-600));
+  --ui-running: rgb(var(--color-accent-700));
+  --ui-running-soft: rgb(var(--color-accent-100));
+}
+:root.dark[data-color-theme]:not([data-color-theme="default"]) {
+  --ui-surface: rgb(var(--color-neutral-950));
+  --ui-raised: rgb(var(--color-neutral-800));
+  --ui-sunken: rgb(var(--color-neutral-900));
+  --ui-border: rgb(var(--color-neutral-800));
+  --ui-border-strong: rgb(var(--color-neutral-700));
+  --ui-text: rgb(var(--color-neutral-200));
+  --ui-muted: rgb(var(--color-neutral-400));
+  --ui-accent: rgb(var(--color-accent-300));
+  --ui-accent-soft: rgb(var(--color-accent-400) / 0.16);
+  --ui-inverse: rgb(var(--color-accent-300));
+  --ui-on-inverse: rgb(var(--color-neutral-950));
+  --ui-focus: rgb(var(--color-accent-300));
+  --ui-running: rgb(var(--color-accent-300));
+  --ui-running-soft: rgb(var(--color-accent-900));
+}

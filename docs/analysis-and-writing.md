@@ -332,7 +332,9 @@ Commands run with your computer's file and network permissions.
 
 **Detect installed tools** looks in standard install folders, on your `PATH`,
 and in the project folder, such as a `.venv` environment. Choose **Use** next
-to a tool to fill in its path.
+to a tool to fill in its path. Detection reads a project environment's Python
+version from its `pyvenv.cfg` file and never starts a program from the project
+folder.
 
 If you start Stata through a shell alias, choose **Stata do-file** and enter a
 launcher such as `/bin/zsh -lic "stata -q -b do main.do"`. When you stop a

@@ -1,3 +1,4 @@
+import { Icon } from "../../ui/icons";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import ResizeHandle from "../ResizeHandle";
 import type { ReportNavigationEntry } from "../../lib/reportNavigation";
@@ -65,20 +66,7 @@ export default function ReportContents({
                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                          dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             >
-              <svg
-                aria-hidden="true"
-                className="h-3.5 w-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.8}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m9 6 6 6-6 6"
-                />
-              </svg>
+              <Icon name="chevron-right" className="h-3.5 w-3.5" />
             </button>
           </div>
           <ul className="space-y-0.5">
@@ -136,20 +124,7 @@ export default function ReportContents({
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
                      dark:text-gray-400 dark:hover:text-gray-100"
         >
-          <svg
-            aria-hidden="true"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.7}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M8 6h11M8 12h11M8 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"
-            />
-          </svg>
+          <Icon name="notes" className="h-4 w-4" />
         </button>
       )}
     </>

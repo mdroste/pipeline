@@ -6,7 +6,12 @@
 import { useCallback, useSyncExternalStore } from "react";
 import type { VersionControlState } from "../../lib/versionControlClient";
 
-export const NETWORK = { fetch: "Checking", pull: "Pulling", push: "Pushing" };
+export const NETWORK = {
+  fetch: "Checking",
+  pull: "Pulling",
+  push: "Pushing",
+  clone: "Cloning",
+};
 export type NetworkKind = keyof typeof NETWORK;
 
 export interface PageSession {

@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 // Typed pickers for chain bindings and conditions. Conditions read back as a
 // sentence; the raw definition stays visible in the builder's advanced view.
 
@@ -167,9 +169,9 @@ export function BindingPicker({
                 label={`${label} choice ${index + 1}`}
               />
               {value.values.length > 2 && (
-                <button
+                <IconButton
                   type="button"
-                  aria-label={`Remove ${label} choice ${index + 1}`}
+                  label={`Remove ${label} choice ${index + 1}`}
                   onClick={() =>
                     onChange({
                       kind: "firstAvailable",
@@ -177,8 +179,8 @@ export function BindingPicker({
                     })
                   }
                 >
-                  ×
-                </button>
+                  <Icon name="close" className="h-4 w-4" />
+                </IconButton>
               )}
             </span>
           ))}
@@ -436,9 +438,9 @@ export function ConditionEditor({
             />
           )}
           {model.leaves.length > 1 && (
-            <button
+            <IconButton
               type="button"
-              aria-label={`Remove condition ${index + 1}`}
+              label={`Remove condition ${index + 1}`}
               onClick={() =>
                 update({
                   ...model,
@@ -446,8 +448,8 @@ export function ConditionEditor({
                 })
               }
             >
-              ×
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           )}
         </div>
       ))}

@@ -93,7 +93,12 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
         detail: clip(waiting[0].body.decision.resolvingCheck),
         attention: true,
         lane: "next",
-        action: { kind: "tab", label: "Open responses", tab: "responses" },
+        action: {
+          kind: "tab",
+          label: "Open responses",
+          tab: "responses",
+          targetId: waiting[0].id,
+        },
       });
     const flagged = responses.filter((r) => r.body.flags.length);
     if (flagged.length)
@@ -103,7 +108,12 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
         detail: clip(flagged[0].body.flags[0]),
         attention: true,
         lane: "next",
-        action: { kind: "tab", label: "Open responses", tab: "responses" },
+        action: {
+          kind: "tab",
+          label: "Open responses",
+          tab: "responses",
+          targetId: flagged[0].id,
+        },
       });
   }
   return block("round", "Revision round", rows);

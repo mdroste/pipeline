@@ -53,7 +53,7 @@ export default function ConnectionStatus({
     return () => {
       checkGeneration.current += 1;
     };
-  }, [key, subscription, settings.local_base_url]);
+  }, [key, subscription, settings.claude_access_mode, settings.local_base_url]);
   const status = error
     ? "Connection problem"
     : checked

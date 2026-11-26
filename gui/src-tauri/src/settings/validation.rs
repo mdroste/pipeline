@@ -81,9 +81,11 @@ impl Settings {
             ("Claude", self.claude_access_mode.as_str()),
             ("ChatGPT", self.codex_access_mode.as_str()),
         ] {
-            if !matches!(mode, "" | "subscription" | "api") {
+            if !matches!(mode, "" | "subscription" | "api")
+                && !(provider == "Claude" && mode == "code_api")
+            {
                 return Err(format!(
-                    "Invalid {provider} access mode '{mode}'; choose subscription or api"
+                    "Invalid {provider} access mode '{mode}'; choose subscription, code_api (Claude Code), or api"
                 ));
             }
         }

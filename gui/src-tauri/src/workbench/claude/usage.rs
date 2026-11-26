@@ -185,10 +185,12 @@ pub(super) fn record(frame: &Value, account: Option<&str>) {
 #[tauri::command]
 pub async fn workbench_claude_rate_limits() -> Option<ClaudeRateLimit> {
     let status = if let Some(environment) = super::wsl::detect_async().await.environment().ok()? {
-        tokio::task::spawn_blocking(move || environment.status())
-            .await
-            .ok()?
-            .ok()?
+        tokio::task::spawn_blocking(move || {
+            environment.status(crate::agent_runtime::claude::AuthMode::Subscription)
+        })
+        .await
+        .ok()?
+        .ok()?
     } else {
         crate::agent_runtime::claude::verified_subscription_with_status()
             .await

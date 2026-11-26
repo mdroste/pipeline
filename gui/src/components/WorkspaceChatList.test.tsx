@@ -34,7 +34,9 @@ it("preserves row actions, archived chats, paging, and approval status inside Ch
   fireEvent.change(screen.getByRole("searchbox"), {
     target: { value: "absent" },
   });
-  expect(screen.getByRole("status")).toHaveTextContent("No matching chats");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "No matching conversations",
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "Show older conversations" }),
   );

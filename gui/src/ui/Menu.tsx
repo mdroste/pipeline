@@ -108,7 +108,9 @@ export function MenuItem({
       }`}
     >
       {icon !== undefined && (
-        <span className="mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center text-ink-muted">
+        <span
+          className={`mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center ${danger ? "text-danger" : "text-ink-muted"}`}
+        >
           {icon}
         </span>
       )}

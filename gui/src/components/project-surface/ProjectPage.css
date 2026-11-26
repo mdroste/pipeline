@@ -11,7 +11,8 @@
 .project-page-body {
   max-width: 67.5rem;
   margin: 0 auto;
-  padding: var(--ui-space-4) var(--ui-page-gutter) var(--ui-space-8);
+  padding: var(--ui-workspace-top, 1rem) var(--ui-workspace-gutter, 1rem)
+    var(--ui-space-8);
   color: var(--ui-text);
 }
 .project-page-hint {

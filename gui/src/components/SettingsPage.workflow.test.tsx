@@ -217,6 +217,21 @@ describe("SettingsPage workflow", () => {
       }),
     );
     expect(screen.getByLabelText("Step retries")).toHaveValue("1");
+
+    await user.click(screen.getByRole("button", { name: "PDF extraction" }));
+    const pdfTimeLimit = screen.getByLabelText("PDF extraction time limit");
+    expect(pdfTimeLimit).toHaveValue("2700");
+    expect(pdfTimeLimit).toHaveDisplayValue("45 minutes (default)");
+    await user.selectOptions(pdfTimeLimit, "3600");
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          step_timeout_secs: 7200,
+          pdf_extraction_timeout_secs: 3600,
+        },
+      }),
+    );
   });
 
   it("offers only the PaddleOCR-VL Full Parser as a local PDF extractor", async () => {

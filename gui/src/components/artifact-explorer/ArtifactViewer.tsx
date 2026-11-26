@@ -64,7 +64,7 @@ export const Viewer = memo(function Viewer({
   }
 
   const truncBanner = content.truncated && (
-    <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+    <div className="mb-3 rounded border border-warning bg-warning-soft px-3 py-2 text-xs text-warning">
       Large file — showing the first {formatBytes(1_000_000)} of{" "}
       {formatBytes(content.bytes)}.
     </div>

@@ -17,6 +17,8 @@ interface Props {
   onOpenEvidence?: (evidence: IssueEvidence) => void;
   /** The run saved no page images, so a page alone opens nothing. */
   pagesUnavailable?: boolean;
+  exportEnabled?: boolean;
+  initialFindingId?: string;
 }
 
 type Verdict = "accept" | "reject" | "done" | "";
@@ -27,22 +29,19 @@ interface Annotation {
 type Annotations = Record<string, Annotation>;
 
 const SEVERITY_STYLES: Record<string, string> = {
-  high: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
-  medium: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
-  low: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  high: "ui-tone-error",
+  medium: "ui-tone-attention",
+  low: "ui-tone-idle",
 };
 
 function sevStyle(sev: string): string {
-  return (
-    SEVERITY_STYLES[sev] ||
-    "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-  );
+  return SEVERITY_STYLES[sev] || "ui-tone-idle";
 }
 
 const VERDICT_STYLES: Record<Verdict, string> = {
-  accept: "border-transparent bg-green-700 text-white",
-  reject: "border-transparent bg-red-600 text-white",
-  done: "border-transparent bg-gray-500 text-white",
+  accept: "ui-tone-success ui-decision-selected",
+  reject: "ui-tone-error ui-decision-selected",
+  done: "ui-tone-idle ui-decision-selected",
   "": "",
 };
 
@@ -75,7 +74,8 @@ function evidenceCitation(item: IssueEvidence): string {
 const RATED_SEVERITIES = ["high", "medium", "low"];
 const isUnrated = (severity: string) => !RATED_SEVERITIES.includes(severity);
 
-const issueCount = (count: number) => `${count} issue${count === 1 ? "" : "s"}`;
+const issueCount = (count: number) =>
+  `${count} finding${count === 1 ? "" : "s"}`;
 
 /** Keeps the researcher's note. Notes are edited and exported on one line, so
  *  the rationale joins it there. */
@@ -89,7 +89,11 @@ export default function IssuesTable({
   runId,
   onOpenEvidence,
   pagesUnavailable = false,
+  exportEnabled = true,
+  initialFindingId,
 }: Props) {
+  const root = useRef<HTMLDivElement>(null);
+  const followedFinding = useRef<string | undefined>(undefined);
   const [annotations, setAnnotations] = useState<Annotations>({});
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
@@ -101,6 +105,27 @@ export default function IssuesTable({
   const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [annotationsLoaded, setAnnotationsLoaded] = useState(!runId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!initialFindingId) return;
+    setSeverityFilter("all");
+    setVerdictFilter("all");
+    setIssueSearch("");
+    setExpanded((old) => new Set([...old, initialFindingId]));
+  }, [initialFindingId]);
+  useEffect(() => {
+    if (
+      !initialFindingId ||
+      !expanded.has(initialFindingId) ||
+      followedFinding.current === initialFindingId
+    )
+      return;
+    const target = Array.from(
+      root.current?.querySelectorAll<HTMLElement>("[data-review-issue]") ?? [],
+    ).find((item) => item.dataset.reviewIssue === initialFindingId);
+    target?.scrollIntoView?.({ block: "center" });
+    target?.focus({ preventScroll: true });
+    if (target) followedFinding.current = initialFindingId;
+  }, [initialFindingId, expanded]);
   const annotationsRef = useRef<Annotations>({});
   const loadedRunRef = useRef<string | null>(null);
   const dirtyRunRef = useRef<string | null>(null);
@@ -315,7 +340,7 @@ export default function IssuesTable({
 
   const exportDecisions = async () => {
     const md =
-      "# Issue decisions\n\n" +
+      "# Finding decisions\n\n" +
       sorted
         .map((i, n) => {
           const note = annotations[i.id]?.note?.trim();
@@ -331,7 +356,7 @@ export default function IssuesTable({
       // user-chosen path; the webview never supplies a filesystem path.
       await reportExportClient.saveText({
         content: md,
-        suggestedName: "issue-decisions.md",
+        suggestedName: "finding-decisions.md",
       });
     } catch (error) {
       setPersistenceError({
@@ -396,7 +421,7 @@ export default function IssuesTable({
       [
         changed > 0
           ? `Decision applied to ${issueCount(changed)}.`
-          : "No issues changed.",
+          : "No findings changed.",
         ...(selectedHidden > 0
           ? [`${issueCount(selectedHidden)} hidden by filters left unchanged.`]
           : []),
@@ -407,12 +432,12 @@ export default function IssuesTable({
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
+    <div ref={root} className="max-w-4xl mx-auto p-6">
       {/* Filters, export and save errors stay in view while the list scrolls. */}
       <div className="sticky top-0 z-10 -mx-6 mb-2 bg-white/95 px-6 py-2 backdrop-blur dark:bg-gray-950/95">
         <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Issues ({issues.length})
+            Findings ({issues.length})
           </h2>
           <div className="flex items-center gap-1 ml-2">
             {severities.map((s) => (
@@ -422,7 +447,7 @@ export default function IssuesTable({
                 aria-pressed={activeSeverity === s}
                 className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
                   activeSeverity === s
-                    ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                    ? "ui-selected"
                     : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
                 }`}
               >
@@ -443,7 +468,7 @@ export default function IssuesTable({
             <option value="done">Done</option>
           </select>
           <input
-            aria-label="Search issues"
+            aria-label="Search findings"
             value={issueSearch}
             onChange={(event) => setIssueSearch(event.target.value)}
             placeholder="Search title, text, reviewer…"
@@ -451,14 +476,10 @@ export default function IssuesTable({
           />
           <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
             {counts.accept > 0 && (
-              <span className="text-green-700 dark:text-green-400">
-                {counts.accept} accepted
-              </span>
+              <span className="text-success">{counts.accept} accepted</span>
             )}
             {counts.reject > 0 && (
-              <span className="text-red-600 dark:text-red-400">
-                {counts.reject} rejected
-              </span>
+              <span className="text-danger">{counts.reject} rejected</span>
             )}
             {saved && (
               <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
@@ -468,7 +489,9 @@ export default function IssuesTable({
             )}
             <button
               onClick={exportDecisions}
-              disabled={!annotationsLoaded || issues.length === 0}
+              disabled={
+                !exportEnabled || !annotationsLoaded || issues.length === 0
+              }
               className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Export all decisions
@@ -488,7 +511,7 @@ export default function IssuesTable({
         {persistenceError && (
           <div
             role="alert"
-            className="mt-2 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
+            className="mt-2 rounded border border-danger bg-danger-soft p-3 text-xs text-danger"
           >
             <span className="font-medium">
               {persistenceError.operation === "export"
@@ -500,7 +523,7 @@ export default function IssuesTable({
               <button
                 type="button"
                 onClick={retryPersistence}
-                className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+                className="ml-2 rounded border border-danger px-2 py-0.5 hover:bg-danger-soft"
               >
                 Retry
               </button>
@@ -517,11 +540,16 @@ export default function IssuesTable({
           return (
             <div
               key={issue.id}
+              data-review-issue={issue.id}
+              tabIndex={-1}
+              aria-current={
+                issue.id === initialFindingId ? "location" : undefined
+              }
               className={`border rounded-lg bg-white dark:bg-gray-900 transition-colors ${
                 ann?.status === "reject"
-                  ? "border-red-200 dark:border-red-900 opacity-60"
+                  ? "border-danger opacity-60"
                   : ann?.status === "accept"
-                    ? "border-green-200 dark:border-green-900"
+                    ? "border-success"
                     : "border-gray-200 dark:border-gray-800"
               }`}
             >
@@ -529,7 +557,7 @@ export default function IssuesTable({
                 <input
                   type="checkbox"
                   className="mt-1 shrink-0"
-                  aria-label={`Select issue: ${issue.title}`}
+                  aria-label={`Select finding: ${issue.title}`}
                   checked={selected.has(issue.id)}
                   disabled={!annotationsLoaded}
                   onChange={() => {
@@ -574,7 +602,7 @@ export default function IssuesTable({
                       key={v}
                       onClick={() => setVerdict(issue.id, v)}
                       disabled={!annotationsLoaded}
-                      aria-label={`${v} issue: ${issue.title}`}
+                      aria-label={`${v} finding: ${issue.title}`}
                       aria-pressed={ann?.status === v}
                       className={`px-2 py-1 rounded text-[0.6875rem] border transition-colors ${
                         ann?.status === v
@@ -716,7 +744,7 @@ export default function IssuesTable({
                     </div>
                   )}
                   <input
-                    aria-label={`Note for issue: ${issue.title}`}
+                    aria-label={`Note for finding: ${issue.title}`}
                     value={ann?.note ?? ""}
                     onChange={(e) => setNote(issue.id, e.target.value)}
                     disabled={!annotationsLoaded}
@@ -730,7 +758,7 @@ export default function IssuesTable({
         })}
         {visible.length === 0 && (
           <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
-            No issues match these filters.
+            No findings match these filters.
           </p>
         )}
       </div>
@@ -740,7 +768,7 @@ export default function IssuesTable({
       {selected.size > 0 && (
         <div
           role="group"
-          aria-label="Decision for selected issues"
+          aria-label="Decision for selected findings"
           className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs shadow-md dark:border-gray-800 dark:bg-gray-900"
         >
           <span className="font-medium">
@@ -774,7 +802,7 @@ export default function IssuesTable({
               !annotationsLoaded ||
               selectedVisible.length === 0
             }
-            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+            className="ui-button ui-button--primary ui-button--sm"
           >
             Apply decision
           </button>

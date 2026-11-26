@@ -1,4 +1,5 @@
 import { Icon } from "../../ui/icons";
+import { open } from "@tauri-apps/plugin-dialog";
 import IconButton from "../../ui/IconButton";
 import { useEffect, useId, useRef, useState } from "react";
 import { workflowProfileClient } from "../../lib/workflowProfileClient";
@@ -35,6 +36,7 @@ export default function Builder({
     acquireLiterature: !initialSessionId,
   }));
   const [session, setSession] = useState(initialSessionId ?? "");
+  const [projectRoot, setProjectRoot] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionChoice[]>([]);
   const [profiles, setProfiles] = useState<{ id: string; name: string }[]>([]);
   const [operation, setOperation] = useState(() => crypto.randomUUID());
@@ -70,6 +72,9 @@ export default function Builder({
   )?.connectionId;
   const invalid =
     discoveryError(definition) ??
+    (!session && !projectRoot
+      ? "Choose a folder for the new project."
+      : null) ??
     ((definition.ideaAgents ?? 0) > 0 &&
     connection &&
     connection !== "claude" &&
@@ -94,6 +99,7 @@ export default function Builder({
         },
         session || null,
         operation,
+        session ? null : projectRoot,
       );
       if (mounted.current) onStarted(result);
     } catch (e) {
@@ -165,6 +171,30 @@ export default function Builder({
               ))}
             </select>
           </label>
+          {!session && (
+            <div className="ds-field">
+              <span>Project folder (required)</span>
+              <button
+                type="button"
+                className="ui-button ui-button--sm"
+                onClick={() => {
+                  void open({ directory: true, multiple: false })
+                    .then((selected) => {
+                      if (typeof selected === "string") {
+                        setProjectRoot(selected);
+                        setOperation(crypto.randomUUID());
+                      }
+                    })
+                    .catch((cause) => setError(String(cause)));
+                }}
+              >
+                Choose project folder…
+              </button>
+              {projectRoot && (
+                <span className="break-words">{projectRoot}</span>
+              )}
+            </div>
+          )}
           <fieldset className="ds-selection">
             <legend>Who chooses the projects?</legend>
             <div className="ds-mode-grid">

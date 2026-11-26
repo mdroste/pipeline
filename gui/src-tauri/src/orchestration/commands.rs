@@ -245,7 +245,7 @@ async fn control_request(
                 .session_id
                 .clone()
                 .ok_or("Task has no conversation")?;
-            let fresh = crate::workbench::commands::run_store(move |s| {
+            let fresh = crate::workbench::runtime::run_store(move |s| {
                 crate::workbench::tasks::binding(&s, &session)
             })
             .await
@@ -550,13 +550,13 @@ pub async fn task_background(app: tauri::AppHandle, enabled: Option<bool>) -> Re
 
 #[tauri::command]
 pub async fn task_sessions() -> Result<Vec<Value>> {
-    crate::workbench::commands::run_store(|s| crate::workbench::tasks::session_choices(&s))
+    crate::workbench::runtime::run_store(|s| crate::workbench::tasks::session_choices(&s))
         .await
         .map_err(|e| e.message)
 }
 #[tauri::command]
 pub async fn task_proposals(session_id: String) -> Result<Vec<Value>> {
-    crate::workbench::commands::run_store(move |s| {
+    crate::workbench::runtime::run_store(move |s| {
         crate::workbench::tasks::proposals(&s, &session_id)
     })
     .await
@@ -570,7 +570,7 @@ pub async fn task_prepare_proposal(
 ) -> Result<TaskRun> {
     let session = session_id.clone();
     let id = proposal_id.clone();
-    let proposal = crate::workbench::commands::run_store(move |s| {
+    let proposal = crate::workbench::runtime::run_store(move |s| {
         crate::workbench::tasks::proposal(&s, &session, &id)
     })
     .await
@@ -587,7 +587,7 @@ pub async fn task_prepare_proposal(
     )
     .await?;
     let task = result.id.clone();
-    crate::workbench::commands::run_store(move |s| {
+    crate::workbench::runtime::run_store(move |s| {
         crate::workbench::tasks::resolve_proposal(&s, &session_id, &proposal_id, &task)
     })
     .await
@@ -632,7 +632,7 @@ pub async fn task_delivered_files(
     session_id: String,
     offset: u32,
 ) -> Result<Value> {
-    use crate::workbench::{commands::run_store, tasks::delivery};
+    use crate::workbench::{runtime::run_store, tasks::delivery};
     let warning = if offset == 0 {
         let session = session_id.clone();
         let pending =
@@ -674,7 +674,7 @@ pub async fn task_save_delivered_file(
     exchange_id: String,
     ordinal: u32,
 ) -> Result<Option<String>> {
-    let file = crate::workbench::commands::run_store(move |w| {
+    let file = crate::workbench::runtime::run_store(move |w| {
         crate::workbench::tasks::delivery::read(&w, &session_id, &exchange_id, ordinal)
     })
     .await

@@ -193,7 +193,7 @@ impl Client {
     /// `Ok(None)` is a 404.
     async fn get(&mut self, url: reqwest::Url, list: bool) -> Result<Option<Value>, LookupError> {
         for attempt in 0..2 {
-            if crate::commands::is_cancelled() {
+            if crate::cancellation::is_cancelled() {
                 return Err(LookupError::Cancelled);
             }
             self.pace(list).await;

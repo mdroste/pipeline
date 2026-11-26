@@ -45,7 +45,7 @@ pub struct RunScope {
     pub(crate) write_bytes: AtomicUsize,
     /// The Claude Code executable whose subscription sign-in this run verified
     /// on its first Claude call. Later calls in the run reuse it.
-    claude_subscription: tokio::sync::OnceCell<crate::deps::ResolvedCommand>,
+    claude_command: tokio::sync::OnceCell<crate::deps::ResolvedCommand>,
 }
 
 tokio::task_local! {
@@ -121,7 +121,7 @@ pub async fn join_next_until_stopped<T: 'static>(
 ) -> Result<Option<Result<T, tokio::task::JoinError>>, String> {
     let deadline = match *stop_by {
         Some(deadline) => deadline,
-        None => match crate::commands::await_or_cancel(tasks.join_next(), None).await {
+        None => match crate::cancellation::await_or_cancel(tasks.join_next(), None).await {
             Ok(next) => return Ok(next),
             Err(_) => *stop_by.insert(tokio::time::Instant::now() + grace),
         },
@@ -205,7 +205,7 @@ impl RunScope {
             settings: Mutex::new(None),
             write_count: AtomicUsize::new(0),
             write_bytes: AtomicUsize::new(0),
-            claude_subscription: tokio::sync::OnceCell::new(),
+            claude_command: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -282,7 +282,7 @@ impl RunScope {
             // before this child is registered. A cancelled pass may never
             // acquire a new live subprocess after that decision committed.
             if self.is_pass_cancelled(&pass) {
-                crate::commands::kill_process(pid);
+                crate::process_tree::kill_process(pid);
             }
         }
     }
@@ -299,7 +299,7 @@ impl RunScope {
     pub fn kill_children(&self) {
         let pids = std::mem::take(&mut *lock(&self.child_pids));
         for pid in pids {
-            crate::commands::kill_process(pid);
+            crate::process_tree::kill_process(pid);
         }
     }
 
@@ -310,7 +310,7 @@ impl RunScope {
             .map(|(_, p)| *p)
             .collect();
         for pid in pids {
-            crate::commands::kill_process(pid);
+            crate::process_tree::kill_process(pid);
         }
     }
 
@@ -370,14 +370,12 @@ impl RunScope {
         self.write_bytes.store(0, Ordering::SeqCst);
     }
 
-    // --- Provider sign-in ---
+    // --- Provider executable ---
 
-    /// Only meaningful on a run scope: the shared fallback is reused across
-    /// operations, so callers must not cache a verification there.
-    pub(crate) fn claude_subscription(
-        &self,
-    ) -> &tokio::sync::OnceCell<crate::deps::ResolvedCommand> {
-        &self.claude_subscription
+    /// Only caches the executable for a run. Authentication must be checked
+    /// before every process; the shared fallback does not cache even the path.
+    pub(crate) fn claude_command(&self) -> &tokio::sync::OnceCell<crate::deps::ResolvedCommand> {
+        &self.claude_command
     }
 }
 
@@ -560,6 +558,8 @@ mod tests {
             ("pipeline/codex_server/connection.rs", 1),
             // Interrupting a dropped turn outlives its run; it reads no scope.
             ("pipeline/codex_server/invocation.rs", 1),
+            // Shared History scans outlive callers and read no per-run state.
+            ("runs/history_reads.rs", 2),
         ];
         fn visit(dir: &std::path::Path, found: &mut Vec<(String, usize)>, root: &std::path::Path) {
             for entry in std::fs::read_dir(dir).unwrap().flatten() {

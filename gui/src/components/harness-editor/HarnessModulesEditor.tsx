@@ -32,7 +32,7 @@ interface Props {
 const chipClass = (active: boolean) =>
   `rounded-full border px-2.5 py-1 text-[0.6875rem] font-medium transition-colors disabled:opacity-50 ${
     active
-      ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
+      ? "ui-selected"
       : "border-gray-300 bg-white text-gray-700 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
   }`;
 
@@ -167,7 +167,7 @@ function HarnessModulesEditor({
                       {moduleDescription(module)}
                     </p>
                     {enabled && !state.available && (
-                      <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[0.6875rem] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                      <div className="mt-1.5 rounded border border-warning bg-warning-soft px-2 py-1.5 text-[0.6875rem] text-warning">
                         <span className="font-medium">
                           In this conversation:
                         </span>{" "}
@@ -177,7 +177,7 @@ function HarnessModulesEditor({
                             type="button"
                             disabled={busy}
                             onClick={onSwitchToEdit}
-                            className="ml-2 rounded border border-amber-400 bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-amber-900 hover:bg-amber-100 dark:bg-transparent dark:text-amber-200"
+                            className="ml-2 rounded border border-warning bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-warning hover:bg-warning-soft dark:bg-transparent"
                           >
                             Switch this conversation to Edit
                           </button>

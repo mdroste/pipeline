@@ -97,7 +97,7 @@ it("opens a disabled reviewer from the picker even when the graph has no enabled
     name: "Choose a stage",
   });
   expect(
-    screen.getByRole("combobox", { name: "Active review" }),
+    screen.getByRole("combobox", { name: "Active review design" }),
   ).toHaveTextContent("Declaude");
   expect(screen.queryByRole("button", { name: "Read" })).toBeNull();
   await user.click(picker);

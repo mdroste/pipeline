@@ -15,7 +15,7 @@ your previous sidebar preference.
 | Reviews | Parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
 | Data & Storage | Research data folder, disk use, retention, cleanup, backups, and Trash |
 | Notifications | Completion, failure, and attention notices, desktop notifications, and sound |
-| Advanced & About | Logging, research tools, diagnostics, app version, and updates |
+| Advanced & About | Logging, research tools, command-line tools, diagnostics, app version, and updates |
 
 ## Save changes
 
@@ -24,8 +24,9 @@ Most settings save as soon as you change them. API keys need **Save**,
 note appears beside each setting you change. If you leave a section with unsaved
 edits, Pipeline asks first.
 
-Review defaults apply to reviews you start afterward. A saved workflow can
-override them, and a running review keeps the settings it started with.
+Review defaults apply to reviews you start afterward. Use **New review →
+Advanced** to opt into saved stage and workflow model choices. A running review
+keeps the settings it started with.
 
 Choose each conversation’s provider, model, and thinking level in its
 **Model and thinking** picker. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
@@ -34,22 +35,33 @@ file access, including command setup. See
 
 ## Default model
 
-**Settings → Models → Default model** sets one provider, model, and
+**Settings → Models → Default model** sets one provider, connection, model, and
 thinking level for reviews and new conversations.
 
-- Reviews use it unless a stage in **Settings → Models → Review models** or a saved workflow
-  chooses another model. It also reads PDFs when you use model extraction.
+Choose **Anthropic**, **OpenAI**, **Google**, or **Local / custom** under
+**Provider**. For Anthropic, **Connection** offers **Claude Code · Subscription**,
+**Claude Code · Console billing**, and **Direct API · API key**. The description
+below the field explains which sign-in or key it uses. OpenAI offers a ChatGPT
+account or the OpenAI API. **Set up connection** opens the provider's setup.
+
+- **New review** uses it as Primary for the whole review, including PDF model
+  extraction. Add extra reviewers for independent opinions, or use **Advanced**
+  to enable stage choices from **Settings → Models → Review models** and saved
+  workflow pins.
 - A new conversation copies it when it starts. Changing the default leaves
   existing conversations as they are, and you can change any conversation in
   its **Model and thinking** picker.
 - Automations keep the provider and model of the conversation they came from.
 
 Until you choose a default, reviews use Claude and new conversations start on
-ChatGPT. To set a thinking level, choose a model first. The provider list marks
+ChatGPT. To set a thinking level, choose a model first. The connection list marks
 any connection that isn't ready as **(not connected)**.
 
 **Settings → Reviews → Step time limit** defaults to 45 minutes per model
-call. Choose a limit from 10 to 120 minutes.
+call, including document bundle preparation. Choose a limit from 10 to 120
+minutes. **Reviews → PDF extraction → Extraction time limit** separately
+controls PDF reading, including retries, and defaults to 45 minutes. Choose
+a limit from 5 to 120 minutes. Saved limits are preserved when you upgrade.
 
 ## Appearance and keyboard
 
@@ -58,9 +70,28 @@ comfortable spacing, and shows the editor in a 13-pixel font without
 wrapping. You can also adjust the open editor or report without changing the
 default.
 
+In **General → Appearance & reading**, use the **System**, **Light**, or
+**Dark** buttons for the default colors. Choose **Custom** to show the color
+scheme selector without changing your current appearance. **System**, **Light**,
+and **Dark** remain at the top of the list, with custom schemes below.
+**Harbor** uses cool slate and ocean blue, **Parchment** uses warm paper and
+amber, and **Iris** uses violet and plum. **Grove** adds sage and forest green,
+**Ember** adds warm ash and copper, and **Lagoon** adds sea glass and teal.
+Every custom scheme has light and dark variants. Selecting a theme applies its mode
+and palette together, including matching editor colors, and saves it on this
+device. **System** follows your device’s light or dark appearance using the
+original Pipeline colors.
+
 **Spacing** adjusts the room between controls and sections. Control labels
 keep the same text size in **Comfortable** and **Compact**. Use
 **Interface text size** to enlarge both text and spacing.
+
+**Typeface** chooses Inter (the default), Instrument Sans, IBM Plex Sans, or
+Source Sans 3 + Source Serif 4. The Source pairing uses sans-serif text for
+the interface and serif text for reports. Changes apply immediately and are
+saved on this device. All four choices work offline, including italics and
+their supported character sets. Code editors and mathematical notation keep
+their specialized fonts.
 
 Drag the sidebar's right edge to adjust its width. Pipeline remembers the
 width you choose. Double-click the edge to restore the compact default width.
@@ -73,6 +104,27 @@ conversation, or review, choose **Continue where I left off** under
 **General → Startup**. With that setting, **Settings** and **Help** still return
 to **Home** on the next launch.
 **General → Startup → Guided setup** reopens the **Get started** guide.
+
+## Local PDF parser and graphics cards
+
+In **Reviews → PDF extraction**, install the **PaddleOCR-VL Full Parser** to
+read PDFs on this computer. On supported 64-bit Windows systems, Pipeline
+automatically downloads graphics card support and its recognition model after
+the parser is installed. This can add up to 2 GB to the download. Existing
+parser users receive the same setup after upgrading Pipeline.
+
+**Advanced parser settings → Use graphics card** is on by default. Turn it
+off before installation to use the processor. Unsupported graphics cards and
+failed optional downloads leave the CPU parser installed. Settings shows the
+setup result and offers **Install** or **Repair** to retry. Cancelled setup and
+uninstalled graphics support stay paused until you install it again. Automatic
+setup waits while reviews use the parser, and pauses if a review needs the
+parser during a download. It resumes about 15 minutes later.
+
+Graphics support is used only for the Full Parser's page recognition on Windows.
+Page layout remains on the processor. PDF viewing, Poppler extraction, and cloud
+models do not need it. Removing the Full Parser removes its managed graphics
+runtime and models too.
 
 ## Research data folder
 
@@ -137,6 +189,18 @@ file paths.
 Notices and scheduled work need Pipeline to be running. To keep it going
 after you close the window, turn on **Keep running when the window closes** on
 the **Automations** page. Pipeline won't wake a sleeping computer.
+
+## Command-line tools
+
+Under **Advanced & About → Command-line tools**, choose **Install command** to
+use Pipeline from a terminal or script. This optional launcher uses the installed
+app's engine and PDF tools, without another download. Settings shows commands
+to try it and enable `pipeline-cli` in your terminal. Add `~/.pipeline/bin` to
+your user `PATH` to keep it available in future terminals.
+
+Choose **Repair command** after moving the app if the command stops working.
+**Uninstall command** removes the user launcher and keeps your data, models,
+and the existing command inside the app. See [Command line](cli.md) for examples.
 
 ## Updates
 

@@ -4,8 +4,13 @@ import {
   saveAppPreferences,
   type AppPreferences,
 } from "../../lib/appPreferences";
-import type { ThemePreference } from "../../lib/theme";
+import {
+  THEME_OPTIONS,
+  themeOption,
+  type ThemePreference,
+} from "../../lib/theme";
 import { openGetStarted } from "../../lib/getStarted";
+import { TYPEFACE_OPTIONS, typefaceOption } from "../../lib/typefaces";
 import { isMac } from "../../lib/platform";
 import { SectionHeader, Toggle, selectClass } from "./controls";
 import { SettingRow, SaveFeedback } from "./SaveState";
@@ -43,7 +48,19 @@ export function AppearanceSettings({
 }) {
   const { preferences: p, update, feedback } = usePreferenceEditor();
   const fieldId = useId();
+  const isCustom = themeOption(theme).colorTheme !== "default";
+  const [customMenuOpen, setCustomMenuOpen] = useState(isCustom);
+  const showCustomMenu = customMenuOpen || isCustom;
   const [themeError, setThemeError] = useState("");
+  const changeTheme = (value: ThemePreference, closeMenu = false) => {
+    try {
+      onThemeChange(value);
+      if (closeMenu) setCustomMenuOpen(false);
+      setThemeError("");
+    } catch {
+      setThemeError("Could not save theme. Try again.");
+    }
+  };
   const scale = (
     key: "interfaceScale" | "reportScale",
     label: string,
@@ -68,7 +85,7 @@ export function AppearanceSettings({
             </option>
           ))}
       </select>
-      {feedback.key === key && <SaveFeedback {...feedback} />}
+      {feedback.key === key && <SaveFeedback error={feedback.error} />}
     </>
   );
   return (
@@ -77,26 +94,33 @@ export function AppearanceSettings({
       <SettingRow
         id="general-preferences"
         label="Appearance"
-        description="System follows your device’s light or dark appearance."
+        description="System follows your device’s appearance using the default colors."
       >
         <div
           className="settings-segmented"
           role="radiogroup"
           aria-label="Appearance"
         >
-          {(["system", "light", "dark"] as const).map((value) => (
-            <label key={value} className={theme === value ? "is-selected" : ""}>
+          {(["system", "light", "dark", "custom"] as const).map((value) => (
+            <label
+              key={value}
+              className={
+                (showCustomMenu ? value === "custom" : theme === value)
+                  ? "is-selected"
+                  : ""
+              }
+            >
               <input
                 type="radio"
-                name="appearance"
+                name={`${fieldId}-appearance`}
                 value={value}
-                checked={theme === value}
+                checked={showCustomMenu ? value === "custom" : theme === value}
                 onChange={() => {
-                  try {
-                    onThemeChange(value);
+                  if (value === "custom") {
+                    setCustomMenuOpen(true);
                     setThemeError("");
-                  } catch {
-                    setThemeError("Could not save appearance. Try again.");
+                  } else {
+                    changeTheme(value, true);
                   }
                 }}
               />
@@ -104,7 +128,63 @@ export function AppearanceSettings({
             </label>
           ))}
         </div>
+        {showCustomMenu && (
+          <div className="mt-2">
+            <label className="sr-only" htmlFor={`${fieldId}-custom-theme`}>
+              Custom color scheme
+            </label>
+            <select
+              id={`${fieldId}-custom-theme`}
+              className={selectClass}
+              value={theme}
+              onChange={(event) =>
+                changeTheme(event.target.value as ThemePreference)
+              }
+            >
+              {THEME_OPTIONS.filter(
+                (option) => option.colorTheme === "default",
+              ).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+              <optgroup label="Custom themes">
+                {THEME_OPTIONS.filter(
+                  (option) => option.colorTheme !== "default",
+                ).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+          </div>
+        )}
         <SaveFeedback error={themeError} />
+      </SettingRow>
+      <SettingRow
+        id="interface-typeface"
+        controlId={`${fieldId}-typeface`}
+        label="Typeface"
+        description={typefaceOption(p.typeface).description}
+      >
+        <select
+          id={`${fieldId}-typeface`}
+          aria-describedby={`${fieldId}-typeface-help`}
+          className={selectClass}
+          value={p.typeface}
+          onChange={(event) =>
+            update("typeface", typefaceOption(event.target.value).value)
+          }
+        >
+          {TYPEFACE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+              {option.value === "inter" ? " · Default" : ""}
+            </option>
+          ))}
+        </select>
+        {feedback.key === "typeface" && <SaveFeedback error={feedback.error} />}
       </SettingRow>
       <SettingRow
         id="interface-scale"
@@ -142,7 +222,7 @@ export function AppearanceSettings({
           <option value="comfortable">Comfortable</option>
           <option value="compact">Compact</option>
         </select>
-        {feedback.key === "density" && <SaveFeedback {...feedback} />}
+        {feedback.key === "density" && <SaveFeedback error={feedback.error} />}
       </SettingRow>
     </>
   );

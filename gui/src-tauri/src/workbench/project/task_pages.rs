@@ -28,13 +28,21 @@ pub(super) fn page(
     open_only: bool,
 ) -> WorkbenchResult<TaskPage> {
     scope(store, workspace)?;
+    page_on(&store.connection()?, workspace, before, open_only)
+}
+
+pub(super) fn page_on(
+    conn: &rusqlite::Connection,
+    workspace: &str,
+    before: Option<&TaskCursor>,
+    open_only: bool,
+) -> WorkbenchResult<TaskPage> {
     if let Some(c) = before {
         valid_id(&c.id)?;
         if c.updated_at.len() > 128 {
             return Err(WorkbenchError::invalid("Invalid task cursor"));
         }
     }
-    let conn = store.connection()?;
     let mut query=conn.prepare("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE workspace_id=?1 AND kind='task' AND (?2=0 OR json_extract(body_json,'$.status') NOT IN ('completed','rejected')) AND (?3 IS NULL OR updated_at<?3 OR (updated_at=?3 AND id>?4)) ORDER BY updated_at DESC,id LIMIT ?5").map_err(err)?;
     let mut records = query
         .query_map(
@@ -72,7 +80,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let s = Store::open_at(&t.path().join("store")).unwrap();
         let ws = s
-            .create_workspace(super::super::super::store::CreateWorkspaceRequest {
+            .create_legacy_workspace(super::super::super::store::CreateWorkspaceRequest {
                 name: "audit".into(),
                 root: None,
                 operation_id: "create".into(),

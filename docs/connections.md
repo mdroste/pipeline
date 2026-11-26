@@ -8,7 +8,8 @@ least one connection under **Settings → Models**.
 | Connection | What you need | Conversations | Reviews | Web search in reviews |
 | --- | --- | --- | --- | --- |
 | ChatGPT | A ChatGPT plan and the [Codex](https://github.com/openai/codex) command-line tool | Yes | Yes | Yes |
-| Claude Code | A Claude Pro, Max, Team, or Enterprise plan and [Claude Code](https://code.claude.com/docs/en/setup) | Yes | Yes | Yes |
+| Claude Code | A Claude Pro, Max, Ultra, Team, or Enterprise plan and [Claude Code](https://code.claude.com/docs/en/setup) | Yes | Yes | Yes |
+| Claude Code (API) | Claude Code signed in to an Anthropic Console account | Yes | Yes | Yes |
 | OpenAI API | An OpenAI API key | Yes | Yes | Yes |
 | Anthropic API | An Anthropic API key | Yes | Yes | Yes |
 | Google Gemini API | A Gemini API key | Yes | Yes | Yes |
@@ -58,7 +59,8 @@ Check the cited pages before relying on a review's claims.
 1. Install version 0.165.0 or newer of the Codex command-line tool.
 2. Open **Settings → Models → OpenAI**. Under **ChatGPT account**,
    choose **Sign in to ChatGPT** and finish signing in in your browser.
-3. For reviews, choose **Subscription** under **Reviews** on the same card.
+3. For reviews, choose **ChatGPT account** under **Connection** on the same card.
+   If OpenAI is your default provider, change **Connection** under **Default model**.
    For a conversation, choose **ChatGPT** in the conversation's model picker.
 
 One sign-in covers both conversations and reviews. **Models & usage** lists
@@ -103,20 +105,47 @@ The interrupted call still counts against your plan.
 2. In a terminal, run `claude auth login` and sign in with your Claude
    subscription account.
 3. For reviews, open **Settings → Models → Anthropic** and choose
-   **Subscription**.
+   **Claude Code · Subscription** under **Connection**. If Anthropic is your
+   default provider, change **Connection** under **Default model**.
 4. For a conversation, choose **Claude Code** in the conversation's model
    picker, then pick a model and a **Thinking** level.
 
 Claude Code handles its own sign-in, and Pipeline never reads your Claude
-credentials. Pipeline checks the sign-in before each conversation turn and at
-the first Claude call of each review. The check accepts only a Claude
-subscription, not an API key, an Anthropic Console account, or a
-cloud-provider account. If the check
-fails, follow the error, which usually asks you to run `claude auth login`
-again or update Claude Code.
+credentials. Pipeline checks the selected billing mode before every Claude
+process, including review calls, titles, and idea generation. Subscription
+mode accepts only a Claude subscription. If the sign-in is missing, changed
+to an API account, or cannot be verified, the request stops. Saved API keys
+and API-billed backup providers cannot take over a subscription request.
 
-Use counts against your Claude plan, including any extra usage you've turned
-on in your Claude account.
+Subscription use counts against your Claude plan, including any extra usage
+you've turned on in your Claude account.
+
+### Use Claude Code with API billing
+
+Run `claude auth login --console` in a terminal to sign in to Anthropic
+Console through Claude Code. Choose **Claude Code · Console billing** in the Anthropic
+settings for reviews, or **Claude Code (API)** in a conversation's model
+picker. On Windows, sign in inside WSL too if the conversation uses WSL.
+Claude Code owns this login; Pipeline does not pass it the API key saved in
+Settings. **Direct API · API key** and the **Anthropic API** conversation connection
+continue to use that saved key.
+
+This connection currently accepts the Console login that saves an API key
+inside Claude Code. If the native login offers a choice, choose **Create an
+API key**. Keyless Console profiles and cloud-provider logins are not yet
+supported; an unrecognized login stops before a prompt is sent.
+
+This mode bills your Console account separately from a Claude subscription.
+An existing conversation keeps its saved connection even when you change the
+review default. To switch billing for that conversation, change its connection
+in the model picker. If Claude Code is signed into the wrong account type, sign in
+again with the intended type before sending a request.
+
+Claude Code can make multiple API calls inside one agent turn. Pipeline cannot
+yet limit that loop's cost, so reviews and automations
+with a dollar budget stop before starting a Claude Code API request. Use
+**Direct API · API key** when you need Pipeline's estimated dollar budget. Call and
+time limits still apply to native Claude Code runs.
 
 ### What Claude can do in a conversation
 
@@ -136,7 +165,7 @@ The first report arrives with a Claude reply. Other Claude sessions may have
 used more since the displayed report.
 
 Pipeline titles a new Claude conversation with one extra call to the
-cheapest model your plan offers, using short excerpts of the first message and
+cheapest available model using the same billing mode, using short excerpts of the first message and
 reply. Turn this off with **Name new conversations automatically** under
 **Settings → Conversations**.
 
@@ -243,11 +272,13 @@ API keys work for conversations and reviews. The provider bills you for each cal
 
 | Provider | Where | Field |
 | --- | --- | --- |
-| OpenAI | **OpenAI** card, under **Reviews**, choose **API** | **OpenAI API Key** |
-| Anthropic | **Anthropic** card, choose **API** | **Claude API Key** |
+| OpenAI | **OpenAI** card, under **Connection**, choose **OpenAI API** | **OpenAI API Key** |
+| Anthropic | **Anthropic** card, under **Connection**, choose **Direct API · API key** | **Claude API Key** |
 | Google | **Google** card | **Gemini API Key** |
 
-Enter the key, then choose **Save**. Pipeline stores keys encrypted on this
+For your default provider, select the connection under **Default model**;
+the provider card links back to that field. Enter the key, then choose **Save**.
+Pipeline stores keys encrypted on this
 computer; see [Privacy](../PRIVACY.md). In a conversation, open the model picker
 and choose **OpenAI API**, **Anthropic API**, or **Gemini API**. Review access
 settings do not change an existing conversation’s connection. Gemini always uses

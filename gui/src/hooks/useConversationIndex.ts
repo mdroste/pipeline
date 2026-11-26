@@ -1,5 +1,5 @@
+import { listenConversationEvents } from "../lib/workbench/events";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../lib/appEvents";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import {
@@ -7,7 +7,6 @@ import {
   type ConversationIndexRow,
   type IndexCursor,
 } from "../lib/workbench/conversationClient";
-import type { WorkbenchEvent } from "../lib/workbench/runtimeTypes";
 
 export type IndexedConversation = ConversationIndexRow;
 const inflight = new Map<string, ReturnType<typeof conversationClient.index>>();
@@ -103,7 +102,7 @@ export default function useConversationIndex(
   useEffect(() => {
     if (!enabled) return;
     const offChanged = appEvents.on("conversations-changed", refresh);
-    const offHost = listen<WorkbenchEvent>("workbench:event", ({ payload }) => {
+    const offHost = listenConversationEvents(({ payload }) => {
       if (CHANGES_THE_LIST.has(payload.kind)) refresh();
     }).catch(() => null);
     return () => {

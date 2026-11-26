@@ -124,6 +124,7 @@ export default function EnginesPanel({
       listen<{ line: string }>("engines:log", (e) => {
         setLogLines((l) => [...l.slice(-(MAX_LOG_LINES - 1)), e.payload.line]);
       }),
+      listen("engines:changed", () => refresh()),
     ]).then((registrations) => {
       const registered = registrations.flatMap((registration) =>
         registration.status === "fulfilled" ? [registration.value] : [],
@@ -152,7 +153,7 @@ export default function EnginesPanel({
       live = false;
       unlistens.forEach((unlisten) => unlisten());
     };
-  }, [listenerAttempt]);
+  }, [listenerAttempt, refresh]);
 
   // The installer leaves sound files alone and rebuilds what fails its check,
   // so repairing is the same call as installing.
@@ -224,8 +225,8 @@ export default function EnginesPanel({
   const backendBusy = engines.some((e) => e.installing);
   const watchingBackground = backendBusy && busy === null;
 
-  // The backend reports no completion event, so a remounted panel polls the
-  // engine list until the install it inherited ends.
+  // Poll as well as listening for changes, so a remounted panel also follows
+  // manual installs that started before it subscribed.
   useEffect(() => {
     if (!watchingBackground) return;
     const timer = window.setInterval(refresh, BACKGROUND_POLL_MS);
@@ -242,7 +243,9 @@ export default function EnginesPanel({
     }
     if (!finished.length) return;
     onSystemChange?.();
-    const failed = finished.find((engine) => !engine.installed);
+    const failed = finished.find(
+      (engine) => !engine.installed && !engine.setup_message,
+    );
     if (failed && !cancelRequested.current)
       setError(
         `${failed.label} didn’t finish installing. Choose Install to try again.`,
@@ -272,7 +275,7 @@ export default function EnginesPanel({
       </div>
 
       {openDirError && (
-        <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-400">
+        <p role="alert" className="mb-3 text-xs text-danger">
           {openDirError}
           <ReportIssueLink />
         </p>
@@ -281,7 +284,7 @@ export default function EnginesPanel({
       {engineStatusError && (
         <div
           role="alert"
-          className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          className="mb-3 flex items-start gap-3 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
         >
           <span className="flex-1">
             {engineStatusError}
@@ -290,7 +293,7 @@ export default function EnginesPanel({
           <button
             type="button"
             onClick={refresh}
-            className="shrink-0 rounded border border-red-300 px-2 py-1 font-medium dark:border-red-800"
+            className="shrink-0 rounded border border-danger px-2 py-1 font-medium"
           >
             Retry status
           </button>
@@ -300,7 +303,7 @@ export default function EnginesPanel({
       {listenerError && (
         <div
           role="alert"
-          className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          className="mb-3 flex items-start gap-3 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
         >
           <span className="flex-1">
             {listenerError}
@@ -309,7 +312,7 @@ export default function EnginesPanel({
           <button
             type="button"
             onClick={() => setListenerAttempt((attempt) => attempt + 1)}
-            className="shrink-0 rounded border border-red-300 px-2 py-1 font-medium dark:border-red-800"
+            className="shrink-0 rounded border border-danger px-2 py-1 font-medium"
           >
             Retry connection
           </button>
@@ -318,7 +321,9 @@ export default function EnginesPanel({
 
       <div className="space-y-3">
         {engines.map((engine) => {
-          const isBusy = busy === engine.id || (backendBusy && busy === null);
+          const isBusy =
+            busy === engine.id || (engine.installing && busy === null);
+          const actionBlocked = !listenersReady || backendBusy || busy !== null;
           const available = engine.available !== false;
           return (
             <div
@@ -331,11 +336,11 @@ export default function EnginesPanel({
                     {engine.label}
                   </span>
                   {!available ? (
-                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-warning-soft text-warning">
                       unavailable
                     </span>
                   ) : engine.installed ? (
-                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-green-700 text-white dark:bg-green-600">
+                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-success-soft text-success">
                       installed{engine.version ? ` v${engine.version}` : ""}
                     </span>
                   ) : (
@@ -358,7 +363,7 @@ export default function EnginesPanel({
                       <button
                         type="button"
                         onClick={() => install(engine.id, engine.label)}
-                        disabled={!listenersReady || !available}
+                        disabled={actionBlocked || !available}
                         className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                       >
                         Repair
@@ -366,7 +371,7 @@ export default function EnginesPanel({
                       <button
                         type="button"
                         onClick={() => uninstall(engine.id)}
-                        disabled={!listenersReady}
+                        disabled={actionBlocked}
                         className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                       >
                         Uninstall
@@ -376,8 +381,8 @@ export default function EnginesPanel({
                     <button
                       type="button"
                       onClick={() => install(engine.id)}
-                      disabled={!listenersReady || !available}
-                      className="text-xs py-1.5 px-3 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
+                      disabled={actionBlocked || !available}
+                      className="ui-button ui-button--primary ui-button--sm"
                     >
                       Install (~{(engine.est_download_mb / 1000).toFixed(1)} GB)
                     </button>
@@ -390,8 +395,17 @@ export default function EnginesPanel({
               </p>
 
               {!available && engine.unavailable_reason && (
-                <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                <p className="text-xs text-warning leading-relaxed">
                   {engine.unavailable_reason}
+                </p>
+              )}
+
+              {engine.setup_message && !isBusy && (
+                <p
+                  role="status"
+                  className="text-xs text-warning leading-relaxed"
+                >
+                  {engine.setup_message}
                 </p>
               )}
 
@@ -455,7 +469,7 @@ export default function EnginesPanel({
       )}
 
       {error && (
-        <p className="mt-3 text-xs text-red-600 dark:text-red-400" role="alert">
+        <p className="mt-3 text-xs text-danger" role="alert">
           {error}
           <ReportIssueLink />
         </p>

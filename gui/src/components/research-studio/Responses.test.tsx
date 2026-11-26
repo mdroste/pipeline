@@ -36,6 +36,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 const data = {
   papers: [],
   tasks: [],
+  changes: [],
   applications: [],
   executions: [],
   anchors: [
@@ -90,6 +91,35 @@ beforeEach(() => {
   ]);
 });
 afterEach(cleanup);
+
+it("opens the requested response after loading and preserves the existing draft guard", async () => {
+  const onResponseOpen = vi.fn();
+  const view = (id: string) => (
+    <Responses
+      workspaceId="ws"
+      data={data}
+      onRefresh={async () => {}}
+      onDocument={vi.fn()}
+      responseTargetId={id}
+      onResponseOpen={onResponseOpen}
+      active
+    />
+  );
+  const mounted = render(view("r2"));
+  expect(await screen.findByLabelText("Draft response")).toHaveValue(
+    "Second draft",
+  );
+  expect(onResponseOpen).toHaveBeenCalledWith("r2", "Response 2");
+  fireEvent.change(screen.getByLabelText("Draft response"), {
+    target: { value: "Keep my unsaved wording" },
+  });
+  mocks.confirm.mockResolvedValueOnce(false);
+  mounted.rerender(view("r1"));
+  await waitFor(() => expect(mocks.confirm).toHaveBeenCalledOnce());
+  expect(screen.getByLabelText("Draft response")).toHaveValue(
+    "Keep my unsaved wording",
+  );
+});
 
 it("keeps an unsaved reply when the prompt for another comment is cancelled", async () => {
   render(view());

@@ -131,11 +131,12 @@ export default function WorkspaceRailNavigation({
                 </MenuItem>
               ))}
             <MenuSeparator />
+            <MenuItem onSelect={() => onAllProjects?.()}>All projects</MenuItem>
+            <MenuSeparator />
+            <MenuItem onSelect={onNewProject}>New project</MenuItem>
             <MenuItem onSelect={() => onNavigate("project-settings")}>
               Project settings
             </MenuItem>
-            <MenuItem onSelect={() => onAllProjects?.()}>All projects</MenuItem>
-            <MenuItem onSelect={onNewProject}>New project</MenuItem>
           </Menu>
           <WorkspaceProjectNavigation
             key={project.id}
@@ -146,7 +147,7 @@ export default function WorkspaceRailNavigation({
         </>
       )}
       <div className="nav-label">
-        <span>{project ? "Chats" : "No project"}</span>
+        <span>{project ? "Conversations" : "No project"}</span>
         <IconButton
           size="sm"
           label="New conversation"

@@ -1,0 +1,39 @@
+[
+  {
+    "file": "text-layout.pdf",
+    "text": "Pipeline PDF qualification page 1"
+  },
+  {
+    "file": "embedded-font.pdf",
+    "text": "Résumé"
+  },
+  {
+    "file": "cjk-cid.pdf",
+    "text": "研究方法"
+  },
+  {
+    "file": "images.pdf",
+    "text": "JPEG and transparent PNG"
+  },
+  {
+    "file": "scanned-codecs.pdf",
+    "text": ""
+  },
+  {
+    "file": "rotated-cropped.pdf",
+    "text": "Research finding"
+  },
+  {
+    "file": "encrypted.pdf",
+    "password": "pipeline-test",
+    "text": "Résumé"
+  },
+  {
+    "file": "encrypted.pdf",
+    "fails": true
+  },
+  {
+    "file": "damaged.pdf",
+    "fails": true
+  }
+]

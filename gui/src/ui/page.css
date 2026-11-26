@@ -10,6 +10,43 @@
   overflow: auto;
   color: var(--ui-page-text);
 }
+/* Index and setup pages share chrome. A workspace reserves space for its
+   reader/editor and owns scrolling inside its named panes. */
+.ui-page--index {
+  max-width: 92.5rem;
+}
+.ui-page--setup {
+  max-width: 80rem;
+}
+.ui-layout-workspace {
+  --ui-workspace-gutter: var(--ui-space-4);
+  --ui-workspace-top: var(--ui-space-4);
+}
+.ui-workspace-header {
+  flex-shrink: 0;
+  min-width: 0;
+  padding: var(--ui-workspace-top, var(--ui-space-4)) var(--ui-page-gutter);
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+}
+.ui-workspace-title {
+  margin: 0;
+  font-size: var(--ui-text-page);
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+.ui-location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-space-2);
+  padding: var(--ui-space-2) var(--ui-page-gutter);
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-label);
+}
 .ui-page button:focus-visible,
 .ui-page summary:focus-visible,
 .ui-page input:focus-visible,
@@ -73,7 +110,9 @@
 }
 .ui-page .ui-page-tabs [aria-selected="true"],
 .ui-page .ui-page-tabs [aria-pressed="true"] {
-  color: inherit;
+  color: var(--ui-selection);
+  font-weight: 600;
+  box-shadow: inset 0 -2px var(--ui-selection-indicator);
 }
 .ui-page-button {
   border: 1px solid var(--ui-page-line);
@@ -117,6 +156,9 @@
   border-radius: var(--ui-radius-md);
 }
 @media (max-width: 1050px) {
+  .ui-layout-workspace {
+    --ui-page-gutter: var(--ui-space-4);
+  }
   .ui-page {
     padding: var(--ui-space-4);
   }

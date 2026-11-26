@@ -319,6 +319,11 @@ fn preparing_again_returns_the_same_mission_but_changed_inputs_fail() {
     let rows = storage::list(&s, None, 0, false).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].open_questions, 0);
+    let scoped = storage::list(&s, Some(&m.workspace_id), 0, false).unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert!(storage::list(&s, Some("another-project"), 0, false)
+        .unwrap()
+        .is_empty());
 }
 #[test]
 fn interruption_keeps_child_identity_and_its_reserved_budget() {
@@ -494,7 +499,8 @@ async fn a_mission_action_reaches_the_runtime_boundary_of_a_real_submission() {
     let _turn = crate::orchestration::tests::exclusive_turn_state().await;
     let w = crate::orchestration::tests::disposable_workspace();
     let operation = store::id();
-    let session = crate::workbench::discovery::source(&w, &operation, "Mission", false).unwrap();
+    let session =
+        crate::workbench::discovery::legacy_source(&w, &operation, "Mission", false).unwrap();
     let source = crate::workbench::tasks::binding(&w, &session).unwrap();
     let (mut scopes, authority_fingerprints, context) =
         workspace::roles(&w, &source, &operation, "Mission", &Policy::default()).unwrap();
@@ -744,7 +750,7 @@ async fn a_waiting_mission_polls_without_writing_a_revision_or_event() {
     let w = crate::orchestration::tests::disposable_workspace();
     let (_temp, s, mut m) = fixture();
     let workspace = w
-        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+        .create_legacy_workspace(crate::workbench::store::CreateWorkspaceRequest {
             name: "Monitored".into(),
             root: None,
             operation_id: store::id(),
@@ -933,7 +939,8 @@ fn a_lost_action_is_never_charged_for_the_time_the_app_was_closed() {
 /// A mission whose planner conversation is real, with its turn lost in a restart.
 fn lost_turn(s: &Store, mut m: Mission) -> (crate::workbench::store::Store, Mission, TaskRun) {
     let w = crate::orchestration::tests::disposable_workspace();
-    let source = crate::workbench::discovery::source(&w, &store::id(), "Mission", false).unwrap();
+    let source =
+        crate::workbench::discovery::legacy_source(&w, &store::id(), "Mission", false).unwrap();
     let b = crate::workbench::tasks::binding(&w, &source).unwrap();
     let planner = Scope {
         session_id: Some(b.session_id),

@@ -1,3 +1,5 @@
+import IconButton from "../ui/IconButton";
+import { Icon } from "../ui/icons";
 import { useState, useEffect } from "react";
 import { appClient } from "../lib/appClient";
 import type {
@@ -14,6 +16,7 @@ import { preparationTitle } from "../lib/workflowOverview";
 interface Props {
   /** The queued review this progress belongs to; scopes pass cancellation. */
   runKey?: string | null;
+  allowPassCancellation?: boolean;
   state: PipelineState;
   runStartedAt?: number | null;
   /** When the run ended; stops the overall clock for a finished run. */
@@ -250,38 +253,14 @@ function StageMarker({
       <span
         className={`${base} bg-[var(--ui-success-soft)] text-[var(--ui-success)]`}
       >
-        <svg
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={3}
-            d="M5 13l4 4L19 7"
-          />
-        </svg>
+        <Icon name="check" className="h-3 w-3" />
       </span>
     );
   }
   if (status === "failed") {
     return (
       <span className={`${base} bg-[var(--ui-danger-soft)] text-danger`}>
-        <svg
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={3}
-            d="M6 18L18 6M6 6l12 12"
-          />
-        </svg>
+        <Icon name="close" className="h-3 w-3" />
       </span>
     );
   }
@@ -299,7 +278,9 @@ function StageMarker({
     return (
       <span className="relative z-[1] grid h-6 w-6 flex-none place-items-center">
         <span className="absolute -inset-1 rounded-full border border-line-strong" />
-        <span className={`${base} bg-inverse text-on-inverse`}>
+        <span
+          className={`${base} border border-running bg-running-soft text-running`}
+        >
           {number ?? <span className="h-2 w-2 rounded-full bg-current" />}
         </span>
       </span>
@@ -317,19 +298,15 @@ function StageMarker({
 function PassStatusIcon({ status }: { status: PassStatus }) {
   switch (status) {
     case "done":
-      return (
-        <span className="text-green-700 dark:text-green-400 text-xs">done</span>
-      );
+      return <span className="text-success text-xs">done</span>;
     case "running":
       return (
-        <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse">
+        <span className="text-running text-xs animate-pulse motion-reduce:animate-none">
           running
         </span>
       );
     case "error":
-      return (
-        <span className="text-red-600 dark:text-red-400 text-xs">failed</span>
-      );
+      return <span className="text-danger text-xs">failed</span>;
     case "skipped":
       return (
         <span className="text-gray-500 dark:text-gray-400 text-xs italic">
@@ -347,6 +324,7 @@ function PassStatusIcon({ status }: { status: PassStatus }) {
 
 export default function PipelineProgress({
   runKey,
+  allowPassCancellation = true,
   state,
   plan,
   stageHistory = [],
@@ -705,9 +683,7 @@ export default function PipelineProgress({
                 {!last && (
                   <span
                     className={`absolute bottom-0 top-6 w-px ${
-                      status === "done"
-                        ? "bg-green-600/40 dark:bg-green-500/40"
-                        : "bg-line-strong"
+                      status === "done" ? "bg-success" : "bg-line-strong"
                     }`}
                   />
                 )}
@@ -718,7 +694,7 @@ export default function PipelineProgress({
                   <span
                     className={`text-sm ${
                       status === "failed"
-                        ? "text-red-600 dark:text-red-400 font-medium"
+                        ? "text-danger font-medium"
                         : status === "active"
                           ? "text-gray-900 dark:text-gray-100 font-medium"
                           : "text-gray-500 dark:text-gray-400"
@@ -727,12 +703,12 @@ export default function PipelineProgress({
                     {stage.label}
                   </span>
                   {status === "failed" && (
-                    <span className="text-red-600 dark:text-red-400 text-xs ml-auto">
+                    <span className="text-danger text-xs ml-auto">
                       {stage.cancelled ? "cancelled" : "failed"}
                     </span>
                   )}
                   {status === "active" && stage.subitems.length === 0 && (
-                    <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">
+                    <span className="text-running text-xs animate-pulse motion-reduce:animate-none ml-auto">
                       running…
                     </span>
                   )}
@@ -753,6 +729,7 @@ export default function PipelineProgress({
                               : null
                           }
                           runKey={runKey}
+                          allowCancellation={allowPassCancellation}
                         />
                       </span>
                     )}
@@ -774,6 +751,7 @@ export default function PipelineProgress({
                               : null
                           }
                           runKey={runKey}
+                          allowCancellation={allowPassCancellation}
                         />
                       </div>
                     ))}
@@ -792,10 +770,12 @@ function PassMeta({
   subitem,
   elapsed,
   runKey,
+  allowCancellation,
 }: {
   subitem: DisplaySubitem;
   elapsed: string | null;
   runKey?: string | null;
+  allowCancellation: boolean;
 }) {
   return (
     <span className="flex items-center gap-2 text-xs">
@@ -805,8 +785,8 @@ function PassMeta({
         </span>
       )}
       <PassStatusIcon status={subitem.status} />
-      {subitem.status === "running" && subitem.passKey && (
-        <button
+      {allowCancellation && subitem.status === "running" && subitem.passKey && (
+        <IconButton
           type="button"
           onClick={() =>
             appClient
@@ -816,11 +796,10 @@ function PassMeta({
               })
               .catch(() => {})
           }
-          aria-label={`Cancel ${subitem.label}`}
-          className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+          label={`Cancel ${subitem.label}`}
         >
-          ✕
-        </button>
+          <Icon name="close" className="h-4 w-4" />
+        </IconButton>
       )}
     </span>
   );

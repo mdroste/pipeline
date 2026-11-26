@@ -3,7 +3,6 @@ import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useAppController } from "./hooks/useAppController";
 import ProviderLimitBanner from "./components/ProviderLimitBanner";
 import {
-  lazy,
   Suspense,
   useEffect,
   useLayoutEffect,
@@ -23,6 +22,11 @@ import { NavRailSlotProvider } from "./components/nav-rail/navRailSlot";
 import RunSetupPanel from "./components/RunSetupPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import GetStartedHost from "./components/get-started/GetStartedHost";
+import {
+  ExampleReviewSurface,
+  ExampleReviewSurfaceProvider,
+  useExampleReviewSurface,
+} from "./components/get-started/ExampleReviewSurface";
 import { openGetStarted } from "./lib/getStarted";
 import { HistoryRunOpener } from "./hooks/app/historyRunOpener";
 import WindowControls from "./components/WindowControls";
@@ -35,24 +39,23 @@ import type { QueuedRun } from "./lib/reviewTypes";
 import ReportIssueLink from "./components/ReportIssueLink";
 import { workbenchErrorMessage } from "./lib/workbenchError";
 
-const ReviewRunView = lazy(() => import("./components/ReviewRunView"));
-const SettingsPage = lazy(() => import("./components/SettingsPage"));
-const HomePage = lazy(() => import("./components/HomePage"));
-const TasksPage = lazy(() => import("./components/TasksPage"));
-const ProjectIndexPage = lazy(() => import("./components/ProjectIndexPage"));
-const AppSearch = lazy(() => import("./components/AppSearch"));
-const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
-const PipelinePage = lazy(() => import("./components/PipelinePage"));
-const ResearchActivity = lazy(() => import("./components/ResearchActivity"));
-const AboutPage = lazy(() => import("./components/AboutPage"));
-const HistoryPage = lazy(() => import("./components/HistoryPage"));
-const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
-const WorkflowGalleryPage = lazy(
-  () => import("./components/WorkflowGalleryPage"),
-);
-const loadBatchPanel = () => import("./components/BatchPanel");
-const BatchPanel = lazy(loadBatchPanel);
-const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
+import {
+  ReviewRunView,
+  SettingsPage,
+  HomePage,
+  TasksPage,
+  ProjectIndexPage,
+  AppSearch,
+  WorkspacePage,
+  PipelinePage,
+  ResearchActivity,
+  AboutPage,
+  HistoryPage,
+  ProjectsPage,
+  WorkflowGalleryPage,
+  BatchPanel,
+  ReportWorkspace,
+} from "./components/app/routePages";
 
 import {
   ReviewSetupReads,
@@ -60,6 +63,7 @@ import {
 } from "./components/reviewSetupReads";
 
 function AppShell() {
+  const exampleReviewSurface = useExampleReviewSurface();
   useAppAppearance();
   const {
     navigation,
@@ -418,7 +422,9 @@ function AppShell() {
           collapsed={navRailCollapsed}
           onActivity={() => void handleNavigate("activity")}
           tasksAttention={tasksAttention}
-          activePage={page}
+          activePage={exampleReviewSurface?.page ?? page}
+          transientNavigation={!!exampleReviewSurface?.page}
+          transientProjectNavigation={exampleReviewSurface?.projectNavigation}
           hasCurrentRun={hasCurrentRun}
           runs={runQueue.runs}
           runLimit={runQueue.limit}
@@ -468,15 +474,18 @@ function AppShell() {
           <UpdateBanner
             confirmRestart={() => {
               const unsaved = navigation.unsavedRef.current;
-              return confirmUpdateRestart({
-                unsavedChanges:
-                  unsaved.workflowDirty ||
-                  unsaved.settingsDirty ||
-                  unsaved.projectsDirty ||
-                  unsaved.tasksDirty,
-                reviews: isRunning,
-                conversations: workspaceActive,
-              });
+              return confirmUpdateRestart(
+                {
+                  unsavedChanges:
+                    unsaved.workflowDirty ||
+                    unsaved.settingsDirty ||
+                    unsaved.projectsDirty ||
+                    unsaved.tasksDirty,
+                  reviews: isRunning,
+                  conversations: workspaceActive,
+                },
+                confirmDialog,
+              );
             }}
           />
           {/* The Workspace page shows its own notice and the approval itself. */}
@@ -509,7 +518,7 @@ function AppShell() {
               }
             />
           )}
-          <div
+          <ExampleReviewSurface
             ref={contentRef}
             data-testid="app-content"
             className={`min-h-0 flex-1 ${page === "settings" ? "overflow-hidden" : "overflow-auto"}`}
@@ -540,6 +549,7 @@ function AppShell() {
                   onNavigate={(next) => void handleNavigate(next)}
                   onSetUp={() => openGetStarted("setup")}
                   onExampleReview={() => openGetStarted("example")}
+                  onExampleProject={() => openGetStarted("project-example")}
                 />
               ) : page === "project-index" ? (
                 <ProjectIndexPage
@@ -737,6 +747,12 @@ function AppShell() {
                     })
                   }
                   onGenerate={handleGenerate}
+                  onConnectModel={() =>
+                    void router.navigate({
+                      page: "settings",
+                      section: "providers",
+                    })
+                  }
                   onPaperPathChange={(path) => {
                     setPaperPath(path);
                     if (path) setRunConfigError(null);
@@ -757,7 +773,7 @@ function AppShell() {
                 />
               )}
             </Suspense>
-          </div>
+          </ExampleReviewSurface>
 
           {/* The log dock belongs to the run view, not to every destination. */}
           {page === "main" && logs.length > 0 && (
@@ -781,9 +797,11 @@ function AppShell() {
 /** The sidebar and the Workspace page are siblings joined by this slot. */
 function App() {
   return (
-    <NavRailSlotProvider>
-      <AppShell />
-    </NavRailSlotProvider>
+    <ExampleReviewSurfaceProvider>
+      <NavRailSlotProvider>
+        <AppShell />
+      </NavRailSlotProvider>
+    </ExampleReviewSurfaceProvider>
   );
 }
 

@@ -108,7 +108,7 @@ export default function SetupTab({
       {effective.diagnostics.map((item) => (
         <p
           key={item}
-          className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+          className="rounded border border-warning bg-warning-soft p-2 text-xs text-warning"
         >
           {harnessDiagnostic(item)}
         </p>

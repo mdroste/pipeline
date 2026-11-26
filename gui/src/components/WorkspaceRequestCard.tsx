@@ -95,12 +95,12 @@ function ApprovalDetails({
     !isFileChange
   )
     return (
-      <p className="mt-2 text-amber-900 dark:text-amber-200">
+      <p className="mt-2 text-warning">
         Review this request before continuing.
       </p>
     );
   return (
-    <div className="mt-2 space-y-2 text-amber-900 dark:text-amber-200">
+    <div className="mt-2 space-y-2 text-warning">
       {reason && (
         <p className="whitespace-pre-wrap">
           <span className="font-medium">Assistant’s explanation:</span> {reason}
@@ -287,12 +287,12 @@ export default function RequestCard({
           />
         );
         const row =
-          "flex items-start gap-2 rounded border border-amber-200 bg-white p-2 dark:border-neutral-700 dark:bg-neutral-900";
+          "flex items-start gap-2 rounded border border-warning bg-white p-2 dark:border-neutral-700 dark:bg-neutral-900";
         const radio = "mt-1 accent-gray-900 dark:accent-gray-300";
         return (
           <div key={id} className="mt-3">
             {header && header !== prompt && (
-              <div className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+              <div className="text-xs font-semibold uppercase tracking-wide text-warning">
                 {header}
               </div>
             )}
@@ -352,7 +352,7 @@ export default function RequestCard({
         );
       })}
       {withheld && (
-        <p className="mt-2 text-amber-900 dark:text-amber-200">
+        <p className="mt-2 text-warning">
           {unknownGrant
             ? "Allow once is not available because Pipeline cannot describe everything this request would grant."
             : "Allow once is not available for this request."}

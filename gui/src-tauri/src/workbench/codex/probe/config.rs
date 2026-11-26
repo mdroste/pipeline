@@ -12,7 +12,7 @@ pub(super) fn write_probe_config(
         .ok_or("Workbench probe fixture path is not valid UTF-8")?;
     let launcher_permissions = launcher_read_grants(launcher)?;
     let config = format!(
-        "cli_auth_credentials_store = \"file\"\n\
+        "{}cli_auth_credentials_store = \"file\"\n\
 default_permissions = \"{PROBE_PERMISSION_PROFILE}\"\n\
 \n\
 [permissions.{PROBE_PERMISSION_PROFILE}]\n\
@@ -30,6 +30,7 @@ description = \"Pipeline Workbench read-only qualification profile\"\n\
 \n\
 [permissions.{PROBE_PERMISSION_PROFILE}.network]\n\
 enabled = false\n",
+        crate::agent_runtime::codex::process::platform_config(),
         toml_basic_string(fixture_root),
         launcher_permissions,
     );

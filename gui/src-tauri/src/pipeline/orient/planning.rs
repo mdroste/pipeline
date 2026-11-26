@@ -307,11 +307,13 @@ pub(super) async fn build(
     } else {
         settings.orientation_effort(&provider)
     };
-    let timeout = (settings.step_timeout_secs / 2).max(60);
+    let timeout = settings.step_timeout_secs.max(60);
     let mut repairs = 0;
     let mut error = None;
     for round in 0..=MAX_EXPANSIONS + MAX_REPAIRS {
-        if crate::commands::is_cancelled() || crate::commands::is_pass_cancelled("orientation") {
+        if crate::cancellation::is_cancelled()
+            || crate::cancellation::is_pass_cancelled("orientation")
+        {
             return Err("Review cancelled".into());
         }
         let prompt = session.prompt(error.as_deref())?;
@@ -357,8 +359,8 @@ pub(super) async fn build(
                 .map_err(|e| format!("Invalid planning JSON: {e}"))
                 .and_then(|value| session.accept(value)),
             Err(error) => {
-                if crate::commands::is_cancelled()
-                    || crate::commands::is_pass_cancelled("orientation")
+                if crate::cancellation::is_cancelled()
+                    || crate::cancellation::is_pass_cancelled("orientation")
                     || super::super::review_budget::stopped(&error)
                     || super::super::provider_error::is_usage_limit_error(&error)
                     || super::super::provider_error::is_non_retryable_error(&error)

@@ -560,6 +560,38 @@ describe("ReportViewer", () => {
     expect(screen.getByText("1/2")).toBeInTheDocument();
   });
 
+  it("updates edited text in place and remounts only after find has marked it", async () => {
+    const user = userEvent.setup();
+    const { container, rerender } = render(
+      <ReportViewer markdown={"Alpha beta.\n\nGamma."} />,
+    );
+    const mounted = container.querySelector(".report-content");
+    const paragraph = screen.getByText("Gamma.");
+
+    // Without find marks, an edit reuses the rendered tree.
+    rerender(<ReportViewer markdown={"Alpha beta.\n\nGamma delta."} />);
+    expect(container.querySelector(".report-content")).toBe(mounted);
+    expect(screen.getByText("Gamma delta.")).toBe(paragraph);
+
+    // Marks replace rendered text nodes, so the next edit must not diff
+    // against them, even after the find bar has closed and cleared them.
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(screen.getByLabelText("Find in report"), "beta");
+    expect(container.querySelectorAll("mark.search-hit")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Close find" }));
+    expect(container.querySelector("mark.search-hit")).toBeNull();
+    rerender(<ReportViewer markdown={"Alpha beta gamma.\n\nGamma delta."} />);
+    const remounted = container.querySelector(".report-content");
+    expect(remounted).not.toBe(mounted);
+    expect(remounted).toHaveTextContent("Alpha beta gamma.");
+
+    // The fresh tree has no marks, so the edit after it updates in place.
+    rerender(<ReportViewer markdown={"Alpha.\n\nGamma delta."} />);
+    expect(container.querySelector(".report-content")).toBe(remounted);
+    expect(remounted).toHaveTextContent("Alpha.");
+    expect(remounted).not.toHaveTextContent("beta");
+  });
+
   it("caps find highlights on huge match counts and shows an open-ended total", async () => {
     const user = userEvent.setup();
     const { container } = render(

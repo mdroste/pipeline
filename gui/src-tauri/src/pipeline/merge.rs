@@ -220,9 +220,9 @@ pub async fn merge_step_outputs(
                 )
             };
             let cancellation_error = || {
-                if crate::commands::is_cancelled() {
+                if crate::cancellation::is_cancelled() {
                     Some("Pipeline cancelled".to_string())
-                } else if crate::commands::is_pass_cancelled(&merge_key_done) {
+                } else if crate::cancellation::is_pass_cancelled(&merge_key_done) {
                     Some("Cancelled by user".to_string())
                 } else {
                     None
@@ -231,10 +231,13 @@ pub async fn merge_step_outputs(
             if let Some(error) = cancellation_error() {
                 return Err(early_error(error));
             }
-            let _permit = crate::commands::await_or_cancel(sem.acquire(), Some(&merge_key_done))
-                .await
-                .map_err(early_error)?
-                .map_err(|_| early_error(format!("Semaphore closed during merge for {base_id}")))?;
+            let _permit =
+                crate::cancellation::await_or_cancel(sem.acquire(), Some(&merge_key_done))
+                    .await
+                    .map_err(early_error)?
+                    .map_err(|_| {
+                        early_error(format!("Semaphore closed during merge for {base_id}"))
+                    })?;
             if let Some(error) = cancellation_error() {
                 return Err(early_error(error));
             }
@@ -243,7 +246,7 @@ pub async fn merge_step_outputs(
                 serde_json::json!({ "name": merge_key_done, "status": "running" }),
             );
             let log_label = format!("Merge: {}", topic);
-            let resolution = crate::commands::await_or_cancel(
+            let resolution = crate::cancellation::await_or_cancel(
                 crate::model_catalog::resolve(&provider, &run_settings, Some(&selection)),
                 Some(&merge_key_done),
             )
@@ -535,11 +538,10 @@ pub async fn merge_step_outputs(
     }
 
     if !errors.is_empty() {
-        if crate::commands::is_cancelled() {
-            if let Some((_, error, _, _, _)) = errors
-                .iter()
-                .find(|(_, error, _, _, _)| crate::commands::is_pipeline_cancellation_error(error))
-            {
+        if crate::cancellation::is_cancelled() {
+            if let Some((_, error, _, _, _)) = errors.iter().find(|(_, error, _, _, _)| {
+                crate::cancellation::is_pipeline_cancellation_error(error)
+            }) {
                 return Err(error.clone());
             }
             return Err("Pipeline cancelled".to_string());

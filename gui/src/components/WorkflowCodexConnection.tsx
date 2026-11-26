@@ -124,7 +124,7 @@ export default function WorkflowCodexConnection({
         </pre>
       )}
       {error && (
-        <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+        <p role="alert" className="text-xs text-danger">
           {error}
           <ReportIssueLink />
         </p>

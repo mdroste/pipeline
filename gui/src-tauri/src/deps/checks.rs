@@ -43,10 +43,25 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
 /// result: a stale `loggedIn: true` payload must not override the CLI's own
 /// failing status. Execution or parse failures are unknown, not evidence that
 /// the user signed out.
+#[cfg(all(test, unix))]
 pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
-    let args = crate::agent_runtime::claude::subscription_args(&["auth".into(), "status".into()]);
+    check_claude_auth_mode(
+        command,
+        crate::agent_runtime::claude::AuthMode::Subscription,
+    )
+}
+
+fn check_claude_auth_mode(
+    command: &ResolvedCommand,
+    mode: crate::agent_runtime::claude::AuthMode,
+) -> Option<bool> {
+    let args = crate::agent_runtime::claude::sandbox_auth_args(
+        mode,
+        None,
+        &["auth".into(), "status".into()],
+    );
     let mut process = command.command(args);
-    crate::agent_runtime::claude::configure_subscription(&mut process);
+    crate::agent_runtime::claude::configure_native_auth(&mut process);
     configure_probe_command(&mut process);
     let output =
         crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
@@ -57,7 +72,7 @@ pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
     let value = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok()?;
     value.get("loggedIn")?.as_bool()?;
     Some(
-        crate::agent_runtime::claude::validate_subscription_status(&value, output.status.success())
+        crate::agent_runtime::claude::validate_auth_status(mode, &value, output.status.success())
             .is_ok(),
     )
 }
@@ -385,6 +400,11 @@ fn check_all_for(
     let has_anthropic_key = !settings.anthropic_api_key.trim().is_empty();
     let has_openai_key = !settings.openai_api_key.trim().is_empty();
     let claude_api_mode = settings.model_transport("claude") == "api";
+    let claude_auth_mode = if settings.claude_access_mode == "code_api" {
+        crate::agent_runtime::claude::AuthMode::Api
+    } else {
+        crate::agent_runtime::claude::AuthMode::Subscription
+    };
     let codex_api_mode = settings.model_transport("codex") == "api";
     let local_base_url = settings.local_base_url.clone();
     let local_api_key = settings.local_api_key.clone();
@@ -399,7 +419,9 @@ fn check_all_for(
                 version,
                 path,
             } = probe("claude", &["--version"]);
-            let auth = command.as_ref().and_then(check_claude_auth);
+            let auth = command
+                .as_ref()
+                .and_then(|command| check_claude_auth_mode(command, claude_auth_mode));
             (command.is_some(), version, path, auth)
         });
 
@@ -451,11 +473,7 @@ fn check_all_for(
                 None,
             )
         } else if found && claude_auth == Some(false) {
-            (
-                "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate."
-                    .to_string(),
-                None,
-            )
+            (claude_auth_mode.error().to_string(), None)
         } else if found && claude_auth.is_none() {
             (
                 "Claude CLI is installed, but authentication status could not be verified. Run `claude auth status`."

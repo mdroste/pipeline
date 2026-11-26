@@ -257,7 +257,8 @@ fn select_overrides(w: &crate::workbench::store::Store, session: &str, overrides
 async fn prepared_schedule() -> (crate::workbench::store::Store, String, Schedule) {
     let w = super::disposable_workspace();
     let operation = store::id();
-    let session = crate::workbench::discovery::source(&w, &operation, "Weekly", false).unwrap();
+    let session =
+        crate::workbench::discovery::legacy_source(&w, &operation, "Weekly", false).unwrap();
     let plan = chain(vec![delay("x")]);
     let inputs = json!({});
     let scope = adapters::prepare(&plan, Some(session.clone()), &inputs)

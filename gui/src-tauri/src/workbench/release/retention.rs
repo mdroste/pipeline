@@ -197,13 +197,19 @@ struct Scan {
     /// The shared walk stopped early, so cleanup can't trust this listing.
     partial: bool,
     conversations_partial: bool,
+    copies_partial: bool,
 }
 fn scan(store: &Store) -> WorkbenchResult<Scan> {
     let refs = references(store)?;
     let root = store.root_path();
     let mut budget = Walk::new();
     let mut conversation_walk = Walk::new();
+    let mut copy_walk = Walk::new();
     let mut items: BTreeMap<String, Vec<(PathBuf, u64)>> = BTreeMap::new();
+    items.insert(
+        "project_copies".into(),
+        children(&root.join("project-copies"), &mut copy_walk, None)?,
+    );
     for (path, size) in children(&root.join("blobs"), &mut budget, None)? {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         if name.as_deref().is_some_and(|n| n.ends_with(".pending")) {
@@ -274,6 +280,7 @@ fn scan(store: &Store) -> WorkbenchResult<Scan> {
         outside: refs.outside,
         partial: budget.partial,
         conversations_partial: conversation_walk.partial,
+        copies_partial: copy_walk.partial,
     })
 }
 fn active_jobs(store: &Store) -> WorkbenchResult<usize> {
@@ -372,6 +379,11 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
                 false,
                 "Files for conversations with no project folder. Kept with the conversation.",
             ),
+            "project_copies" => (
+                "Project working copies",
+                false,
+                "Private edit copies, including unreviewed and generated files. Review these in the owning project's Review edits. External project folders are not counted. Always kept by cleanup.",
+            ),
             "context_referenced" => (
                 "Conversation context",
                 false,
@@ -404,6 +416,7 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
         "blobs_staging",
         "job_scratch",
         "conversation_files",
+        "project_copies",
         "context_referenced",
         "context_unreferenced",
         "context_unchecked",
@@ -433,6 +446,8 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
             },
             partial: if key == "conversation_files" {
                 scan.conversations_partial
+            } else if key == "project_copies" {
+                scan.copies_partial
             } else {
                 scan.partial
             },
@@ -448,7 +463,7 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
         categories,
         trash: list_trash(store)?,
         active_jobs: active,
-        note: if scan.partial || scan.conversations_partial {
+        note: if scan.partial || scan.conversations_partial || scan.copies_partial {
             format!("{note} Some folders hold too many items to count, so sizes marked \"at least\" may be larger.")
         } else {
             note

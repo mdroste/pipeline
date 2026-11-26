@@ -56,10 +56,7 @@ export default function NativePromptViewer({
             Installed Codex: {catalog.installedVersion ?? "unknown"}
           </p>
           {catalog.diagnostics.map((note) => (
-            <p
-              key={note}
-              className="break-words text-amber-700 dark:text-amber-300"
-            >
+            <p key={note} className="break-words text-warning">
               {note}
             </p>
           ))}
@@ -86,7 +83,7 @@ export default function NativePromptViewer({
                 </select>
               </label>
               {source.origin === "codex" && (
-                <p className="text-amber-700 dark:text-amber-300">
+                <p className="text-warning">
                   These templates come from your separate Codex installation and
                   may differ from the ones Pipeline uses.
                 </p>
@@ -100,7 +97,7 @@ export default function NativePromptViewer({
               {catalog.installedVersion &&
                 source.clientVersion &&
                 catalog.installedVersion !== source.clientVersion && (
-                  <p className="text-amber-700 dark:text-amber-300">
+                  <p className="text-warning">
                     The cache version differs from the installed CLI version.
                   </p>
                 )}

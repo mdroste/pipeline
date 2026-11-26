@@ -371,6 +371,13 @@ workers. Whole-store export and restore take the gate exclusively. Process
 waits hold neither a worker nor the gate. Blocking workers own their admission
 guards until completion, including after a caller cancels its wait.
 
+Project home reads share one SQLite snapshot, released before checking files.
+Folder scans and working-file previews use two separately admitted file workers
+between short database phases. The storage gate stays held across these phases;
+scans also retain the project lock and revalidate captured revisions before
+publishing their results. Overlapping review-history reads share a native scan.
+Manifest publication, Trash, and restore invalidate scans started before the change.
+
 **Journal and projection.** Turn and item events are projected into the store
 by `workbench/store/projection.rs`. Each gets a deterministic operation ID in
 `change_log`, so a replayed event changes nothing.
@@ -518,9 +525,13 @@ newer than the build.
 accept versions 1 to 11 and reject newer ones. `pipeline-cli workflow schema`
 prints the schema. See the [CLI guide](cli.md).
 
-**`.pwrx` research backup** is a zip, format version 2. It holds an online
-SQLite backup of the conversation store, blobs, conversation working files, and
-transcripts. It excludes external project folders, review and automation
+**`.pwrx` research backup** is a zip, format version 3; readers also accept
+versions 1 and 2. It holds an online SQLite backup of the conversation store,
+blobs, conversation working files, private project edit copies, and transcripts.
+Private copies include uncaptured regular files and empty directories. Missing,
+unreadable, changing, or oversized copy content stops export. Restored private
+Git worktrees become ordinary edit copies without the old host's Git link.
+It excludes external project folders, review and automation
 stores, Trash, the Codex home, and credentials. Restore requires an empty store
 and a remap-or-detach choice for every root. Every schema object must match what
 that schema version creates, and older archive databases then migrate on an
@@ -554,6 +565,34 @@ entry.
 imports them since Experiments was retired; the parser stays until the back
 end behind that view is removed.
 
+## Finding the state owner
+
+The shell declares lazy routes in
+[routePages.ts](../gui/src/components/app/routePages.ts). Project environment
+services live in [projectEnvironment.ts](../gui/src/lib/projectEnvironment.ts),
+so hooks and UI can share the desktop or tutorial environment without importing
+one another's internals.
+
+| Change | Start here | Contract to preserve |
+| --- | --- | --- |
+| Studio actions | [studioTypes.ts](../gui/src/lib/studioTypes.ts), [studioClient.ts](../gui/src/lib/studioClient.ts) | The action determines the result; unknown outcomes never auto-retry. The shared Studio fixture tests native actions and frontend transport. |
+| Draft recovery | [sharedFileDrafts.ts](../gui/src/lib/sharedFileDrafts.ts), [manuscriptDraftStorage.ts](../gui/src/lib/manuscriptDraftStorage.ts) | Identity is adapter scope plus path. Memory retains drafts when storage fills. Legacy Write drafts stay recoverable until reconciled. |
+| Manuscript editing | [useManuscriptDocument.ts](../gui/src/components/research-studio/useManuscriptDocument.ts), [Manuscript.tsx](../gui/src/components/research-studio/Manuscript.tsx) | The document owner handles save/discard races and flushes. Build records and source navigation have separate hooks. The page orders saving before building. |
+| Conversation transitions | [useWorkspaceConversationRuntime.ts](../gui/src/hooks/workspace/useWorkspaceConversationRuntime.ts), [useConversationTransitions.ts](../gui/src/hooks/workspace/useConversationTransitions.ts) | Submission and native-event adapters call intents. Acknowledgment, terminal events, navigation and draft revisions retain their own identities. |
+| Project refresh | [projectQueries.ts](../gui/src/lib/projectQueries.ts), [useProjectSurfaceData.ts](../gui/src/components/project-surface/useProjectSurfaceData.ts) | Concurrent reads coalesce by project. Reading home never scans the folder; scans remain explicit mutations. Signals retain independent source status. |
+| Native conversation lifecycle | [runtime/mod.rs](../gui/src-tauri/src/workbench/runtime/mod.rs) | Submission admits before preparing, acknowledges before clearing the sent draft, and publishes terminal state before releasing the permit. IPC wrappers import services; services never import wrappers. |
+| Process ownership | [process_tree.rs](../gui/src-tauri/src/process_tree.rs), [cancellation.rs](../gui/src-tauri/src/cancellation.rs) | Review scope cancellation cannot kill independently owned conversation, installer or probe processes. |
+| Project persistence | [operations.rs](../gui/src-tauri/src/workbench/project/operations.rs), [records.rs](../gui/src-tauri/src/workbench/project/records.rs) | The caller holds the project lock. Unknown outcomes are durable before filesystem writes; replay preserves stored JSON. Typed reads retain the raw compatibility boundary. |
+| Review scheduling | [contracts.rs](../gui/src-tauri/src/pipeline/executor/contracts.rs), [run.rs](../gui/src-tauri/src/pipeline/executor/run.rs) | Immutable inputs are separate from scheduling progress. Completed and successful steps remain distinct. Provider failure classification preserves displayed errors. |
+
+From `gui/`, run `npm test -- Manuscript FileWorkspace` for draft changes and
+`npm test -- useWorkspacePageController` for conversation ordering. From
+`gui/src-tauri/`, run `cargo test --locked --lib workbench::runtime` for native
+turn ownership, `cargo test --locked --lib workbench::project` for records and
+recovery, and `cargo test --locked --lib pipeline::executor` for scheduling.
+The structural checks in `gui/frontend-ownership.test.mjs` and
+`scripts/runtime-ownership.test.mjs` enforce these migrated boundaries.
+
 ## Testing
 
 [Contributing](../.github/CONTRIBUTING.md) lists the standard checks. Only the
@@ -578,7 +617,10 @@ absolute path before `npm run tauri dev`. Release builds ignore it.
 It needs a compatible Codex CLI but no sign-in. It checks the handshake, permission profiles, thread
 lifecycle, sandbox rules, and process cleanup without a model turn. The
 `workflow_codex_probe` example checks the review connection. Run both after
-changing Codex transport, sandbox, or process code. Set
+changing Codex transport, sandbox, or process code. On Windows, both runtimes
+explicitly select Codex's MXC sandbox to enforce file read restrictions. Startup
+fails if MXC is unavailable. Project discovery stops at the selected folder;
+local project instructions still load without searching ungranted ancestors. Set
 `PIPELINE_PROBE_NETWORK=1` for the optional public-domain, denial, and proxy-bypass
 checks. Shared web transport tests run with
 `cargo test --locked --lib public_web` from `gui/src-tauri/`.

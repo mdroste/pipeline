@@ -1,5 +1,6 @@
 //! Typed, optional manuscript, review, result and source work surfaces.
 use super::*;
+mod context;
 mod literature;
 mod manuscript;
 mod results;
@@ -8,6 +9,7 @@ mod synctex_paths;
 mod tex_inputs;
 pub(crate) use tex_inputs::refresh_manuscript_inputs;
 mod theory;
+pub use context::*;
 pub use literature::*;
 pub use manuscript::*;
 pub use results::*;
@@ -50,6 +52,17 @@ fn scoped_record(
     deny_unknown_fields
 )]
 pub enum StudioAction {
+    SaveConnection {
+        expected_revision: i64,
+        settings: super::connections::ConnectionSettings,
+    },
+    CaptureContext {
+        source: SourceContextRequest,
+    },
+    ResponseContext {
+        id: String,
+        expected_revision: i64,
+    },
     CreateFolder {
         path: String,
     },
@@ -173,27 +186,43 @@ pub fn studio_mutate(store: &Store, request: StudioMutation) -> WorkbenchResult<
     scope(store, &request.workspace_id)?;
     valid_id(&request.operation_id)?;
     let _guard = lock(store, &request.workspace_id)?;
-    let digest = hash(&serde_json::to_vec(&request).map_err(err)?);
-    let previous: Option<(String, String)> = store
-        .connection()?
-        .query_row(
-            "SELECT request_hash,response_json FROM project_operations WHERE operation_id=?1",
-            [&request.operation_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(err)?;
-    if let Some((old, result)) = previous {
-        if old != digest {
-            return Err(WorkbenchError::conflict(
-                "Operation ID reused with different arguments",
-            ));
-        }
-        return serde_json::from_str(&result).map_err(err);
-    }
-    store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,digest,json!({"outcome":"unknown","recovery":"Refresh and inspect records; no automatic retry"}).to_string(),now()]).map_err(err)?;
+    let receipt = match super::operations::begin(
+        store,
+        &request.operation_id,
+        &serde_json::to_vec(&request).map_err(err)?,
+        "Operation ID reused with different arguments",
+        "Refresh and inspect records; no automatic retry",
+    )? {
+        super::operations::Begin::Replay(value) => return Ok(value),
+        super::operations::Begin::Started(receipt) => receipt,
+    };
     let ws = &request.workspace_id;
     let value = match request.action {
+        StudioAction::SaveConnection {
+            expected_revision,
+            settings,
+        } => serde_json::to_value(super::connections::save_connection(
+            store,
+            ws,
+            expected_revision,
+            settings,
+        )?)
+        .map_err(err)?,
+        StudioAction::CaptureContext { source } => {
+            serde_json::to_value(capture_context(store, ws, source, &request.operation_id)?)
+                .map_err(err)?
+        }
+        StudioAction::ResponseContext {
+            id,
+            expected_revision,
+        } => serde_json::to_value(response_context(
+            store,
+            ws,
+            &id,
+            expected_revision,
+            &request.operation_id,
+        )?)
+        .map_err(err)?,
         StudioAction::CreateFolder { path } => {
             super::file_browser::create_folder(store, ws, &path)?
         }
@@ -370,13 +399,7 @@ pub fn studio_mutate(store: &Store, request: StudioMutation) -> WorkbenchResult<
             after_line,
         } => promote_theory(store, ws, &checkpoint_id, &path, &theory_id, after_line)?,
     };
-    store
-        .connection()?
-        .execute(
-            "UPDATE project_operations SET response_json=?2 WHERE operation_id=?1",
-            params![request.operation_id, value.to_string()],
-        )
-        .map_err(err)?;
+    receipt.complete(store, &value)?;
     Ok(value)
 }
 
@@ -384,6 +407,9 @@ pub fn studio_records(store: &Store, ws: &str, kind: &str) -> WorkbenchResult<Ve
     if !matches!(
         kind,
         "build"
+            | "connection"
+            | "check_policy"
+            | "check_state"
             | "response"
             | "experiment"
             | "specification"

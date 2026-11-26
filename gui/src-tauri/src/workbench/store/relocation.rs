@@ -242,7 +242,57 @@ struct TrashMove {
 struct Plan {
     references: Vec<ReferenceMove>,
     trash: Vec<TrashMove>,
+    copies: Vec<(i64, String, String)>,
     unresolved: usize,
+}
+
+/// A renamed data folder keeps directory identities. Only an exact private
+/// checkpoint suffix and its original directory identity authorize rebasing.
+fn plan_copies(connection: &Connection, root: &Path, plan: &mut Plan) -> WorkbenchResult<()> {
+    let mut query = connection.prepare("SELECT rowid,workspace_id,id,json_extract(body_json,'$.taskRoot'),json_extract(body_json,'$.taskRootIdentity') FROM project_records WHERE kind='checkpoint' AND json_extract(body_json,'$.backend')='copy' AND json_type(body_json,'$.taskRoot')='text' AND json_type(body_json,'$.taskRootIdentity')='text'")
+        .map_err(|e| WorkbenchError::storage("Read private copy locations", e))?;
+    let rows = query
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| WorkbenchError::storage("Read private copy locations", e))?;
+    for row in rows {
+        let (rowid, workspace, checkpoint, old, identity) =
+            row.map_err(|e| WorkbenchError::storage("Decode private copy location", e))?;
+        let private_id = |id: &str| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        };
+        if !private_id(&workspace) || !private_id(&checkpoint) {
+            continue;
+        }
+        let relative = Path::new("project-copies").join(workspace).join(checkpoint);
+        let target = root.join(&relative);
+        if Path::new(&old) == target || !Path::new(&old).ends_with(&relative) {
+            continue;
+        }
+        let safe = [
+            root.join("project-copies"),
+            target.parent().unwrap().to_path_buf(),
+            target.clone(),
+        ]
+        .iter()
+        .all(|p| fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink()));
+        if safe && super::root_identity(&target).is_ok_and(|actual| actual == identity) {
+            plan.copies
+                .push((rowid, old, target.to_string_lossy().into_owned()));
+        }
+    }
+    Ok(())
 }
 
 fn plan_references(
@@ -393,6 +443,10 @@ fn apply(connection: &mut Connection, plan: &Plan, root: &Path) -> WorkbenchResu
             )
             .map_err(|error| WorkbenchError::storage("Failed to update a Trash location", error))?;
     }
+    for (rowid, old, new) in &plan.copies {
+        transaction.execute("UPDATE project_records SET revision=revision+1,body_json=json_set(body_json,'$.taskRoot',?1) WHERE rowid=?2 AND json_extract(body_json,'$.taskRoot')=?3", params![new,rowid,old])
+            .map_err(|e| WorkbenchError::storage("Update private copy location", e))?;
+    }
     if plan.unresolved == 0 {
         record_location(&transaction, root)?;
     }
@@ -416,7 +470,9 @@ impl Store {
         plan_references(&connection, recorded.as_deref(), &self.root, &mut plan)?;
         plan_trash(&connection, &self.root, &mut plan)?;
         plan_handoffs(&connection, &self.root, &mut plan)?;
-        let rewrites = !plan.references.is_empty() || !plan.trash.is_empty();
+        plan_copies(&connection, &self.root, &mut plan)?;
+        let rewrites =
+            !plan.references.is_empty() || !plan.trash.is_empty() || !plan.copies.is_empty();
         let current = self.root.to_string_lossy();
         if !rewrites && (plan.unresolved > 0 || recorded.as_deref() == Some(current.as_ref())) {
             return Ok(());

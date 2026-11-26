@@ -224,7 +224,7 @@ impl CallTask {
         match joined {
             Ok(result) => result,
             Err(error) => {
-                crate::commands::kill_pass_children(&self.pass_key);
+                crate::process_tree::kill_pass_children(&self.pass_key);
                 Result {
                     output: Err(if error.is_panic() {
                         format!("Provider task panicked: {error}")
@@ -244,7 +244,7 @@ impl CallTask {
 impl Drop for CallTask {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            crate::commands::kill_pass_children(&self.pass_key);
+            crate::process_tree::kill_pass_children(&self.pass_key);
             handle.abort();
         }
     }
@@ -343,7 +343,7 @@ async fn execute_provider_once(
         ));
         match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
-            crate::commands::await_or_cancel(call.as_mut(), Some(&request.pass_key)),
+            crate::cancellation::await_or_cancel(call.as_mut(), Some(&request.pass_key)),
         )
         .await
         {
@@ -356,7 +356,7 @@ async fn execute_provider_once(
             }
             Err(_) => {
                 mark_call_deadline(&deadline, timeout_secs);
-                crate::commands::kill_pass_children(&request.pass_key);
+                crate::process_tree::kill_pass_children(&request.pass_key);
                 // Keep polling briefly after termination so CLI providers can
                 // reap their child and drain/close reader tasks.
                 let cleanup = tokio::time::timeout(Duration::from_secs(5), call.as_mut())
@@ -416,7 +416,7 @@ fn timeout_outcome(
         // The deadline killed the call, so whatever the dying provider reported
         // is a symptom. Only a cancellation that raced the deadline outranks it.
         match cleanup {
-            Some(Err(error)) if crate::commands::is_pipeline_cancellation_error(&error) => {
+            Some(Err(error)) if crate::cancellation::is_pipeline_cancellation_error(&error) => {
                 Err(error)
             }
             _ => Err(format!(
@@ -495,7 +495,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 };
             }
         };
-        if super::provider_error::is_non_retryable_error(&primary_error) || !super::provider_error::is_usage_limit_error(&primary_error) {
+        if !super::provider_error::Failure::from_legacy(&primary_error).permits_fallback() {
             return Result {
                 output: primary.output,
                 usage: primary.usage,
@@ -536,6 +536,20 @@ async fn execute_inner(request: OwnedRequest) -> Result {
             };
         };
 
+        let primary_connection = crate::connections::ConnectionId::for_review(primary_provider, &request.settings);
+        let fallback_connection = crate::connections::ConnectionId::for_review(fallback_provider, &request.settings);
+        if matches!((primary_connection, fallback_connection), (Ok(primary), Ok(target)) if !primary.permits_usage_fallback(target)) {
+            let error = format!("[claude-auth] {primary_error}; Claude subscription mode cannot switch to an API-billed backup. Choose an API connection explicitly to use API billing. No API fallback was attempted.");
+            emit_usage_limit_event(&request, primary_provider, &error, "fallback_blocked", Some(fallback_provider), None);
+            return Result {
+                output: Err(error),
+                usage: primary.usage,
+                duration_secs: total_started.elapsed().as_secs(),
+                reported_model: primary.reported_model,
+                usage_limit_fallback: None,
+            };
+        }
+
         if request.pdf_attachment.is_some() && fallback_provider == "local" {
             let fallback_error = "the Local fallback cannot receive the PDF attachment required by this call";
             emit_usage_limit_event(
@@ -560,7 +574,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
         let selection = request
             .settings
             .usage_limit_fallback_model_selection(fallback_provider);
-        let resolution = match crate::commands::await_or_cancel(
+        let resolution = match crate::cancellation::await_or_cancel(
             crate::model_catalog::resolve(
                 fallback_provider,
                 request.settings.as_ref(),

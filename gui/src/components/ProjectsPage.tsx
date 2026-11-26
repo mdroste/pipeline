@@ -1,3 +1,4 @@
+import "../ui/page.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { reviewCollectionClient } from "../lib/reviewCollectionClient";
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
@@ -429,13 +430,11 @@ export default function ProjectsPage({
   };
 
   return (
-    <div className="flex h-full min-h-0 bg-surface">
+    <div className="ui-layout-workspace flex h-full min-h-0 bg-surface">
       <aside className="flex w-[clamp(12rem,30%,18rem)] shrink-0 flex-col border-r border-line bg-sunken">
-        <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+        <div className="ui-workspace-header flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
-            <h1 className="text-base font-semibold text-gray-950 dark:text-gray-50">
-              Review collections
-            </h1>
+            <h1 className="ui-workspace-title">Review collections</h1>
             <p className="mt-0.5 text-xs text-ink-muted">
               Track reports and findings over time.
             </p>
@@ -478,7 +477,7 @@ export default function ProjectsPage({
                 type="button"
                 disabled={!createName.trim() || pending}
                 onClick={() => void createProject()}
-                className="rounded-md bg-gray-900 px-2.5 py-1 text-xs text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+                className="ui-button ui-button--primary ui-button--sm"
               >
                 Create
               </button>
@@ -565,7 +564,7 @@ export default function ProjectsPage({
                         type="button"
                         disabled={pending}
                         onClick={() => void permanentlyDeleteProject(entry)}
-                        className="text-[0.6875rem] text-red-600 disabled:opacity-40 dark:text-red-400"
+                        className="text-[0.6875rem] text-danger disabled:opacity-40"
                       >
                         Delete forever
                       </button>
@@ -588,7 +587,7 @@ export default function ProjectsPage({
         {warnings.length > 0 && (
           <div
             role="status"
-            className="mx-6 mt-6 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+            className="mx-6 mt-6 rounded-lg border border-warning bg-warning-soft p-3 text-xs text-warning"
           >
             {warnings.length} collection file
             {warnings.length === 1 ? " was" : "s were"} skipped because it could
@@ -658,7 +657,7 @@ export default function ProjectsPage({
                   type="button"
                   disabled={pending}
                   onClick={() => void deleteSelected()}
-                  className="rounded-lg px-3 py-1.5 text-xs text-red-600 disabled:opacity-40 dark:text-red-400"
+                  className="rounded-lg px-3 py-1.5 text-xs text-danger disabled:opacity-40"
                 >
                   Delete collection
                 </button>
@@ -721,7 +720,7 @@ export default function ProjectsPage({
                     type="button"
                     disabled={!addRunId || pending}
                     onClick={() => void setRunMembership(addRunId, true)}
-                    className="rounded-lg bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+                    className="ui-button ui-button--primary ui-button--sm"
                   >
                     Add
                   </button>

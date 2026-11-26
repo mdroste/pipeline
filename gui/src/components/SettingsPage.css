@@ -191,6 +191,14 @@
 .settings-row-control select {
   font-size: var(--ui-text-label);
 }
+:root #interface-density select {
+  display: block;
+  width: 8.5rem;
+  max-width: 100%;
+  min-height: var(--ui-control-height-sm);
+  margin-left: auto;
+  padding-block: 0.25rem;
+}
 .settings-toggle button {
   margin-top: 0;
 }
@@ -388,6 +396,9 @@
     width: 100%;
     max-width: none;
   }
+  :root #interface-density select {
+    margin-left: 0;
+  }
   .settings-model-stage summary {
     grid-template-columns: 1fr auto;
   }
@@ -452,15 +463,15 @@
 .settings-page-heading {
   max-width: 980px;
   margin-inline: auto;
-  padding: var(--ui-space-4) var(--ui-page-gutter) 0;
+  padding: var(--ui-space-6) var(--ui-page-gutter) 0;
 }
 
 .settings-page-heading .ui-page-header {
   margin-bottom: 0;
 }
 .settings-page-heading .ui-page-header h1 {
-  font-size: var(--ui-text-display);
-  letter-spacing: -0.025em;
+  font-size: var(--ui-text-page);
+  letter-spacing: -0.035em;
 }
 .settings-page-heading .ui-page-description {
   margin-top: 0.25rem;

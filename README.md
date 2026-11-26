@@ -1,7 +1,7 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.5.3](https://img.shields.io/badge/version-1.5.3-blue)](CHANGELOG.md)
+[![Version 1.5.4](https://img.shields.io/badge/version-1.5.4-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -27,7 +27,7 @@ yourself.
 
 Choose **New review** from Home, select your paper, and choose **Paper Review**.
 Check the model and extraction settings, then choose **Start review** to inspect
-the plan. Choose **Start review** again to run it.
+the plan. Choose **Start review** to run it.
 
 You can review papers or slides in PDF, Microsoft Word, or LaTeX source format.
 Pipeline can use your selected AI model to read PDFs, or (optionally) you can

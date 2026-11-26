@@ -20,10 +20,14 @@ export default function useModalDialog<T extends HTMLElement>(
   onClose: () => void,
   active = true,
   inertBackground = false,
+  /** A guided interaction can include a specific control outside the dialog. */
+  externalFocusSelector?: string,
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const externalFocusRef = useRef(externalFocusSelector);
+  externalFocusRef.current = externalFocusSelector;
 
   useEffect(() => {
     if (!active) return;
@@ -51,14 +55,23 @@ export default function useModalDialog<T extends HTMLElement>(
         if (branch === document.body) break;
       }
     }
-    const focusable = (dialog: HTMLElement) =>
-      Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    const externalTarget = () =>
+      externalFocusRef.current
+        ? document.querySelector<HTMLElement>(externalFocusRef.current)
+        : null;
+    const focusable = (dialog: HTMLElement) => {
+      const external = externalTarget();
+      return [
+        ...(external && !dialog.contains(external) ? [external] : []),
+        ...dialog.querySelectorAll<HTMLElement>(FOCUSABLE),
+      ].filter(
         (control) =>
           !control.matches(":disabled") &&
           !control.closest('[hidden], [inert], [aria-hidden="true"]') &&
           getComputedStyle(control).display !== "none" &&
           getComputedStyle(control).visibility !== "hidden",
       );
+    };
     const focusInitial = window.setTimeout(() => {
       const dialog = dialogRef.current;
       if (!dialog) return;
@@ -91,16 +104,12 @@ export default function useModalDialog<T extends HTMLElement>(
       const first = controls[0];
       const last = controls[controls.length - 1];
       const activeElement = document.activeElement;
-      if (
-        event.shiftKey &&
-        (activeElement === first || !dialog.contains(activeElement))
-      ) {
+      const outside =
+        !dialog.contains(activeElement) && activeElement !== externalTarget();
+      if (event.shiftKey && (activeElement === first || outside)) {
         event.preventDefault();
         last.focus();
-      } else if (
-        !event.shiftKey &&
-        (activeElement === last || !dialog.contains(activeElement))
-      ) {
+      } else if (!event.shiftKey && (activeElement === last || outside)) {
         event.preventDefault();
         first.focus();
       }

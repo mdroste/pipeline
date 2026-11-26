@@ -12,7 +12,7 @@ fn store() -> (tempfile::TempDir, Store, String) {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open_at(&temp.path().join("store")).unwrap();
     let ws = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Data".into(),
             root: None,
             operation_id: "workspace".into(),

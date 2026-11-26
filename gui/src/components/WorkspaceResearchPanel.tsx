@@ -36,6 +36,8 @@ export default function WorkspaceResearchPanel({
   beforeChange,
   onChanged,
   onActionStart,
+  initialScript,
+  executionTargetId,
 }: {
   snapshot: ConversationSnapshot | null;
   workspace?: Workspace | null;
@@ -54,6 +56,8 @@ export default function WorkspaceResearchPanel({
   /** An action started, so an earlier failure no longer applies. */
   onActionStart?: () => void;
   resultsView?: "all" | "runs" | "profiles";
+  initialScript?: { path: string; request: number };
+  executionTargetId?: string;
   releaseView?: "all" | "share" | "review";
   onSnapshot: (snapshot: SessionSnapshot) => void;
   onClose: () => void;
@@ -178,7 +182,7 @@ export default function WorkspaceResearchPanel({
       )}
       <div className="workspace-research-content min-h-0 min-w-0 flex-1 overflow-auto p-5 text-sm">
         {!workspaceId && tab !== "setup" && (
-          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
+          <div className="rounded border border-warning bg-warning-soft p-3 text-warning">
             <p>
               Move this conversation to a project to use notes and saved
               commands.
@@ -188,7 +192,7 @@ export default function WorkspaceResearchPanel({
                 type="button"
                 disabled={busy}
                 onClick={onMove}
-                className="mt-2 rounded border border-amber-400 px-2 py-1 text-xs"
+                className="mt-2 rounded border border-warning px-2 py-1 text-xs"
               >
                 Move to project…
               </button>
@@ -238,6 +242,8 @@ export default function WorkspaceResearchPanel({
 
         {tab === "results" && workspaceId && (
           <ResultsTab
+            initialScript={initialScript}
+            executionTargetId={executionTargetId}
             busy={busy}
             act={act}
             workspace={workspace}

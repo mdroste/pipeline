@@ -346,7 +346,7 @@ fn recovered_delivery_adopts_its_own_change_and_nothing_else() {
 fn check_recovery_requires_a_terminal_receipt_and_exact_scope() {
     let (_temp, s, _) = fixture();
     let workspace = s
-        .create_workspace(super::super::store::CreateWorkspaceRequest {
+        .create_legacy_workspace(super::super::store::CreateWorkspaceRequest {
             name: "Checks".into(),
             root: None,
             operation_id: "checks-workspace".into(),
@@ -394,7 +394,7 @@ fn recurring_conversation_is_created_once_and_preserves_source() {
 }
 fn project_note(s: &Store) -> (String, super::super::desk::ContextItem) {
     let workspace = s
-        .create_workspace(super::super::store::CreateWorkspaceRequest {
+        .create_legacy_workspace(super::super::store::CreateWorkspaceRequest {
             name: "Sources".into(),
             root: None,
             operation_id: "sources-workspace".into(),

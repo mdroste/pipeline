@@ -6,6 +6,8 @@ import { operation } from "./useResearchPanelController";
 import type { useResearchPanelController } from "./useResearchPanelController";
 import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 import type { ResearchNote } from "../../lib/workbench/researchTypes";
+import { useEffect, useRef } from "react";
+import useRouteSnapshot from "../../hooks/useRouteSnapshot";
 
 type Panel = ReturnType<typeof useResearchPanelController>;
 type Props = Pick<
@@ -33,8 +35,34 @@ export default function MemoryTab({
   workspaceId,
   snapshot,
 }: Props) {
+  const { route, revision } = useRouteSnapshot();
+  const target =
+    route.page === "workspace" &&
+    route.projectId === workspaceId &&
+    route.destination === "memory"
+      ? route.noteId
+      : undefined;
+  const root = useRef<HTMLDivElement>(null);
+  const followed = useRef(-1);
+  useEffect(() => {
+    if (!target || followed.current === revision) return;
+    const element = Array.from(
+      root.current?.querySelectorAll<HTMLElement>("[data-note-id]") ?? [],
+    ).find((item) => item.dataset.noteId === target);
+    if (element) {
+      followed.current = revision;
+      element.scrollIntoView?.({ block: "center" });
+      element.focus({ preventScroll: true });
+    }
+  }, [target, notes, revision]);
   return (
-    <div className="space-y-4">
+    <div ref={root} className="space-y-4">
+      {target && !notes.some((note) => note.id === target) && (
+        <p role="status" className="ui-notice ui-notice--warning">
+          The linked note is not in the available notes. It may still be loading
+          or may have been removed.
+        </p>
+      )}
       <div>
         <div className="flex gap-2">
           <select
@@ -87,7 +115,10 @@ export default function MemoryTab({
         {notes.map((note) => (
           <div
             key={note.id}
-            className="rounded border bg-white p-3 dark:bg-neutral-950"
+            data-note-id={note.id}
+            tabIndex={-1}
+            aria-current={note.id === target ? "location" : undefined}
+            className={`rounded-ui-md border border-line bg-surface p-3 ${note.id === target ? "ui-search-target" : ""}`}
           >
             <div className="flex items-center gap-2 text-[0.6875rem] text-gray-500">
               <span>{noteKindLabel(note.kind)}</span>
@@ -98,7 +129,7 @@ export default function MemoryTab({
               {note.pinned && <span>· pinned</span>}
             </div>
             {note.importedStatus && (
-              <p className="text-[0.6875rem] text-amber-700 dark:text-amber-300">
+              <p className="text-[0.6875rem] text-warning">
                 {importedLabel(note.importedStatus)}
               </p>
             )}

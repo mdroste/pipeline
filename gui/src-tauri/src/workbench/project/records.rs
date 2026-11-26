@@ -36,8 +36,17 @@ pub fn record(
     kind: &str,
 ) -> WorkbenchResult<ProjectRecord> {
     scope(store, workspace_id)?;
+    record_on(&store.connection()?, workspace_id, object_id, kind)
+}
+
+pub(super) fn record_on(
+    connection: &rusqlite::Connection,
+    workspace_id: &str,
+    object_id: &str,
+    kind: &str,
+) -> WorkbenchResult<ProjectRecord> {
     valid_id(object_id)?;
-    store.connection()?.query_row("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE id=?1 AND workspace_id=?2 AND kind=?3",params![object_id,workspace_id,kind],read_record).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Project object is unavailable in this Workspace"))
+    connection.query_row("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE id=?1 AND workspace_id=?2 AND kind=?3",params![object_id,workspace_id,kind],read_record).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Project object is unavailable in this Workspace"))
 }
 /// How many records a list shows. Callers that need every record look them up
 /// with `records_with_values` or read through `records_up_to`.
@@ -61,7 +70,15 @@ pub fn records_up_to(
     limit: usize,
 ) -> WorkbenchResult<Vec<ProjectRecord>> {
     scope(store, workspace_id)?;
-    let conn = store.connection()?;
+    records_on(&store.connection()?, workspace_id, kind, limit)
+}
+
+pub(super) fn records_on(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+    kind: &str,
+    limit: usize,
+) -> WorkbenchResult<Vec<ProjectRecord>> {
     let mut statement=conn.prepare("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE workspace_id=?1 AND kind=?2 ORDER BY updated_at DESC,id LIMIT ?3").map_err(err)?;
     let result = statement
         .query_map(params![workspace_id, kind, limit as i64], read_record)
@@ -98,6 +115,21 @@ pub(super) fn put(
     expected: i64,
     body: &impl Serialize,
 ) -> WorkbenchResult<ProjectRecord> {
+    put_checked(store, workspace_id, object_id, kind, expected, body, |_| {
+        Ok(())
+    })
+}
+
+/// Validate captured database state in the same write transaction as publication.
+pub(super) fn put_checked(
+    store: &Store,
+    workspace_id: &str,
+    object_id: &str,
+    kind: &str,
+    expected: i64,
+    body: &impl Serialize,
+    check: impl FnOnce(&rusqlite::Connection) -> WorkbenchResult<()>,
+) -> WorkbenchResult<ProjectRecord> {
     let encoded = serde_json::to_string(body).map_err(err)?;
     if encoded.len() > 8 * 1024 * 1024 {
         return Err(WorkbenchError::invalid("Project record exceeds 8 MiB"));
@@ -106,6 +138,7 @@ pub(super) fn put(
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(err)?;
+    check(&tx)?;
     // `id` is the sole primary key. Look it up unscoped so a deterministic id
     // (response_/zotero_ hashes) owned by another project or kind is refused
     // instead of silently overwritten by the upsert below.
@@ -145,4 +178,60 @@ pub(super) fn decode<T: serde::de::DeserializeOwned>(record: &ProjectRecord) -> 
 
 pub fn anchor_read(store: &Store, ws: &str, anchor_id: &str) -> WorkbenchResult<ProjectRecord> {
     record(store, ws, anchor_id, "anchor")
+}
+
+/// A feature owns its record kind. Raw records remain the compatibility/export
+/// boundary; typed access never rewrites an unknown body merely by reading it.
+pub(super) trait RecordBody: Serialize + serde::de::DeserializeOwned {
+    const KIND: &'static str;
+}
+pub(super) fn typed_body<T: RecordBody>(record: &ProjectRecord) -> WorkbenchResult<T> {
+    if record.kind != T::KIND {
+        return Err(WorkbenchError::invalid(
+            "Project record has a different object kind",
+        ));
+    }
+    decode(record)
+}
+pub(super) fn read_body<T: RecordBody>(
+    store: &Store,
+    workspace_id: &str,
+    object_id: &str,
+) -> WorkbenchResult<T> {
+    typed_body(&record(store, workspace_id, object_id, T::KIND)?)
+}
+pub(super) fn put_body<T: RecordBody>(
+    store: &Store,
+    workspace_id: &str,
+    object_id: &str,
+    expected: i64,
+    body: &T,
+) -> WorkbenchResult<ProjectRecord> {
+    put(store, workspace_id, object_id, T::KIND, expected, body)
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::{typed_body, ProjectRecord};
+    use crate::workbench::project::home::ProjectHomeSettings;
+    use serde_json::json;
+    #[test]
+    fn typed_reads_check_kind_without_rewriting_raw_records() {
+        let body = serde_json::to_value(ProjectHomeSettings::default()).unwrap();
+        let mut record = ProjectRecord {
+            id: "home".into(),
+            workspace_id: "ws".into(),
+            kind: "task".into(),
+            revision: 1,
+            body,
+            updated_at: "now".into(),
+        };
+        assert!(typed_body::<ProjectHomeSettings>(&record).is_err());
+        record.kind = "home".into();
+        assert!(typed_body::<ProjectHomeSettings>(&record).is_ok());
+        record.body["futureField"] = json!([1, 2]);
+        let original = record.clone();
+        assert!(typed_body::<ProjectHomeSettings>(&record).is_err());
+        assert_eq!(record, original);
+    }
 }

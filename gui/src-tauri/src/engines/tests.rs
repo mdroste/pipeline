@@ -591,6 +591,96 @@ fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
 }
 
 #[test]
+#[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+fn full_parser_lease_verifies_the_runtime_once() {
+    let root = tempfile::tempdir().unwrap();
+    let version_root = root.path().join("versions").join(PADDLE_PARSER_RELEASE);
+    let python = venv_python(&version_root.join("venv"));
+    std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+    std::fs::write(&python, b"managed python fixture").unwrap();
+    let packages = b"paddleocr==3.7.0\npaddlepaddle==3.2.1\n";
+    std::fs::write(version_root.join("packages.txt"), packages).unwrap();
+    let artifact = python_artifact().unwrap();
+    std::fs::write(version_root.join("pylock.toml"), artifact.lock).unwrap();
+    std::fs::write(
+        version_root.join("runtime-lock.json"),
+        PADDLE_PARSER_RUNTIME_LOCK,
+    )
+    .unwrap();
+    let layout_model = version_root.join("models").join("PP-DocLayoutV3_infer");
+    std::fs::create_dir_all(&layout_model).unwrap();
+    for name in ["inference.json", "inference.yml", "inference.pdiparams"] {
+        std::fs::write(layout_model.join(name), b"fixture").unwrap();
+    }
+    let integrity_sha256 = write_install_integrity(
+        &version_root,
+        &[
+            "venv",
+            "models",
+            "packages.txt",
+            "pylock.toml",
+            "runtime-lock.json",
+        ],
+    )
+    .unwrap();
+    // Built-in recognition keeps the fixture independent of the separately
+    // installed llama.cpp component.
+    let manifest = serde_json::json!({
+        "engine": "paddleocr-vl-parser",
+        "release": PADDLE_PARSER_RELEASE,
+        "paddleocr": PADDLE_PARSER_VERSION,
+        "paddlepaddle": PADDLE_RUNTIME_VERSION,
+        "python": PYTHON_VERSION,
+        "lock_sha256": artifact.lock_sha256,
+        "runtime_lock_sha256": format!("{:x}", Sha256::digest(PADDLE_PARSER_RUNTIME_LOCK.as_bytes())),
+        "layout_ready": true,
+        "offline_model_runtime": true,
+        "recognition_backend": RecognitionBackend::BuiltIn.manifest_value(),
+        "packages_sha256": format!("{:x}", Sha256::digest(packages)),
+        "integrity_schema": INSTALL_INTEGRITY_SCHEMA,
+        "integrity_sha256": integrity_sha256.clone(),
+    });
+    std::fs::write(
+        version_root.join("install.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let bundled = format!("{:x}", Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes()));
+
+    // The first lease installs the bundled sidecar into the verified runtime.
+    let refreshed = resolve_full_parser_locked(root.path())
+        .unwrap()
+        .expect("verified runtime with a refreshed sidecar");
+    assert_eq!(refreshed.sidecar_sha256, bundled);
+    assert_eq!(refreshed.integrity_sha256, integrity_sha256);
+
+    // A current install costs one full verification per lease, not three.
+    INTEGRITY_VERIFICATIONS.with(|count| count.set(0));
+    let paths = resolve_full_parser_locked(root.path())
+        .unwrap()
+        .expect("verified runtime");
+    assert_eq!(INTEGRITY_VERIFICATIONS.with(std::cell::Cell::get), 1);
+    assert_eq!(paths.sidecar_sha256, bundled);
+    assert!(matches!(
+        paths.recognition,
+        PaddleRecognition::BuiltIn { ref model_dir } if *model_dir == native_model_dir(&version_root)
+    ));
+
+    // Verification still refuses a changed runtime and a changed sidecar.
+    std::fs::write(version_root.join("paddle_parser_sidecar.py"), b"# changed").unwrap();
+    let repaired = resolve_full_parser_locked(root.path())
+        .unwrap()
+        .expect("a stale sidecar is refreshed, not executed");
+    assert_eq!(repaired.sidecar_sha256, bundled);
+    assert_eq!(
+        std::fs::read(version_root.join("paddle_parser_sidecar.py")).unwrap(),
+        PADDLE_PARSER_SCRIPT.as_bytes()
+    );
+    std::fs::write(version_root.join("packages.txt"), b"changed").unwrap();
+    assert!(resolve_full_parser_locked(root.path()).unwrap().is_none());
+}
+
+#[test]
 fn parser_runtime_provisioned_by_an_older_app_build_still_verifies() {
     // A runtime installed by an older app build carries the lock contents and
     // provisioning provenance of that build. The release name is the
@@ -942,8 +1032,12 @@ fn dir_size_does_not_follow_symlinks() {
     assert_eq!(dir_size(root.path()), 10);
 }
 
+/// The engine gate is process-wide; tests that take it must not overlap.
+static ENGINE_GATE_TESTS: Mutex<()> = Mutex::new(());
+
 #[test]
 fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
+    let _serial = ENGINE_GATE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let guard = acquire_engine_guard(false).unwrap();
     assert!(engine_gate_busy_without_install());
     assert!(acquire_engine_guard(false).is_err());
@@ -956,13 +1050,50 @@ fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
     let lease = runtime
         .block_on(acquire_waiting_on_engine_gate(
             || acquire_engine_guard(false),
-            || announced.store(true, std::sync::atomic::Ordering::SeqCst),
+            |_| announced.store(true, std::sync::atomic::Ordering::SeqCst),
         ))
         .unwrap();
     holder.join().unwrap();
     assert!(announced.load(std::sync::atomic::Ordering::SeqCst));
     drop(lease);
     assert!(!engine_gate_busy_without_install());
+}
+
+#[test]
+fn extraction_waits_for_the_optional_graphics_card_step_to_yield() {
+    let _serial = ENGINE_GATE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    // The step holds the installer gate, as automatic setup does while it downloads.
+    let step = GpuStep::begin();
+    let guard = acquire_install_guard().unwrap();
+    assert!(!engine_gate_busy_without_install());
+    let holder = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !step.yield_requested() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let yielded = step.yield_requested();
+        drop(guard);
+        drop(step);
+        yielded
+    });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let announced = Mutex::new(None);
+    let lease = runtime
+        .block_on(acquire_waiting_on_engine_gate(
+            || acquire_engine_guard(false),
+            |message| *announced.lock().unwrap() = Some(message),
+        ))
+        .unwrap();
+    assert!(
+        holder.join().unwrap(),
+        "the step must see the document's demand"
+    );
+    assert!(announced
+        .lock()
+        .unwrap()
+        .is_some_and(|message| message.contains("graphics card")));
+    drop(lease);
+    assert!(!GPU_STEP_RUNNING.load(Ordering::SeqCst));
 }
 
 #[test]

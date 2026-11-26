@@ -1,0 +1,14 @@
+{
+  "distributionVersion": "25.12.0-0",
+  "files": [
+    "deflate.dll", "freetype.dll", "jpeg8.dll", "lcms2.dll", "lerc.dll",
+    "libcrypto-3-x64.dll", "libcurl.dll", "liblzma.dll", "libpng16.dll",
+    "libssh2.dll", "openjp2.dll", "pdftoppm.exe", "pdftotext.exe",
+    "poppler.dll", "tiff.dll", "zlib.dll", "zstd.dll"
+  ],
+  "systemImports": [
+    "advapi32.dll", "bcrypt.dll", "crypt32.dll", "iphlpapi.dll", "kernel32.dll",
+    "msvcp140.dll", "secur32.dll", "shell32.dll", "user32.dll",
+    "vcruntime140.dll", "vcruntime140_1.dll", "wldap32.dll", "ws2_32.dll"
+  ]
+}

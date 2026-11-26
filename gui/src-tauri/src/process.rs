@@ -92,14 +92,14 @@ fn run_bounded_owned(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = crate::commands::lifecycle::spawn_independent(command)
+    let mut child = crate::process_tree::spawn_independent(command)
         .map_err(|e| format!("Failed to start subprocess: {e}"))?;
     let pid = child.id();
     if pid > 0 {
         if independent {
-            crate::commands::lifecycle::register_independent_child_pid(pid);
+            crate::process_tree::register_independent_child_pid(pid);
         } else {
-            crate::commands::register_child_pid(pid);
+            crate::process_tree::register_child_pid(pid);
         }
     }
 
@@ -127,7 +127,7 @@ fn run_bounded_owned(
             Ok(Some(status)) => break Ok(status),
             Ok(None) if started.elapsed() >= timeout => {
                 if pid > 0 {
-                    crate::commands::kill_process(pid);
+                    crate::process_tree::kill_process(pid);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
@@ -139,7 +139,7 @@ fn run_bounded_owned(
             }
             Err(e) => {
                 if pid > 0 {
-                    crate::commands::kill_process(pid);
+                    crate::process_tree::kill_process(pid);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
@@ -156,7 +156,7 @@ fn run_bounded_owned(
     let mut stderr_result = stderr_rx.recv_timeout(drain_grace).ok();
     if stdout_result.is_none() || stderr_result.is_none() {
         if pid > 0 {
-            crate::commands::kill_process(pid);
+            crate::process_tree::kill_process(pid);
         }
         let _ = child.kill();
         let _ = child.wait();
@@ -169,9 +169,9 @@ fn run_bounded_owned(
     }
     if pid > 0 {
         if independent {
-            crate::commands::lifecycle::unregister_independent_child_pid(pid);
+            crate::process_tree::unregister_independent_child_pid(pid);
         } else {
-            crate::commands::unregister_child_pid(pid);
+            crate::process_tree::unregister_child_pid(pid);
         }
     }
     if stdout_result.is_some() {

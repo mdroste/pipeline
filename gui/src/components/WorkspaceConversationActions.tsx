@@ -59,15 +59,16 @@ export function ConversationMenu({
         anchorRef={trigger}
         label={`Actions for ${session.title}`}
       >
-        <MenuItem onSelect={onRename}>Rename…</MenuItem>
-        <MenuItem onSelect={onGenerateTitle}>Generate title</MenuItem>
-        <MenuItem onSelect={onMove}>Move to project…</MenuItem>
         {onRevealFiles && (
           <MenuItem onSelect={onRevealFiles}>Reveal working files</MenuItem>
         )}
         <MenuItem onSelect={() => setFilesOpen(true)}>
           Files from automations…
         </MenuItem>
+        <MenuSeparator />
+        <MenuItem onSelect={onRename}>Rename…</MenuItem>
+        <MenuItem onSelect={onGenerateTitle}>Generate title</MenuItem>
+        <MenuItem onSelect={onMove}>Move to project…</MenuItem>
         <MenuItem onSelect={onArchive}>
           {session.archivedAt ? "Restore" : "Archive"}
         </MenuItem>
@@ -167,10 +168,7 @@ export function MoveConversationDialog({
           </p>
         )}
         {error && (
-          <p
-            role="alert"
-            className="mt-3 text-xs text-red-600 dark:text-red-400"
-          >
+          <p role="alert" className="mt-3 text-xs text-danger">
             {error}
             <ReportIssueLink />
           </p>
@@ -187,7 +185,7 @@ export function MoveConversationDialog({
           <button
             type="submit"
             disabled={busy || !targets.length}
-            className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+            className="ui-button ui-button--primary ui-button--sm"
           >
             {busy ? "Moving…" : "Move"}
           </button>

@@ -169,7 +169,7 @@ pub(super) async fn finish_install_drains(
     }
 
     if pid > 0 {
-        crate::commands::kill_process(pid);
+        crate::process_tree::kill_process(pid);
     }
     if tokio::time::timeout(
         post_kill_grace,
@@ -190,7 +190,7 @@ pub(super) fn unregister_install_pid(pid: u32) {
     if pid == 0 {
         return;
     }
-    crate::commands::unregister_engine_child_pid(pid);
+    crate::process_tree::unregister_engine_child_pid(pid);
     let mut active = INSTALL_CHILD_PID
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -226,7 +226,7 @@ pub(super) async fn run_install_step(
     if pid > 0 {
         // Engine-scoped tracking only: the installer must survive the end or
         // cancellation of an unrelated pipeline run (`kill_all_children`).
-        crate::commands::register_engine_child_pid(pid);
+        crate::process_tree::register_engine_child_pid(pid);
         *INSTALL_CHILD_PID
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(pid);
@@ -270,7 +270,7 @@ pub(super) async fn run_install_step(
         Ok(Err(error)) => (None, Some(format!("Failed waiting for {label}: {error}"))),
         Err(_) => {
             if pid > 0 {
-                crate::commands::kill_process(pid);
+                crate::process_tree::kill_process(pid);
             }
             let _ = child.start_kill();
             (

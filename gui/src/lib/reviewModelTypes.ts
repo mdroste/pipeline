@@ -8,6 +8,8 @@ export interface ModelCatalogEntry {
   display_name: string;
   description: string;
   is_default: boolean;
+  /** Provider-reported default for this model, when available. */
+  default_effort?: string | null;
   supported_efforts: string[];
   capabilities: string[];
   deprecated: boolean;

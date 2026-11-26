@@ -32,7 +32,7 @@ export const SECTION_INFO: Record<
   workflow: {
     title: "Reviews",
     description:
-      "Execution limits and PDF extraction for reviews. A workflow can override these.",
+      "Execution limits and PDF extraction for reviews. A review design can override these.",
   },
   conversations: {
     title: "Conversations",

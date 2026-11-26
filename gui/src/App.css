@@ -1,5 +1,8 @@
 @import "./ui/dropdowns.css";
 @import "./ui/foundations.css";
+@import "./ui/color-themes.css";
+@import "./ui/font-faces.css";
+@import "./ui/typefaces.css";
 
 @tailwind base;
 @tailwind components;
@@ -68,6 +71,11 @@
   --ui-page-soft: var(--ui-sunken);
   --ui-page-accent: var(--ui-inverse);
   --ui-page-on-accent: var(--ui-on-inverse);
+  --ui-action: var(--ui-inverse);
+  --ui-on-action: var(--ui-on-inverse);
+  --ui-selection: var(--ui-text);
+  --ui-selection-soft: var(--ui-sunken);
+  --ui-selection-indicator: var(--ui-focus);
 
   /* Three radii: controls, floating containers, large containers. */
   --ui-radius-sm: 6px;
@@ -113,7 +121,7 @@
   --ui-muted: #a3a3a3;
   --ui-inverse: #f5f5f5;
   --ui-on-inverse: #171717;
-  --ui-danger: #f87171;
+  --ui-danger: #fca5a5;
   --ui-danger-soft: rgb(127 29 29 / 0.25);
   --ui-success: #6ee7b7;
   --ui-success-soft: rgb(6 78 59 / 0.3);

@@ -9,6 +9,19 @@ import WorkspaceComposerControls, {
 
 type Controls = ComponentProps<typeof WorkspaceComposerControls>;
 
+/**
+ * The mode the backend applies while a conversation has not chosen one
+ * (`workbench/runtime/submission.rs`). Both Claude Code connections run
+ * sandboxed commands without prompts; ChatGPT asks.
+ */
+export function defaultApprovalMode(
+  runtime: Controls["runtime"],
+): ChatApprovalMode {
+  return runtime === "claude" || runtime === "claude-code-api"
+    ? "sandbox"
+    : "ask";
+}
+
 interface Props extends Pick<
   Controls,
   "models" | "model" | "effort" | "runtime" | "disabled"
@@ -49,9 +62,7 @@ export default function WorkspaceComposerToolbar({
         snapshot?.session.overrides.approvalMode === "auto" ||
         snapshot?.session.overrides.approvalMode === "sandbox"
           ? snapshot.session.overrides.approvalMode
-          : runtime === "claude"
-            ? "sandbox"
-            : "ask"
+          : defaultApprovalMode(runtime)
       }
       onApprovalModeChange={(mode) =>
         saveSelection(model, effort, runtime, mode)

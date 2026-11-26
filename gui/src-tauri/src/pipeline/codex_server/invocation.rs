@@ -172,7 +172,7 @@ pub async fn call_codex(
     );
     let result = tokio::time::timeout(
         Duration::from_secs(timeout_secs),
-        crate::commands::await_or_cancel(operation, pass.as_deref()),
+        crate::cancellation::await_or_cancel(operation, pass.as_deref()),
     )
     .await;
     match result {

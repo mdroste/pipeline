@@ -41,6 +41,7 @@ const LEGACY_EXTRACTED_TEXT_PATH: &str = "context/extracted_text.md";
 
 mod artifacts;
 mod history;
+pub(crate) mod history_reads;
 mod identity;
 mod inspection;
 mod persistence;

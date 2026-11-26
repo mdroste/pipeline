@@ -9,6 +9,9 @@ import {
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import Manuscript, { buildFolder } from "./Manuscript";
+import { useEffect } from "react";
+import { useFileBuffers } from "../file-workspace/useFileBuffers";
+import type { FileAdapter } from "../../lib/fileWorkspaceClient";
 import { suggestBuild } from "./ManuscriptBuildSheet";
 import type { ProjectHome } from "../../lib/projectClient";
 import type { SourceLineRequest } from "../file-workspace/SourceEditor";
@@ -90,6 +93,40 @@ const data = {
   executions: [],
 } as unknown as ProjectHome;
 const editorProps = () => mocks.editorProps[mocks.editorProps.length - 1];
+const filesAdapter: FileAdapter = {
+  id: "workspace:ws:working",
+  read: async (path) => ({
+    path,
+    hash: "hash",
+    text: "Original source",
+    bytes: 15,
+    base64: null,
+    mime: "text/plain",
+    editable: true,
+    truncated: false,
+    externalPath: null,
+  }),
+};
+const ignore = () => {};
+function FilesEditor() {
+  const { buffers, load, update } = useFileBuffers({
+    adapter: filesAdapter,
+    setError: ignore,
+    onConflict: ignore,
+  });
+  useEffect(() => {
+    void load("main.tex");
+  }, [load]);
+  return buffers["main.tex"] ? (
+    <textarea
+      aria-label="Files source editor"
+      value={buffers["main.tex"].draft}
+      onChange={(event) =>
+        update("main.tex", (old) => ({ ...old, draft: event.target.value }))
+      }
+    />
+  ) : null;
+}
 beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
@@ -134,6 +171,74 @@ beforeEach(() => {
       },
     },
   ]);
+});
+
+it("shares unsaved source immediately between Files and Write, including a save", async () => {
+  render(
+    <>
+      <FilesEditor />
+      <Manuscript
+        workspaceId="ws"
+        data={data}
+        onRefresh={vi.fn()}
+        onDocument={vi.fn()}
+      />
+    </>,
+  );
+  const files = await screen.findByLabelText("Files source editor");
+  const writing = await screen.findByLabelText("Manuscript source editor");
+  fireEvent.change(files, { target: { value: "Typed in Files" } });
+  expect(writing).toHaveValue("Typed in Files");
+  fireEvent.change(writing, { target: { value: "Continued in Write" } });
+  expect(files).toHaveValue("Continued in Write");
+  mocks.mutate.mockResolvedValue({ hash: "saved" });
+  fireEvent.click(screen.getByRole("button", { name: "Save working copy" }));
+  await screen.findByText(/Saved. Rebuild the manuscript/);
+  expect(files).toHaveValue("Continued in Write");
+  expect(
+    localStorage.getItem("pipeline.files.draft.workspace:ws:working.main.tex"),
+  ).toBeNull();
+});
+
+it("preserves a differing legacy draft even when the shared version is saved", async () => {
+  const legacyKey = "pipeline.manuscriptDraft.ws.working.main.tex";
+  localStorage.setItem(
+    legacyKey,
+    JSON.stringify({
+      file: {
+        path: "main.tex",
+        hash: "hash",
+        content: "Original source",
+        checkpointId: null,
+      },
+      draft: "Earlier manuscript wording",
+    }),
+  );
+  localStorage.setItem(
+    "pipeline.files.draft.workspace:ws:working.main.tex",
+    JSON.stringify({
+      file: { path: "main.tex", hash: "hash", text: "Original source" },
+      draft: "Shared wording",
+    }),
+  );
+  render(
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+    />,
+  );
+  expect(await screen.findByLabelText("Manuscript source editor")).toHaveValue(
+    "Shared wording",
+  );
+  mocks.mutate.mockResolvedValue({ hash: "saved" });
+  fireEvent.click(screen.getByRole("button", { name: "Save working copy" }));
+  await screen.findByText(/Saved. Rebuild the manuscript/);
+  expect(JSON.parse(localStorage.getItem(legacyKey)!)).toHaveProperty(
+    "draft",
+    "Earlier manuscript wording",
+  );
 });
 
 it("moves the editor only on explicit source actions, never while typing a line number", async () => {
@@ -533,7 +638,9 @@ it("retains the latest manuscript draft on pagehide before the debounce", async 
   fireEvent(window, new Event("pagehide"));
   expect(
     JSON.parse(
-      localStorage.getItem("pipeline.manuscriptDraft.ws.working.main.tex")!,
+      localStorage.getItem(
+        "pipeline.files.draft.workspace:ws:working.main.tex",
+      )!,
     ),
   ).toMatchObject({ draft: "Latest unsaved words" });
 });
@@ -585,7 +692,9 @@ it("flushes the current draft before native exit and blocks exit when retention 
   act(() => flushDrafts());
   expect(
     JSON.parse(
-      localStorage.getItem("pipeline.manuscriptDraft.ws.working.main.tex")!,
+      localStorage.getItem(
+        "pipeline.files.draft.workspace:ws:working.main.tex",
+      )!,
     ),
   ).toMatchObject({ draft: "Just typed" });
   const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {

@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 // Access settings as an inheritance table: one row per value, one column per
 // scope. The winning cell is highlighted; "Inherit" removes an override rather
 // than copying the parent's value.
@@ -167,26 +169,25 @@ function Cell({
     return (
       <span className="inline-flex items-center gap-1">
         {control}
-        <button
+        <IconButton
           type="button"
           disabled={busy}
-          aria-label={`Inherit ${row.label} for ${scopeLabel}`}
-          title="Use the setting shown to the left."
+          label={`Inherit ${row.label} for ${scopeLabel}`}
+          tooltip="Use the setting shown to the left."
           onClick={() => onSet(scope, row.key, undefined)}
-          className="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
         >
-          ×
-        </button>
+          <Icon name="close" className="h-4 w-4" />
+        </IconButton>
       </span>
     );
   })();
   return (
     <td
       data-winning={winning || undefined}
-      className={`px-2 py-2 align-top ${winning ? "rounded bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/30 dark:ring-emerald-700" : ""}`}
+      className={`px-2 py-2 align-top ${winning ? "rounded bg-success-soft ring-1 ring-inset ring-success" : ""}`}
     >
       {winning && (
-        <div className="mb-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+        <div className="mb-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-success">
           In effect
         </div>
       )}
@@ -249,7 +250,7 @@ function HarnessAccessTable({
                       {row.description}
                     </div>
                     {row.locked && (
-                      <div className="mt-1 text-[0.6875rem] text-amber-700 dark:text-amber-300">
+                      <div className="mt-1 text-[0.6875rem] text-warning">
                         {row.locked}
                       </div>
                     )}

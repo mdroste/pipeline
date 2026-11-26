@@ -119,7 +119,7 @@ export default function WorkspaceRestoreRootsDialog({
           </div>
         ))}
         {error && (
-          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+          <p role="alert" className="text-sm text-danger">
             {error}
             <ReportIssueLink />
           </p>
@@ -132,10 +132,7 @@ export default function WorkspaceRestoreRootsDialog({
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
-          >
+          <button type="submit" className="ui-button ui-button--primary">
             Restore
           </button>
         </div>

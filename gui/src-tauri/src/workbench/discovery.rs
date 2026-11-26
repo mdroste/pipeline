@@ -8,6 +8,8 @@ use std::path::PathBuf;
 pub(crate) mod idea_team;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::legacy_source;
 
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Research discovery", e)
@@ -141,6 +143,7 @@ pub fn source(
     operation: &str,
     title: &str,
     acquire: bool,
+    project_root: Option<&str>,
 ) -> WorkbenchResult<String> {
     let operation = key(operation);
     let session_op = format!("discovery-source-{operation}");
@@ -154,7 +157,7 @@ pub fn source(
         store
             .create_workspace(CreateWorkspaceRequest {
                 name: format!("Research discovery: {title}"),
-                root: None,
+                root: project_root.map(str::to_owned),
                 operation_id: project_op,
             })?
             .record
@@ -324,7 +327,7 @@ pub(crate) fn lookup_outcome(
 
 pub async fn acquire(workspace: String, query: String, operation: String) -> Result<Value, String> {
     let (ws, op, terms) = (workspace.clone(), operation.clone(), query.clone());
-    let (previous, enabled, contact) = super::commands::run_store(move |s| {
+    let (previous, enabled, contact) = super::runtime::run_store(move |s| {
         Ok((
             lookup_outcome(&s, &ws, &op, &terms)?,
             super::acquisition::network_enabled(&s, &ws)?,
@@ -340,7 +343,7 @@ pub async fn acquire(workspace: String, query: String, operation: String) -> Res
         return Err("Project literature acquisition is disabled".into());
     }
     let result = super::acquisition::crossref_with_contact(&query, contact.as_deref()).await;
-    super::commands::run_store(move |s| {
+    super::runtime::run_store(move |s| {
         if !super::acquisition::network_enabled(&s, &workspace)? {
             return Err(WorkbenchError::invalid("Acquisition access was revoked"));
         }
@@ -370,7 +373,7 @@ pub async fn resolve_autonomous_request(
         return false;
     };
     let namespace = supervisor.runtime_namespace();
-    let autonomous = super::commands::run_store(move |s| {
+    let autonomous = super::runtime::run_store(move |s| {
         let Some(session) = s.session_for_thread(&namespace, &thread)? else {
             return Ok(false);
         };

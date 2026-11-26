@@ -1,6 +1,6 @@
+import { listenConversationEvents } from "../lib/workbench/events";
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { WorkbenchEvent } from "../lib/workbench/runtimeTypes";
 import type { BatchJob, QueuedRun } from "../lib/reviewTypes";
 import {
   automationNotice,
@@ -58,7 +58,7 @@ export function useAppNotifications(runs: QueuedRun[]) {
       if (live) deliver(notice);
     };
     const pending = [
-      listen<WorkbenchEvent>("workbench:event", ({ payload }) =>
+      listenConversationEvents(({ payload }) =>
         handle(workspaceNotice(payload)),
       ),
       ...["tasks", "missions", "discovery"].map((source) =>

@@ -1,0 +1,56 @@
+{
+  "saveText": {
+    "action": "saveText",
+    "checkpointId": null,
+    "path": "main.tex",
+    "expectedHash": "2cbfaf4c20c7513d1df2526f07cd40d1a473289ed319b7b9eec5074a7f01b60c",
+    "content": "Draft\n"
+  },
+  "unchanged": {
+    "saved": true,
+    "hash": "2cbfaf4c20c7513d1df2526f07cd40d1a473289ed319b7b9eec5074a7f01b60c",
+    "changed": false
+  },
+  "saveBuild": {
+    "action": "saveBuild",
+    "id": null,
+    "expectedRevision": 0,
+    "config": {
+      "documentId": null,
+      "name": "Paper",
+      "checkpointId": null,
+      "directory": ".",
+      "rootDocument": "main.tex",
+      "expectedPdf": "main.pdf",
+      "engine": "pdflatex",
+      "timeoutSeconds": 120,
+      "inputs": ["main.tex"],
+      "advancedArgv": null,
+      "automaticDependencies": false,
+      "executable": null
+    }
+  },
+  "saveResponse": {
+    "action": "saveResponse",
+    "id": "response-1",
+    "expectedRevision": 1,
+    "response": {
+      "number": "1",
+      "category": "unresolved_objection",
+      "severity": "unspecified",
+      "disposition": "open",
+      "intendedResponse": "",
+      "taskId": null,
+      "manuscriptRevisionId": null,
+      "applicationId": null,
+      "executionId": null,
+      "evidenceAnchorIds": [],
+      "draft": "",
+      "rationale": "",
+      "disputedPremise": "",
+      "counterargument": "",
+      "resolvingCheck": "",
+      "reportsAnalysisAdded": false
+    }
+  }
+}

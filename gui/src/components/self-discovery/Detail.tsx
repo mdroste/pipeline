@@ -456,7 +456,7 @@ export default function Detail({
             <h3 ref={paperHeading} tabIndex={-1}>
               {current?.manuscript.title || `Project ${paper.candidateId}`}
             </h3>
-            <button
+            <IconButton
               onClick={() => {
                 paperRequest.current++;
                 setPaper(null);
@@ -465,10 +465,10 @@ export default function Detail({
                 paperOpener.current = null;
                 if (opener?.isConnected) opener.focus();
               }}
-              aria-label="Close paper reader"
+              label="Close paper reader"
             >
-              ×
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
           {current ? (
             <>

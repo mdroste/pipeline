@@ -115,7 +115,7 @@ it("composes the draft→review→revise loop from an empty outline and prepares
   });
   fireEvent.change(
     within(reviewList).getByRole("combobox", {
-      name: /Review workflow/,
+      name: /Review design/,
     }),
     { target: { value: "auto" } },
   );
@@ -152,7 +152,7 @@ it("keeps the review template editable and validates the edited chain", async ()
       onClose={() => {}}
     />,
   );
-  await screen.findByRole("combobox", { name: /Review workflow/ });
+  await screen.findByRole("combobox", { name: /Review design/ });
   fireEvent.change(screen.getByLabelText(/Idea or instructions/), {
     target: { value: "Minimum wage employment effects" },
   });

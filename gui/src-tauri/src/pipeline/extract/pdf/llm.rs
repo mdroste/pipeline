@@ -165,7 +165,7 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
         next += 1;
     }
     while let Some(result) = tasks.join_next().await {
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             tasks.abort_all();
             return Err("Pipeline cancelled".to_string());
         }
@@ -176,7 +176,7 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
                     budget_stop = Some(error);
                     continue;
                 }
-                if crate::commands::is_pipeline_cancellation_error(&error) {
+                if crate::cancellation::is_pipeline_cancellation_error(&error) {
                     tasks.abort_all();
                     return Err(error);
                 }
@@ -250,7 +250,7 @@ pub(in crate::pipeline::extract) async fn extract_llm(
                 .to_string(),
         );
     }
-    let timeout = (settings.step_timeout_secs / 2).clamp(60, 600);
+    let timeout = settings.pdf_extraction_timeout_secs;
     let settings = std::sync::Arc::new(settings);
 
     // Stage the PDF first: every helper child (pdftotext for the baseline,
@@ -552,7 +552,7 @@ mod tests {
         .await
         .expect("stopped extraction must return");
 
-        assert!(crate::commands::is_pipeline_cancellation_error(
+        assert!(crate::cancellation::is_pipeline_cancellation_error(
             &result.unwrap_err()
         ));
         assert_eq!(run.scope().usage().provider_attempts, 2);

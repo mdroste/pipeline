@@ -107,7 +107,7 @@ export default function ResearchActivity({
       aria-label={asPage ? "All activity" : "Suite activity"}
       className={
         asPage
-          ? "ui-page"
+          ? "ui-page ui-page--index"
           : "absolute right-0 top-0 z-50 flex h-full w-[min(32rem,95vw)] flex-col overflow-auto border-l bg-white p-5 shadow-xl dark:bg-neutral-950"
       }
     >

@@ -26,6 +26,7 @@ export interface EngineStatus {
   est_disk_mb: number;
   managed_stack_mb: number;
   installing: boolean;
+  setup_message?: string | null;
   install_progress?: EngineInstallProgress | null;
   available?: boolean;
   unavailable_reason?: string;

@@ -132,13 +132,47 @@ instead.
 - Linux uses the runner's Ubuntu packages and the shared libraries the AppImage
   needs.
 - Windows downloads the archive pinned in `scripts/release/poppler-lock.json`,
-  checks its hash, and signs the executables and libraries before recording
-  their bundled hashes.
+  checks its hash, and copies only the DLL dependencies of the two PDF tools.
+  The normal and delay imports must match `poppler-windows-files.json`; unknown
+  dependencies fail the build. Tools live in `poppler/Library/bin`, with language data
+  at `poppler/share/poppler`, where this Windows build expects it. The PDF test
+  corpus compares text, bounding boxes, and rendered pages before signing the
+  executables and libraries and recording their hashes.
+
+The committed PDFs in `scripts/release/fixtures/poppler` cover columns, embedded
+fonts, CJK text, JPEG/PNG/JPEG2000/CCITT images, rotation, cropping, encryption,
+and damaged input. To regenerate them, run
+`python scripts/release/make-poppler-fixtures.py` with ReportLab, pypdf,
+Pillow (JPEG2000 support), and the Bitstream Vera font installed. The font's
+license is stored beside the fixtures. These files are test inputs, not app
+resources.
+
+Tauri builds enable the `cli-launcher` Cargo feature. This replaces the separate
+CLI engine executable with a small launcher; the desktop executable handles
+`--pipeline-cli` before starting the GUI. Existing command paths remain valid.
+Settings can install or remove a per-user copy in `~/.pipeline/bin`, which
+points to the installed app (the outer AppImage on Linux). Source builds of
+`cargo build --bin pipeline-cli` keep the standalone CLI. Release checks enforce
+the launcher size and exercise headless commands, stdin, output, and exit codes
+from outside the app directory on each platform.
 
 On Windows, [bundle-llama-vulkan.sh](../scripts/release/bundle-llama-vulkan.sh)
 fills `gui/src-tauri/resources/llama-vulkan/` from the archive pinned in
 `scripts/release/llama-vulkan-lock.json`. The release job signs these files with
 Poppler. Keep its version equal to `LLAMA_CPP_VERSION` in `engines.rs`.
+The desktop installer excludes this directory. The Windows job uses
+[package-gpu-runtime.ps1](../scripts/release/package-gpu-runtime.ps1) to create
+`Pipeline-<version>-GPU-Windows-x64.zip` and a JSON manifest with the archive
+hash and installed-file inventory hash. It signs the manifest with the updater
+key and a trusted app-version comment, and uploads all three files to the draft.
+Each executable in the optional download retains its Windows signature.
+
+Windows debug builds instead download the upstream archive from this lock.
+When updating it, also regenerate `developmentIntegritySha256` for the unsigned
+server, all DLLs except `ggml-rpc.dll`, and `licenses/LICENSE-llama.cpp.txt`, under
+the `runtime` scope used by `write_install_integrity`. Run the ignored native
+`dev_download_verifies_and_probes_vulkan` test on Windows to qualify the download
+and inventory together. Release builds do not compile this development path.
 
 `resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
 hash of every bundled file. The release cache reuses a bundled Poppler folder
@@ -150,7 +184,8 @@ render it. After changing it, run
 [render-installer-art.py](../scripts/release/render-installer-art.py) by hand.
 
 The release produces four installers, two macOS update archives, a checksum file
-for each, update signatures, and `latest.json`. It doesn't produce a software bill
+for each, update signatures, and `latest.json`. It also produces the optional
+Windows GPU runtime ZIP, signed JSON manifest, and their checksums. It doesn't produce a software bill
 of materials or build attestations.
 Runner images and signing services change over time, so
 rebuilding the same source can produce different bytes.
@@ -258,7 +293,12 @@ Before you publish, test the candidate by hand:
   earlier parser, and extract a PDF with a table and an equation. Windows matters
   most, because no automated run covers its recognition path.
 - On a Windows machine with Smart App Control on and a graphics card, install
-  **Graphics card recognition** and extract the same PDF. Confirm in Task Manager
+  the Full Parser and confirm that **Graphics card recognition** downloads and
+  becomes available automatically. Repeat after upgrading a user who already
+  has the parser and GPU model files; those model files must be reused. Test
+  cancellation, an unavailable download, an unsupported GPU, repair, explicit
+  removal, and turning **Use graphics card** off before installation. Extract
+  the same PDF. Confirm in Task Manager
   that the graphics card does the work, and compare the time with the processor.
 - On Windows, sign in to an account whose user folder has an accented letter, such
   as `José`, install the Full Parser, and extract the same PDF. Run this with short

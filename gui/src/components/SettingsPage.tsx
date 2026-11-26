@@ -237,7 +237,7 @@ export default function SettingsPage({
     );
   if (loadError || !settings)
     return (
-      <main className="ui-page">
+      <main className="ui-page ui-page--index">
         <header className="settings-page-header">
           <h1>Settings</h1>
         </header>
@@ -343,7 +343,7 @@ export default function SettingsPage({
             <div hidden={Boolean(query.trim())}>
               <div className="settings-page-heading">
                 <PageHeader
-                  variant="compact"
+                  variant="standard"
                   title={pageInfo.title}
                   description={pageInfo.description}
                 />
@@ -353,7 +353,7 @@ export default function SettingsPage({
                   className="settings-jump-nav"
                   aria-label={
                     section === "workflow"
-                      ? "Review and workflow sections"
+                      ? "Review design sections"
                       : "Provider sections"
                   }
                 >

@@ -75,7 +75,9 @@ pub(super) async fn within_deadline<F: std::future::Future>(
     remaining: std::time::Duration,
     pass_key: Option<&str>,
 ) -> Result<F::Output, String> {
-    if crate::commands::is_cancelled() || pass_key.is_some_and(crate::commands::is_pass_cancelled) {
+    if crate::cancellation::is_cancelled()
+        || pass_key.is_some_and(crate::cancellation::is_pass_cancelled)
+    {
         return Err("Review web access cancelled".into());
     }
     if remaining.is_zero() {

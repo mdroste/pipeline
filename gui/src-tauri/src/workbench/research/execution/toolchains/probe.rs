@@ -234,7 +234,12 @@ pub(super) fn describe(host: &Host, candidates: Vec<Candidate>) -> Vec<DetectedT
 
 fn describe_one(host: &Host, candidate: Candidate) -> DetectedToolchain {
     let blocked = probe_blocked(&candidate.path, host.platform);
-    let probed = (host.probe_versions && blocked.is_none())
+    // A project folder can come from anyone (a clone, a replication package),
+    // and opening it must not run its code. Detection reads a project
+    // environment's metadata but never starts its programs; a run that uses
+    // one is chosen and approved explicitly.
+    let project_local = candidate.source == "projectEnvironment";
+    let probed = (host.probe_versions && blocked.is_none() && !project_local)
         .then(|| version_text(candidate.kind, &candidate.path, &[], &host.path))
         .flatten();
     let (version, version_text, version_source) = match (probed, candidate.version_hint) {
@@ -247,6 +252,8 @@ fn describe_one(host: &Host, candidate: Candidate) -> DetectedToolchain {
         (None, None) => {
             let reason = if version_args(candidate.kind).is_none() {
                 "not checked: detection does not start licensed programs"
+            } else if project_local {
+                "not checked: detection does not start programs from the project folder"
             } else if blocked.is_some() || !host.probe_versions {
                 "not checked"
             } else {

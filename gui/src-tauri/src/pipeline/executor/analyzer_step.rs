@@ -42,7 +42,7 @@ pub(super) async fn run_analyzer_step(
     }
     let started = std::time::Instant::now();
     // Stops at every await inside the check, so ✕ and Stop end it at once.
-    let value = crate::commands::await_or_cancel(
+    let value = crate::cancellation::await_or_cancel(
         analyzers::run(
             spec,
             &AnalyzerContext {
@@ -86,7 +86,7 @@ pub(super) async fn analyzer_result(
         Ok(output) => Ok(Ok(output)),
         Err(error)
             if super::step_call::is_cancellation_error(&error)
-                && crate::commands::is_cancelled() =>
+                && crate::cancellation::is_cancelled() =>
         {
             Err("Pipeline cancelled".to_string())
         }

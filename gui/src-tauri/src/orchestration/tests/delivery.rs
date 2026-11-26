@@ -161,7 +161,8 @@ fn moved_snapshot_always_reads_the_selected_library() {
 async fn committed_literature_lookup_is_adopted_by_retry_without_dispatch() {
     let _turn = exclusive_turn_state().await;
     let w = disposable_workspace();
-    let session = crate::workbench::discovery::source(&w, &store::id(), "Lookup", true).unwrap();
+    let session =
+        crate::workbench::discovery::legacy_source(&w, &store::id(), "Lookup", true).unwrap();
     let (_temp, m) = coordinator_fixture();
     let plan = chain(vec![step(
         "lookup",

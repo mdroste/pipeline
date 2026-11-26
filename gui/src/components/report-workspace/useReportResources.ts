@@ -26,7 +26,7 @@ interface Props {
   initialMarkdown: string;
   initialSourceSelection: ArtifactSelectionTarget | null;
   setSourceRequest: Dispatch<SetStateAction<ArtifactSelectionRequest | null>>;
-  setTab: Dispatch<SetStateAction<WorkspaceTab>>;
+  setTab: (tab: WorkspaceTab) => void;
   setOutputView: Dispatch<SetStateAction<OutputView>>;
 }
 export default function useReportResources({

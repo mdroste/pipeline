@@ -28,6 +28,18 @@ it("serializes and parses every destination round-trip", () => {
     },
     { page: "workspace", sessionId: "sess-1", surface: "chat" },
     { page: "workspace", projectId: "研究/α%?#" },
+    {
+      page: "workspace",
+      projectId: "trade",
+      destination: "documents",
+      revisionId: "rev/α?",
+    },
+    {
+      page: "workspace",
+      projectId: "trade",
+      destination: "memory",
+      noteId: "note/β#",
+    },
     { page: "tasks" },
     { page: "tasks", taskId: "t1", taskSessionId: "s1" },
     { page: "tasks", discoveryId: "d1" },
@@ -38,6 +50,12 @@ it("serializes and parses every destination round-trip", () => {
     { page: "projects", collectionId: "collection/α%?#" },
     { page: "history" },
     { page: "history", runId: "run-9" },
+    {
+      page: "history",
+      runId: "run-9",
+      findingId: "finding/α?",
+      projectId: "trade",
+    },
     { page: "settings" },
     { page: "settings", section: "workflow", targetId: "usage-limit-fallback" },
     { page: "settings", section: "偏好/α%?#" },
@@ -206,4 +224,31 @@ it("preserves a selected designer stage and its return to setup", () => {
     fromSetup: true,
   };
   expect(parseRoute(serializeRoute(route))).toEqual(route);
+});
+
+it("round-trips content search positions including byte zero and project automation origins", () => {
+  for (const route of [
+    { page: "workspace", projectId: "p", file: "résumé/code.do", fileLine: 42 },
+    {
+      page: "workspace",
+      projectId: "p",
+      revisionId: "v",
+      documentStart: 0,
+      documentEnd: 12,
+      documentHash: "hash",
+      documentPage: 3,
+    },
+    { page: "tasks", projectId: "p", taskId: "t" },
+  ] as const)
+    expect(parseRoute(serializeRoute(route))).toEqual(route);
+});
+it("drops invalid search positions without dropping the destination", () => {
+  expect(
+    parseRoute("#/project/p?file=code.do&fileLine=Infinity&filePage=1.5"),
+  ).toEqual({ page: "workspace", projectId: "p", file: "code.do" });
+  expect(parseRoute("#/project/p?revision=v&hash=h&start=8&end=2")).toEqual({
+    page: "workspace",
+    projectId: "p",
+    revisionId: "v",
+  });
 });

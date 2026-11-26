@@ -1,0 +1,24 @@
+/* Font files are bundled locally; selecting a family does not contact a CDN. */
+:root {
+  --ui-font-sans: "Inter", system-ui, sans-serif;
+  --ui-font-report: var(--ui-font-sans);
+}
+
+:root[data-typeface="instrument-sans"] {
+  --ui-font-sans: "Instrument Sans", "Inter", system-ui, sans-serif;
+}
+
+:root[data-typeface="ibm-plex-sans"] {
+  --ui-font-sans: "IBM Plex Sans", "Inter", system-ui, sans-serif;
+}
+
+:root[data-typeface="source"] {
+  --ui-font-sans: "Source Sans 3", "Inter", system-ui, sans-serif;
+  --ui-font-report: "Source Serif 4", Georgia, serif;
+}
+
+/* Report descendants inherit this; code and KaTeX keep their own families. */
+.report-content {
+  font-family: var(--ui-font-report);
+  font-optical-sizing: auto;
+}

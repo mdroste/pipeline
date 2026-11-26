@@ -59,6 +59,7 @@ pub(super) fn move_to_trash(run_id: &str) -> Result<(), String> {
     }
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to move run to Trash: {error}"))?;
+    super::history_reads::changed();
     sync_directory(&base)?;
     sync_directory(&trash)?;
     Ok(())
@@ -145,6 +146,7 @@ pub(super) fn restore_trashed_run_at(
         .map_err(|_| "Trashed run has no valid manifest".to_string())?;
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to restore run from Trash: {error}"))?;
+    super::history_reads::changed();
     sync_directory(root)?;
     sync_directory(&trash)
 }

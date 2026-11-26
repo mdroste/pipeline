@@ -1,3 +1,4 @@
+import { Icon } from "../ui/icons";
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
@@ -89,7 +90,7 @@ export default function AboutPage({
 
   return (
     <>
-      <div className="ui-page">
+      <div className="ui-page ui-page--index">
         <PageHeader
           title="Help"
           description="How to get set up, what each part of the app does, and where your data goes."
@@ -197,7 +198,7 @@ function HelpContent({
       <Section title="Set up">
         <BadgeRow
           badge="Required"
-          badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
+          badgeColor="text-danger bg-danger-soft"
           title="Connect an AI provider"
         >
           <p>
@@ -252,7 +253,7 @@ function HelpContent({
         </BadgeRow>
         <BadgeRow
           badge="Included"
-          badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
+          badgeColor="bg-sunken text-success bg-success-soft"
           title="PDF tools"
         >
           Pipeline can show PDFs and extract their plain text with nothing else
@@ -260,7 +261,7 @@ function HelpContent({
         </BadgeRow>
         <BadgeRow
           badge="Highly recommended"
-          badgeColor="text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30"
+          badgeColor="text-warning bg-warning-soft"
           title="PaddleOCR-VL Full Parser"
         >
           Reads PDFs on your computer and keeps the reading order, headings,
@@ -474,7 +475,7 @@ function HelpContent({
           <div className="space-y-2">
             <BadgeRow
               badge="Included"
-              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="bg-sunken text-success bg-success-soft"
               title="LaTeX and Word"
             >
               Read directly, so equations and tables come through intact. If a
@@ -500,7 +501,7 @@ function HelpContent({
             </BadgeRow>
             <BadgeRow
               badge="Included"
-              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="bg-sunken text-success bg-success-soft"
               title="pdftotext"
             >
               The fastest option. It runs on your computer, flattens the layout,
@@ -664,18 +665,10 @@ function Collapsible({
     >
       <summary className="flex cursor-pointer select-none items-center justify-between gap-2 py-3 text-sm font-semibold text-gray-800 dark:text-gray-200 list-none [&::-webkit-details-marker]:hidden">
         {title}
-        <svg
+        <Icon
+          name="chevron-down"
           className="w-4 h-4 shrink-0 text-gray-400 transition-transform group-open:rotate-180"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z"
-            clipRule="evenodd"
-          />
-        </svg>
+        />
       </summary>
       <div className="pb-4 space-y-3">{children}</div>
     </details>
@@ -724,17 +717,10 @@ function StageCard({
 function CheckItem({ text }: { text: string }) {
   return (
     <li className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-      <svg
-        className="w-4 h-4 text-ink-muted dark:text-green-400 mt-0.5 shrink-0"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-      >
-        <path
-          fillRule="evenodd"
-          d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z"
-          clipRule="evenodd"
-        />
-      </svg>
+      <Icon
+        name="check"
+        className="w-4 h-4 text-ink-muted text-success mt-0.5 shrink-0"
+      />
       {text}
     </li>
   );
@@ -800,10 +786,7 @@ function ExternalLink({
         {children}
       </a>
       {error && (
-        <p
-          role="alert"
-          className="mt-1 text-xs leading-relaxed text-red-700 dark:text-red-300"
-        >
+        <p role="alert" className="mt-1 text-xs leading-relaxed text-danger">
           {error}
         </p>
       )}
@@ -868,10 +851,7 @@ function AboutFooter() {
         </a>
       </p>
       {linkError && (
-        <p
-          role="alert"
-          className="mt-2 text-xs leading-relaxed text-red-700 dark:text-red-300"
-        >
+        <p role="alert" className="mt-2 text-xs leading-relaxed text-danger">
           {linkError}
         </p>
       )}

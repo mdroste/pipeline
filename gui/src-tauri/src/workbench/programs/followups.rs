@@ -1,6 +1,6 @@
 //! Explicit one-turn queue. No automatic transport on reconnect or process startup.
 use super::*;
-use crate::workbench::{commands as host, research, tasks};
+use crate::workbench::{research, runtime as host, tasks};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {

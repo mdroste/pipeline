@@ -1,3 +1,4 @@
+import { Icon } from "../../ui/icons";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { ArtifactEntry, PageArtifactIndex } from "../../lib/artifactTypes";
 import {
@@ -117,20 +118,7 @@ export const PageBrowser = memo(function PageBrowser({
                    enabled:hover:bg-gray-100 enabled:hover:text-gray-800 disabled:opacity-30
                    dark:border-gray-700 dark:text-gray-400 dark:enabled:hover:bg-gray-800 dark:enabled:hover:text-gray-100"
       >
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="m15 18-6-6 6-6"
-          />
-        </svg>
+        <Icon name="chevron-left" className="h-3 w-3" />
       </button>
       <form
         className="flex min-w-0 flex-1 items-center"
@@ -176,20 +164,7 @@ export const PageBrowser = memo(function PageBrowser({
                    enabled:hover:bg-gray-100 enabled:hover:text-gray-800 disabled:opacity-30
                    dark:border-gray-700 dark:text-gray-400 dark:enabled:hover:bg-gray-800 dark:enabled:hover:text-gray-100"
       >
-        <svg
-          aria-hidden="true"
-          className="h-3 w-3"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="m9 18 6-6-6-6"
-          />
-        </svg>
+        <Icon name="chevron-right" className="h-3 w-3" />
       </button>
     </div>
   );

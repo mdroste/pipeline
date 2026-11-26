@@ -156,13 +156,43 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it("opens the named document in the requested mode and targets a specific task", async () => {
+  backend({});
+  const data = home();
+  data.tasks = [
+    {
+      id: "task-42",
+      revision: 2,
+      body: { objective: "Verify clustering", status: "open" },
+    },
+  ] as never;
+  const onOpenTarget = vi.fn();
+  const handlers = mount(data, { onOpenTarget });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Edit Minimum wage draft" }),
+  );
+  expect(handlers.onOpenDocument).toHaveBeenLastCalledWith("rev", "edit");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Read Minimum wage draft" }),
+  );
+  expect(handlers.onOpenDocument).toHaveBeenLastCalledWith("rev", undefined);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Compare Minimum wage draft" }),
+  );
+  expect(handlers.onOpenDocument).toHaveBeenLastCalledWith("rev", "compare");
+  fireEvent.click(screen.getByRole("button", { name: "Open task →" }));
+  expect(onOpenTarget).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: "tab", tab: "tasks", targetId: "task-42" }),
+  );
+});
+
 it("stays silent about sources that fail or have nothing to report", async () => {
   backend({});
   mount(home());
   await waitFor(() =>
     expect(screen.queryByText("Checking the state of the draft…")).toBeNull(),
   );
-  const draft = screen.getByRole("region", { name: "Project activity" });
+  const draft = screen.getByRole("region", { name: "Working set" });
   expect(within(draft).getByText("Minimum wage draft")).toBeVisible();
   for (const name of [
     "Out of sync",
@@ -216,32 +246,28 @@ it("shows the draft's review state and what is out of sync, one action per row",
   data.ledger.staleClaims = ["claim"];
   mount(data);
 
-  const draft = await screen.findByRole("region", {
-    name: "Project activity",
-  });
-  // Outstanding findings are something to do, so they lead the page.
-  const next = await screen.findByRole("region", { name: "Next" });
+  const attention = await screen.findByRole("region", { name: "Attention" });
   expect(
-    within(next).getByText("2 review findings outstanding, 1 regressed"),
+    await within(attention).findByText(
+      "2 review findings outstanding, 1 regressed",
+    ),
   ).toBeVisible();
-  expect(within(draft).queryByText(/review findings outstanding/)).toBeNull();
-  expect(within(draft).getByText("Last review: Paper review")).toBeVisible();
-  fireEvent.click(within(draft).getByRole("button", { name: "Open report →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Builds & reviews →" }));
+  const dialog = screen.getByRole("dialog", { name: "Builds & reviews" });
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Inspect latest report →" }),
+  );
   expect(navigate).toHaveBeenCalledWith({ page: "history", runId: "run" });
-
-  // Result links and claims are retired: nothing loads or reports them.
-  expect(screen.queryByRole("region", { name: "Out of sync" })).toBeNull();
   expect(invoke).not.toHaveBeenCalledWith(
     "workbench_binding_coverage",
     expect.anything(),
   );
-  for (const row of next.querySelectorAll(".project-overview-row"))
-    expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(1);
 });
 
 it("hands the paper to the assistant to draft a brief without sending anything", async () => {
   backend({});
   const handlers = mount(home());
+  fireEvent.click(screen.getByRole("button", { name: "Context" }));
   fireEvent.click(
     screen.getByRole("button", { name: "Draft a brief from the paper" }),
   );
@@ -271,17 +297,16 @@ it("keeps a conversation-only project to its conversations and loads nothing", (
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.queryByRole("region", { name: "Project activity" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
-  expect(
-    screen.getByText(/this page will track\s+the state of the paper/),
-  ).toBeVisible();
-  const left = screen.getByRole("region", { name: "Where you left off" });
-  expect(within(left).getByText("Latest thread")).toBeVisible();
+  const resume = screen.getByRole("region", { name: "Resume work" });
+  expect(within(resume).getByText("Latest thread")).toBeVisible();
   fireEvent.click(
-    within(
-      screen.getByRole("region", { name: "Other conversations" }),
-    ).getByRole("button", { name: "Resume →" }),
+    within(resume).getByRole("button", { name: "Resume conversation →" }),
   );
-  expect(handlers.onResume).toHaveBeenCalledWith("Earlier idea");
+  expect(handlers.onResume).toHaveBeenCalledWith("Latest thread");
+  fireEvent.click(screen.getByRole("button", { name: "Recent work →" }));
+  expect(screen.getByRole("dialog", { name: "Recent work" })).toHaveTextContent(
+    "Earlier idea",
+  );
 });
 
 it("shows an optional target date only when one is set", () => {
@@ -334,13 +359,11 @@ it("checks the Git remote only when asked and shows what a coauthor pushed", asy
     },
   });
   mount(home());
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Repository: main" }),
+  );
   const block = await screen.findByRole("region", { name: "Repository" });
-  // Uncommitted work is something to do, so it sits under Next.
-  expect(
-    within(screen.getByRole("region", { name: "Next" })).getByText(
-      "1 uncommitted change",
-    ),
-  ).toBeVisible();
+  expect(within(block).getByText("1 uncommitted change")).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith(
     "workbench_repository_fetch",
     expect.anything(),
@@ -391,6 +414,9 @@ it("reports a remote that cannot be reached instead of failing silently", async 
   const reportError = vi.fn();
   mount(home(), { reportError });
   fireEvent.click(
+    await screen.findByRole("button", { name: "Repository: main" }),
+  );
+  fireEvent.click(
     await screen.findByRole("button", { name: "Check GitHub →" }),
   );
   await waitFor(() =>
@@ -398,4 +424,126 @@ it("reports a remote that cannot be reached instead of failing silently", async 
       "unavailable: workbench_repository_fetch",
     ),
   );
+});
+
+it("keeps unknown review status distinct from zero findings", async () => {
+  backend({});
+  mount(home());
+  expect(screen.queryByText("0 outstanding")).toBeNull();
+});
+
+it("keeps document rows beyond the preview reachable, including the full library", async () => {
+  backend({});
+  const data = home();
+  const original = data.papers[0];
+  data.papers = Array.from({ length: 8 }, (_, i) => ({
+    paper: { ...original.paper, id: `paper-${i}`, title: `Document ${i + 1}` },
+    revision: { ...original.revision!, id: `revision-${i}` },
+  }));
+  const handlers = mount(data);
+  expect(screen.getByText("Document 3")).toBeVisible();
+  expect(screen.queryByText("Document 4")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "All documents →" }));
+  expect(handlers.setTab).toHaveBeenCalledWith("documents");
+});
+
+it("preserves a new context note across closing", async () => {
+  backend({
+    list_runs: [],
+    list_projects: { projects: [], warnings: [] },
+    workbench_project_review_links: [],
+  });
+  mount(home());
+  const trigger = screen.getByRole("button", { name: "Context" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "New note" }), {
+    target: { value: "How does credit affect investment?" },
+  });
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(trigger).toHaveFocus());
+  fireEvent.click(trigger);
+  expect(screen.getByRole("textbox", { name: "New note" })).toHaveValue(
+    "How does credit affect investment?",
+  );
+});
+
+it("switches brief to notes in a single modal and retains note drafts", async () => {
+  backend({});
+  const data = home();
+  data.notes = [
+    {
+      id: "note",
+      workspaceId: "ws",
+      paperId: null,
+      kind: "question",
+      body: "What drives investment?",
+      state: "accepted",
+      origin: "user",
+      pinned: true,
+      revision: 1,
+      createdAt: "",
+      updatedAt: "",
+    },
+  ];
+  data.notes.push({ ...data.notes[0], id: "note-2", body: "Another question" });
+  mount(data);
+  const trigger = screen.getByRole("button", { name: "Context" });
+  trigger.focus();
+  fireEvent.click(trigger);
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(trigger.closest("[inert]")).not.toBeNull();
+  fireEvent.click(screen.getAllByRole("button", { name: "Edit note" })[0]);
+  fireEvent.change(screen.getByRole("textbox", { name: "Edit note" }), {
+    target: { value: "Unsaved question wording" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Suggested" }));
+  expect(screen.queryByRole("textbox", { name: "Edit note" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Brief" }));
+  expect(screen.getByRole("textbox", { name: "Edit note" })).toHaveValue(
+    "Unsaved question wording",
+  );
+  fireEvent.keyDown(document, { key: "Escape" });
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(trigger.closest("[inert]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Context" }));
+  expect(screen.getByRole("textbox", { name: "Edit note" })).toHaveValue(
+    "Unsaved question wording",
+  );
+});
+
+it("keeps portal controls disabled while a project write is pending and exposes save errors", async () => {
+  backend({});
+  mount(home(), { busy: true, error: "The project could not be saved." });
+  fireEvent.click(screen.getByRole("button", { name: "Options" }));
+  const dialog = screen.getByRole("dialog", { name: "Project options" });
+  expect(
+    within(dialog).getByRole("button", { name: "Project settings" }),
+  ).toBeDisabled();
+  expect(
+    within(dialog).getByRole("button", { name: "Close panel" }),
+  ).toBeEnabled();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "The project could not be saved.",
+  );
+});
+
+it("keeps import and attach-folder actions available through Add", () => {
+  backend({});
+  const data = home();
+  data.papers = [];
+  const onImportPaper = vi.fn(),
+    onAttachFolder = vi.fn();
+  mount(data, {
+    workspace: { ...workspace, root: null },
+    onImportPaper,
+    onAttachFolder,
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Import LaTeX folder" }));
+  expect(onImportPaper).toHaveBeenCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Attach folder" }));
+  expect(onAttachFolder).toHaveBeenCalledOnce();
 });

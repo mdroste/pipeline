@@ -421,7 +421,7 @@ pub(crate) fn launch_pending() {
             let start_store = job_store.clone();
             let finalize_store = job_store.clone();
             let result = async {
-                super::super::commands::run_store_owned(start_store, move |store| {
+                super::super::runtime::run_store_owned(start_store, move |store| {
                     start_execution(&store, &start_id)
                 })
                 .await?;
@@ -434,7 +434,7 @@ pub(crate) fn launch_pending() {
                 .map_err(|e| {
                     WorkbenchError::worker(format!("Job worker ended unexpectedly: {e}"), false)
                 })?;
-                super::super::commands::run_store_owned(finalize_store, move |store| {
+                super::super::runtime::run_store_owned(finalize_store, move |store| {
                     finalize_execution(&store, p, output)
                 })
                 .await
@@ -443,7 +443,7 @@ pub(crate) fn launch_pending() {
             crate::workbench::programs::commands::wake_scheduler();
             if let Err(error) = result {
                 let failed_id = id.clone();
-                let _=super::super::commands::run_store_owned(job_store,move |store| {
+                let _=super::super::runtime::run_store_owned(job_store,move |store| {
                     open_connection(&store)?.execute("UPDATE research_executions SET outcome='outcome_unknown',ended_at=?2,validation_json=?3 WHERE id=?1 AND outcome IN ('queued','running')",params![failed_id,now(),json!({"finalizationError":error.message,"recovery":"Inspect the job and reconcile adopted outputs; the command will not be rerun."}).to_string()]).map_err(|e|WorkbenchError::storage("Failed to record job failure",e))?; Ok(())
                 }).await;
             }

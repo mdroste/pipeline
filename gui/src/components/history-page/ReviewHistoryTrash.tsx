@@ -67,7 +67,7 @@ export default function ReviewHistoryTrash({
               </button>
               <button
                 onClick={() => remove(run)}
-                className="px-2 py-1 text-xs rounded text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                className="px-2 py-1 text-xs rounded text-danger hover:text-danger"
               >
                 Delete forever
               </button>

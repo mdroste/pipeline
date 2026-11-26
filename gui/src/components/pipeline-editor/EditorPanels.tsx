@@ -167,7 +167,7 @@ export function PipelineSettingsEditorPanel({
               this by default; other providers process each call normally.
             </p>
             {config.context_cache?.enabled && (
-              <p className="text-[0.6875rem] text-green-700 dark:text-green-400 mt-1">
+              <p className="text-[0.6875rem] text-success mt-1">
                 Enabled for this review. Cache reads and writes will appear in
                 token usage.
               </p>
@@ -571,7 +571,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             </span>
           </label>
           {step.phase !== "sequential" && (
-            <p className="text-[0.625rem] text-amber-700 dark:text-amber-300">
+            <p className="text-[0.625rem] text-warning">
               Choose a sequential step for the final report or tracked findings.
             </p>
           )}

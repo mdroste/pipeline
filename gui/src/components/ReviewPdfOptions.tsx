@@ -1,12 +1,33 @@
-import { useEffect, useState } from "react";
-import { appClient } from "../lib/appClient";
+import { useEffect, useId, useState } from "react";
+import { useReviewSetupEnvironment } from "./reviewSetupEnvironment";
 import type { RunModelOverrides } from "../lib/reviewModelTypes";
+import Select from "../ui/Select";
 
-const METHODS: Record<string, string> = {
-  pdftotext: "Text layer · fast, local",
-  "paddleocr-vl-full": "PaddleOCR · local, reads scans and layout",
-  llm: "AI model · reads scans, equations, and tables",
-};
+const METHODS: { id: string; label: string; description: string }[] = [
+  {
+    id: "pdftotext",
+    label: "Text layer",
+    description: "Fast; uses the text already in the PDF",
+  },
+  {
+    id: "paddleocr-vl-full",
+    label: "PaddleOCR",
+    description: "Runs locally; reads scans and page layout",
+  },
+  {
+    id: "llm",
+    label: "AI model",
+    description: "Reads scans, equations, and tables",
+  },
+];
+
+/** The run's overrides without its own PDF choice, so the workflow's default shows through. */
+function withoutPdfMethod(value: RunModelOverrides | null) {
+  if (!value) return null;
+  const { extraction_method: _ignored, ...rest } = value;
+  return !rest.review && !rest.agents.length && !rest.merge_agent ? null : rest;
+}
+
 export default function ReviewPdfOptions({
   path,
   value,
@@ -23,13 +44,17 @@ export default function ReviewPdfOptions({
   const [options, setOptions] = useState<{ method: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const environment = useReviewSetupEnvironment();
+  const labelId = useId();
+  const base = withoutPdfMethod(value);
+  const baseKey = JSON.stringify(base);
   useEffect(() => {
     let active = true;
     setOptions(null);
     setError(null);
-    void appClient
-      .reviewPdfOptions({
-        runParallelOverrides: value,
+    void environment
+      .pdfOptions({
+        runParallelOverrides: base,
       })
       .then((result) => {
         if (active) setOptions(result);
@@ -40,47 +65,49 @@ export default function ReviewPdfOptions({
     return () => {
       active = false;
     };
-  }, [value, path, refreshKey, attempt]);
+    // `base` is captured through `baseKey`; picking a PDF method doesn't refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseKey, path, refreshKey, attempt, environment]);
+  const defaultMethod = options?.method;
+  const choose = (method: string) => {
+    const next = {
+      ...(value ?? {
+        agents: [],
+        model_overrides: {},
+        effort_overrides: {},
+      }),
+      // Choosing the workflow's own default follows the workflow again.
+      extraction_method: method === defaultMethod ? undefined : method,
+    };
+    onChange(
+      !next.review &&
+        !next.agents.length &&
+        !next.merge_agent &&
+        !next.extraction_method
+        ? null
+        : next,
+    );
+  };
   return (
-    <div className="mt-3 space-y-2 border-t border-line pt-3 text-ui-meta">
-      <label className="block font-medium">
-        Read this PDF with
-        <select
-          className="mt-2 block w-full rounded-lg border border-line bg-surface p-2 font-normal"
-          value={value?.extraction_method ?? ""}
+    <div className="review-pdf-options">
+      <div className="review-pdf-options-row">
+        <span id={labelId}>Read this PDF with</span>
+        <Select
+          labelledBy={labelId}
+          value={value?.extraction_method ?? defaultMethod ?? ""}
+          placeholder="Workflow default"
           disabled={disabled}
-          onChange={(event) => {
-            const next = {
-              ...(value ?? {
-                agents: [],
-                model_overrides: {},
-                effort_overrides: {},
-              }),
-              extraction_method: event.target.value || undefined,
-            };
-            onChange(
-              !next.review &&
-                !next.agents.length &&
-                !next.merge_agent &&
-                !next.extraction_method
-                ? null
-                : next,
-            );
-          }}
-        >
-          <option value="">
-            Workflow default
-            {options && !value?.extraction_method
-              ? " · " + METHODS[options.method]
-              : ""}
-          </option>
-          {Object.entries(METHODS).map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
+          align="end"
+          className="w-full"
+          options={METHODS.map((method) => ({
+            value: method.id,
+            label: method.label,
+            description: method.description,
+            badge: method.id === defaultMethod ? "Default" : undefined,
+          }))}
+          onChange={choose}
+        />
+      </div>
       {!options && !error && <p role="status">Checking PDF method…</p>}
       {error && (
         <div role="alert">

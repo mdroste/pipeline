@@ -15,6 +15,32 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
     list_runs_in(&runs_dir()?, listing_walk())
 }
 
+/// History is also a recovery point after cancellation. Hold the same process
+/// lock as startup recovery, but decode each manifest only once for both jobs.
+pub(super) fn list_with_recovery() -> Result<Vec<RunSummary>, String> {
+    let root = runs_dir()?;
+    if crate::commands::pipeline_is_running() {
+        return list_runs_in(&root, listing_walk());
+    }
+    list_with_recovery_at(&root, &super::run_lock_path()?)
+}
+
+pub(super) fn list_with_recovery_at(
+    root: &Path,
+    lock_path: &Path,
+) -> Result<Vec<RunSummary>, String> {
+    use fs2::FileExt as _;
+    let lock = super::open_run_lock(lock_path).ok();
+    let recover = lock
+        .as_ref()
+        .is_some_and(|lock| lock.try_lock_exclusive().is_ok());
+    let result = list_runs_impl(root, listing_walk(), recover);
+    if recover {
+        let _ = fs2::FileExt::unlock(lock.as_ref().expect("recovery lock"));
+    }
+    result
+}
+
 /// The whole store must list however slow its disk is: the entry limit bounds
 /// this walk, and a time limit would turn a large synced or network folder into
 /// an error in History and stop retention.
@@ -24,7 +50,15 @@ pub(super) fn listing_walk() -> crate::safety::WalkBudget {
 
 pub(super) fn list_runs_in(
     dir: &Path,
+    walk: crate::safety::WalkBudget,
+) -> Result<Vec<RunSummary>, String> {
+    list_runs_impl(dir, walk, false)
+}
+
+fn list_runs_impl(
+    dir: &Path,
     mut walk: crate::safety::WalkBudget,
+    recover: bool,
 ) -> Result<Vec<RunSummary>, String> {
     let mut summaries = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -33,6 +67,15 @@ pub(super) fn list_runs_in(
     for entry in entries.flatten() {
         walk.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        if recover
+            && entry
+                .path()
+                .join(super::recovery::DELETE_TOMBSTONE)
+                .exists()
+        {
+            let _ = fs::remove_dir_all(entry.path());
             continue;
         }
         let manifest_path = entry.path().join("manifest.json");
@@ -51,6 +94,14 @@ pub(super) fn list_runs_in(
                 // directory without a manifest. Quarantining or synthesizing a
                 // manifest without having read the bytes destructively rewrites
                 // healthy runs; skip the directory for this listing pass.
+                if recover && !manifest_path.exists() {
+                    if let Some(manifest) = super::recovery::recover_orphan_manifest(&entry.path())
+                    {
+                        let mut summary = manifest.to_summary();
+                        summary.resumable = run_has_resume_files(&entry.path(), &manifest);
+                        summaries.push(summary);
+                    }
+                }
                 continue;
             };
             serde_json::from_str::<RunManifest>(&content)
@@ -70,7 +121,20 @@ pub(super) fn list_runs_in(
                     }
                 })
         };
-        if let Some(manifest) = manifest {
+        if let Some(mut manifest) = manifest {
+            if recover
+                && super::recovery::recover_resumable_run_dir(&entry.path(), &mut manifest).is_err()
+            {
+                // Recovery can mutate its input before publication fails. Only
+                // the durable manifest belongs in History; retry this one read.
+                let Some(content) = read_manifest_content_for_listing(&manifest_path) else {
+                    continue;
+                };
+                let Ok(saved) = serde_json::from_str(&content) else {
+                    continue;
+                };
+                manifest = saved;
+            }
             let mut summary = manifest.to_summary();
             summary.resumable = run_has_resume_files(&entry.path(), &manifest);
             summaries.push(summary);

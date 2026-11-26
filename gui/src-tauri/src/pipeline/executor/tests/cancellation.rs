@@ -47,6 +47,7 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
     let output_budget = Arc::new(OutputBudget::default());
     let shared_context_pool = crate::pipeline::context_cache::PreparedContextPool::default();
+    let artifacts = tempfile::tempdir().unwrap();
     let scopes = Arc::new(UnitScopes::default());
     let bus: crate::emit::EventBus = scopes.clone();
     let steps = [&fan];
@@ -72,7 +73,7 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
             &no_values,
             &no_values,
             &[],
-            None,
+            Some(artifacts.path().to_str().unwrap()),
             &output_budget,
             false,
             &shared_context_pool,
@@ -81,6 +82,14 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
     );
     let stop = async {
         until_called(&calls, 1).await;
+        let unit_directories =
+            std::fs::read_dir(artifacts.path().join("by-step").join(step_slug("fan")))
+                .unwrap()
+                .count();
+        assert_eq!(
+            unit_directories, 1,
+            "queued units must not stage artifacts before admission"
+        );
         run.scope().cancel();
         Instant::now()
     };
@@ -107,7 +116,7 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
     assert_eq!(failures.len(), 2);
     assert!(failures
         .iter()
-        .all(|failure| crate::commands::is_pipeline_cancellation_error(&failure.error)));
+        .all(|failure| crate::cancellation::is_pipeline_cancellation_error(&failure.error)));
 }
 
 #[tokio::test]
@@ -160,7 +169,7 @@ async fn stopping_a_review_stops_its_merge_and_keeps_its_usage() {
     .await
     .expect("a stopped merge must return");
 
-    assert!(crate::commands::is_pipeline_cancellation_error(
+    assert!(crate::cancellation::is_pipeline_cancellation_error(
         &result.unwrap_err()
     ));
     assert_eq!(

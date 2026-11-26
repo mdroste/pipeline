@@ -216,7 +216,7 @@ fn resolve(
         .get("runtime")
         .and_then(Value::as_str)
     {
-        Some("claude") => {
+        Some("claude" | "claude-code-api") => {
             developer = developer.replace(
                 "Preserve Codex base instructions.",
                 "Preserve Claude Code base instructions.",

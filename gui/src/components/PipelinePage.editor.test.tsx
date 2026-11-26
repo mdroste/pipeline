@@ -43,7 +43,7 @@ describe("PipelinePage editor", () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
-    await screen.findByRole("combobox", { name: "Active review" });
+    await screen.findByRole("combobox", { name: "Active review design" });
 
     expect(
       screen.getByRole("region", { name: "Review overview" }),
@@ -65,17 +65,23 @@ describe("PipelinePage editor", () => {
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: "New review" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("New review name");
+    await user.click(
+      screen.getByRole("menuitem", { name: "New review design" }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "New review design name",
+    );
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
     await user.keyboard("{Escape}");
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("Rename review");
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "Rename review design",
+    );
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
   });
 
@@ -597,7 +603,7 @@ describe("PipelinePage editor", () => {
 
     // A dialog over the editor keeps the workflow unchanged.
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog");

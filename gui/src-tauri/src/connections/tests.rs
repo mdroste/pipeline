@@ -57,6 +57,7 @@ fn legacy_missing_modes_keep_their_meaning() {
     for value in [
         "codex",
         "claude",
+        "claude-code-api",
         "openai-api",
         "anthropic-api",
         "google-api",
@@ -70,7 +71,7 @@ fn legacy_missing_modes_keep_their_meaning() {
 #[test]
 fn shared_registry_matches_native_selection() {
     let descriptions = descriptions();
-    assert_eq!(descriptions.len(), 6);
+    assert_eq!(descriptions.len(), 7);
     let mut ids = std::collections::HashSet::new();
     for description in descriptions {
         assert!(ids.insert(serde_json::to_string(&description.id).unwrap()));
@@ -110,4 +111,47 @@ fn shared_connection_and_protocol_modules_do_not_import_product_runtimes() {
     for module in ["connections", "agent_runtime/api", "model_catalog"] {
         inspect(&root.join(module));
     }
+}
+
+#[test]
+fn claude_code_api_is_explicit_native_and_separate_from_saved_subscription_chats() {
+    let mut settings = Settings {
+        anthropic_api_key: "saved-direct-api-key".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        ConnectionId::for_review("claude", &settings).unwrap(),
+        ConnectionId::ClaudeCode
+    );
+    settings.claude_access_mode = "code_api".into();
+    let selected = ConnectionId::for_review("claude", &settings).unwrap();
+    assert_eq!(selected, ConnectionId::ClaudeCodeApi);
+    assert_eq!(selected.transport(&settings), Transport::ClaudeCode);
+    assert_eq!(selected.api(), None);
+    assert_eq!(
+        ConnectionId::from_runtime("claude").unwrap(),
+        ConnectionId::ClaudeCode
+    );
+    assert_eq!(
+        ConnectionId::from_runtime("claude-code-api").unwrap(),
+        selected
+    );
+    assert!(settings.validate().is_ok());
+}
+
+#[test]
+fn subscription_exhaustion_never_chooses_an_api_billed_backup() {
+    for target in [
+        ConnectionId::ClaudeCodeApi,
+        ConnectionId::AnthropicApi,
+        ConnectionId::OpenAiApi,
+        ConnectionId::GeminiApi,
+        ConnectionId::Local,
+    ] {
+        assert!(!ConnectionId::ClaudeCode.permits_usage_fallback(target));
+    }
+    for target in [ConnectionId::Chatgpt, ConnectionId::ClaudeCode] {
+        assert!(ConnectionId::ClaudeCode.permits_usage_fallback(target));
+    }
+    assert!(ConnectionId::ClaudeCodeApi.permits_usage_fallback(ConnectionId::AnthropicApi));
 }

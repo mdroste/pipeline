@@ -50,6 +50,9 @@ const REVIEWERS = [
   ["statistical_validity", "Method — Statistical Validity", 52, 119_800, 2_050],
 ] as const;
 
+export const EXAMPLE_CORE_REVIEWERS = REVIEWERS.slice(0, 3);
+export const EXAMPLE_ADAPTIVE_REVIEWERS = REVIEWERS.slice(3);
+
 function step(
   id: string,
   label: string,
@@ -313,6 +316,14 @@ export const EXAMPLE_REPORT_MARKDOWN = `# Referee Report
 
 > **Status:** Completed. ${partialEvidence + unverifiedEvidence} quotes need checking. Coverage and limitations are reported below.
 
+## Review team
+
+**Core reviewers:** ${EXAMPLE_CORE_REVIEWERS.map(([, label]) => label).join("; ")}.
+
+**Tailored adaptive reviewers:** ${EXAMPLE_ADAPTIVE_REVIEWERS.map(([, label]) => label).join("; ")}.
+
+The tailored reviewers were selected for this paper’s subject and methods. Their findings are included below, and each reviewer’s full output is available in Sources.
+
 ---
 
 ${COMMENTS}
@@ -323,7 +334,7 @@ ${COMMENTS}
 
 **Final status:** Completed
 **Extraction coverage:** ${EXAMPLE_PAPER_PAGES.length} pages recovered.
-**Reviewer coverage:** ${STEP_OUTPUTS.length} completed, 0 failed or blocked, 0 skipped.
+**Reviewer coverage:** ${REVIEWERS.length} completed (${EXAMPLE_CORE_REVIEWERS.length} core and ${EXAMPLE_ADAPTIVE_REVIEWERS.length} tailored adaptive reviewers), 0 failed or blocked, 0 skipped. Consolidation and validation also completed.
 **Evidence:** ${verifiedEvidence} verified, ${partialEvidence} partially verified, ${unverifiedEvidence} unverified, ${notCheckableEvidence} not checkable.
 
 ### Recorded limitations

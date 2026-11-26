@@ -301,11 +301,21 @@ pub(super) fn integrity_metadata_digest(
     Ok(format!("{:x}", digest.finalize()))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Full verifications started on this thread, so tests can assert that a
+    /// caller does not repeat the per-file walk.
+    pub(super) static INTEGRITY_VERIFICATIONS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 pub(super) fn verify_install_integrity(
     root: &Path,
     expected_manifest_sha256: &str,
     expected_files: &[(&str, &str)],
 ) -> Result<(), String> {
+    #[cfg(test)]
+    INTEGRITY_VERIFICATIONS.with(|count| count.set(count.get() + 1));
     let manifest_path = root.join("integrity.json");
     let metadata = std::fs::symlink_metadata(&manifest_path)
         .map_err(|error| format!("Failed to inspect runtime integrity manifest: {error}"))?;

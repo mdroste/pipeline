@@ -481,20 +481,24 @@ fn paper_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Paper> {
 }
 
 pub(crate) fn revision_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PaperRevision> {
-    let manifest: String = row.get(4)?;
-    let extraction: String = row.get(8)?;
+    revision_from_columns(row, 0)
+}
+
+fn revision_from_columns(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<PaperRevision> {
+    let manifest: String = row.get(start + 4)?;
+    let extraction: String = row.get(start + 8)?;
     Ok(PaperRevision {
-        id: row.get(0)?,
-        paper_id: row.get(1)?,
-        input_kind: row.get(2)?,
-        entrypoint: row.get(3)?,
+        id: row.get(start)?,
+        paper_id: row.get(start + 1)?,
+        input_kind: row.get(start + 2)?,
+        entrypoint: row.get(start + 3)?,
         dependency_manifest: serde_json::from_str(&manifest).unwrap_or(Value::Null),
-        content_hash: row.get(5)?,
-        text_reference: row.get(6)?,
-        compiled_artifact_id: row.get(7)?,
+        content_hash: row.get(start + 5)?,
+        text_reference: row.get(start + 6)?,
+        compiled_artifact_id: row.get(start + 7)?,
         extraction: serde_json::from_str(&extraction).unwrap_or(Value::Null),
-        capture_complete: row.get(9)?,
-        captured_at: row.get(10)?,
+        capture_complete: row.get(start + 9)?,
+        captured_at: row.get(start + 10)?,
     })
 }
 
@@ -660,17 +664,37 @@ pub(crate) fn paper_by_id(
 
 pub fn list_papers(store: &Store, workspace_id: &str) -> WorkbenchResult<Vec<PaperWithRevision>> {
     validate_id("workspace id", workspace_id)?;
-    let connection = open_connection(store)?;
-    let mut statement = connection.prepare("SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at, document_type, pinned, archived FROM papers WHERE workspace_id = ?1 ORDER BY updated_at DESC LIMIT 500").map_err(|error| WorkbenchError::storage("Failed to prepare paper list", error))?;
+    list_papers_on(&open_connection(store)?, workspace_id)
+}
+
+pub(crate) fn list_papers_on(
+    connection: &Connection,
+    workspace_id: &str,
+) -> WorkbenchResult<Vec<PaperWithRevision>> {
+    // Keep the bounded paper page and its optional current revisions in one
+    // statement/snapshot, rather than reopening the store twice per paper.
+    let mut statement = connection.prepare(
+        "SELECT p.id,p.workspace_id,p.title,p.role,p.current_revision_id,p.created_at,p.updated_at,p.document_type,p.pinned,p.archived,
+                r.id,r.paper_id,r.input_kind,r.entrypoint,r.dependency_manifest_json,r.content_hash,r.text_reference,r.compiled_artifact_id,r.extraction_json,r.capture_complete,r.captured_at
+         FROM (SELECT * FROM papers WHERE workspace_id=?1 ORDER BY updated_at DESC LIMIT 500) p
+         LEFT JOIN paper_revisions r ON r.id=p.current_revision_id AND r.paper_id=p.id
+         ORDER BY p.updated_at DESC"
+    ).map_err(|error| WorkbenchError::storage("Failed to prepare paper list", error))?;
     let papers = statement
-        .query_map([workspace_id], paper_from_row)
+        .query_map([workspace_id], |row| {
+            Ok(PaperWithRevision {
+                paper: paper_from_row(row)?,
+                revision: if row.get::<_, Option<String>>(10)?.is_some() {
+                    Some(revision_from_columns(row, 10)?)
+                } else {
+                    None
+                },
+            })
+        })
         .map_err(|error| WorkbenchError::storage("Failed to list papers", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| WorkbenchError::storage("Failed to decode papers", error))?;
-    papers
-        .into_iter()
-        .map(|paper| paper_with_revision(store, workspace_id, &paper.id, None))
-        .collect()
+    Ok(papers)
 }
 
 fn revision_text(

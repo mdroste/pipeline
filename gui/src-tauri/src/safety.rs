@@ -500,7 +500,7 @@ impl WalkBudget {
                 self.label
             ));
         }
-        if self.cancellable && crate::commands::is_cancelled() {
+        if self.cancellable && crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".to_string());
         }
         Ok(())
@@ -600,8 +600,9 @@ mod tests {
         }
     }
 
-    /// Exclusive renames fail on exFAT, and these writes are content-addressed,
-    /// so a rename over an existing file changes nothing.
+    /// Internal content-addressed writes must work without exclusive renames
+    /// (unsupported by some exFAT implementations). A user-named submission
+    /// export instead must refuse an existing destination, not replace it.
     #[test]
     fn workspace_storage_never_needs_an_exclusive_rename() {
         fn visit(directory: &Path, found: &mut Vec<String>) {
@@ -621,7 +622,15 @@ mod tests {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workbench"),
             &mut found,
         );
-        assert_eq!(found, Vec::<String>::new());
+        assert_eq!(
+            found,
+            vec![Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src/workbench")
+                .join("project")
+                .join("submissions.rs")
+                .display()
+                .to_string()]
+        );
     }
 
     #[test]

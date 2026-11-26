@@ -251,3 +251,9 @@ mod evidence_tests;
 
 #[cfg(test)]
 mod harness_contract_tests;
+
+// One admitted project read uses one coherent database snapshot.
+pub(crate) use execution::list_executions_with_baseline_on;
+pub(crate) use ledger::research_ledger_on;
+pub(crate) use notes::list_notes_with_selection_on;
+pub(crate) use papers::list_papers_on;

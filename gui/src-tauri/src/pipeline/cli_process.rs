@@ -59,7 +59,7 @@ pub fn track_child_started(
 ) -> (u32, Instant) {
     let pid = child.id().unwrap_or(0);
     if pid > 0 {
-        crate::commands::register_child_pid(pid);
+        crate::process_tree::register_child_pid(pid);
     }
     log(app, format!("{label} started (PID {pid})"));
     (pid, Instant::now())
@@ -158,11 +158,11 @@ pub async fn wait_for_child(
         Ok(result) => result.map_err(|error| format!("Failed waiting for {binary}: {error}")),
         Err(_) => {
             if pid > 0 {
-                crate::commands::kill_process(pid);
+                crate::process_tree::kill_process(pid);
             }
             let _ = child.kill().await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-            if crate::commands::is_cancelled() {
+            if crate::cancellation::is_cancelled() {
                 log(app, format!("{label} cancelled"));
                 return Err("Pipeline cancelled".into());
             }
@@ -209,13 +209,13 @@ where
 {
     if !wait_for_stream_tasks(&stdout_task, &stderr_task, Duration::from_secs(1)).await {
         if pid > 0 {
-            crate::commands::kill_process(pid);
+            crate::process_tree::kill_process(pid);
         }
         if !wait_for_stream_tasks(&stdout_task, &stderr_task, Duration::from_secs(2)).await {
             stdout_task.abort();
             stderr_task.abort();
             if pid > 0 {
-                crate::commands::unregister_child_pid(pid);
+                crate::process_tree::unregister_child_pid(pid);
             }
             return Err(format!(
                 "{provider} output pipes did not close after termination"
@@ -223,7 +223,7 @@ where
         }
     }
     if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
+        crate::process_tree::unregister_child_pid(pid);
     }
     let stdout = stdout_task.await;
     let stderr = stderr_task.await;

@@ -165,7 +165,7 @@ export default function VariablePrompt({
         {launchError && (
           <p
             role="alert"
-            className="mb-3 break-words rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+            className="mb-3 break-words rounded border border-danger bg-danger-soft p-2 text-xs text-danger"
           >
             {launchError}
             <ReportIssueLink />
@@ -174,7 +174,7 @@ export default function VariablePrompt({
         {pickerError && (
           <p
             role="alert"
-            className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+            className="mb-3 rounded border border-danger bg-danger-soft p-2 text-xs text-danger"
           >
             {pickerError}
             <ReportIssueLink />
@@ -195,9 +195,7 @@ export default function VariablePrompt({
                   className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
                 >
                   {v.label || v.key}
-                  {v.required && (
-                    <span className="text-red-600 dark:text-red-400"> *</span>
-                  )}
+                  {v.required && <span className="text-danger"> *</span>}
                 </label>
                 {isChoice(v) && v.choices ? (
                   <select
@@ -248,10 +246,7 @@ export default function VariablePrompt({
                   />
                 )}
                 {error && (
-                  <p
-                    id={errorId}
-                    className="mt-1 text-xs text-red-600 dark:text-red-400"
-                  >
+                  <p id={errorId} className="mt-1 text-xs text-danger">
                     {error}
                   </p>
                 )}
@@ -266,9 +261,7 @@ export default function VariablePrompt({
                 className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
               >
                 {s.label || s.key}
-                {s.required && (
-                  <span className="text-red-600 dark:text-red-400"> *</span>
-                )}
+                {s.required && <span className="text-danger"> *</span>}
                 {s.mode === "folder" && (
                   <span className="text-gray-500 dark:text-gray-400">
                     {" "}
@@ -315,7 +308,7 @@ export default function VariablePrompt({
             type="button"
             onClick={() => onSubmit(values, inputs)}
             disabled={missingRequired || invalid}
-            className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="ui-button ui-button--primary"
           >
             Continue
           </button>

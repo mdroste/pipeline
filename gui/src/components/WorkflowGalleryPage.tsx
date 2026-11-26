@@ -98,30 +98,30 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
   };
 
   return (
-    <div className="ui-page">
+    <div className="ui-page ui-page--index">
       <PageHeader
-        title="Workflow gallery"
-        description="Start from a reviewed workflow. Add a review design you can edit. Check its prompts, models, step order, and file access before running it."
+        title="Review design gallery"
+        description="Start from a review design. Add a review design you can edit. Check its prompts, models, step order, and file access before running it."
       />
 
       {error && (
         <div role="alert" className="mb-6 ui-notice ui-notice--error">
-          Workflow installation failed: {error}
+          Review design installation failed: {error}
           <ReportIssueLink />
         </div>
       )}
       {installed && (
         <div
           role="status"
-          className="mb-6 flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+          className="mb-6 flex items-center gap-3 rounded-lg border border-success bg-success-soft p-3 text-sm text-success"
         >
           <span className="min-w-0 flex-1">
-            Installed and activated as your current review workflow.
+            Installed and activated as your current review design.
           </span>
           <button
             type="button"
             onClick={() => void router.navigate({ page: "pipeline" })}
-            className="shrink-0 rounded-md border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunken dark:bg-transparent dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
+            className="shrink-0 rounded-md border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium hover:bg-sunken dark:bg-transparent text-success border-success hover:bg-success-soft"
           >
             Open in the designer
           </button>
@@ -129,7 +129,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
       )}
 
       <div className="ui-page-toolbar">
-        <div className="ui-page-tabs" aria-label="Workflow categories">
+        <div className="ui-page-tabs" aria-label="Review design categories">
           {categories.map((value) => (
             <button
               type="button"
@@ -208,7 +208,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
                     ? "Installing…"
                     : previouslyInstalled
                       ? "Install another copy"
-                      : "Install workflow"}
+                      : "Install design"}
                 </button>
               </div>
             </article>

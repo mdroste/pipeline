@@ -1,6 +1,27 @@
 //! Storage migration, concurrency, persistence, and projection tests.
 
 use super::*;
+#[path = "tests/conversation_indexes.rs"]
+mod conversation_indexes;
+#[path = "tests/integration_migration.rs"]
+mod integration_migration;
+
+#[test]
+fn project_read_indexes_upgrade_and_avoid_full_scans_and_sorts() {
+    let connection = reference_schema(25).unwrap();
+    connection
+        .execute_batch(include_str!("../migrations/026_project_read_indexes.sql"))
+        .unwrap();
+    for (query, index) in [
+        ("SELECT * FROM evidence_links WHERE workspace_id='ws' ORDER BY updated_at DESC LIMIT 1000", "evidence_workspace_updated"),
+        ("SELECT * FROM change_log WHERE workspace_id='ws' AND entity_type='research_note' AND action='updated' ORDER BY created_at DESC LIMIT 100", "change_log_note_history"),
+    ] {
+        let mut statement = connection.prepare(&format!("EXPLAIN QUERY PLAN {query}")).unwrap();
+        let plan = statement.query_map([], |row| row.get::<_, String>(3)).unwrap().collect::<Result<Vec<_>, _>>().unwrap().join("\n");
+        assert!(plan.contains(index), "{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    }
+}
 
 fn fixture() -> (tempfile::TempDir, Store, PathBuf) {
     let temporary = tempfile::tempdir().unwrap();
@@ -396,10 +417,10 @@ fn workspace_and_session_lifecycle_survive_reopen_without_review_state() {
 }
 
 #[test]
-fn rootless_and_unfiled_conversations_are_first_class() {
+fn legacy_rootless_projects_can_attach_folders_and_unfiled_chats_still_work() {
     let (_temporary, store, workspace_root) = fixture();
     let workspace = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Ideas".to_string(),
             root: None,
             operation_id: "rootless-workspace".to_string(),
@@ -415,15 +436,19 @@ fn rootless_and_unfiled_conversations_are_first_class() {
         })
         .unwrap();
     assert!(rooted.record.root.is_some());
-    let rootless = store
+    let removal = store
         .clear_workspace_root(ClearWorkspaceRootRequest {
             workspace_id: workspace.record.id.clone(),
             operation_id: "clear-root".to_string(),
             expected_revision: 2,
         })
-        .unwrap();
-    assert!(rootless.record.root.is_none());
-    assert!(rootless.record.root_identity.is_none());
+        .unwrap_err();
+    assert_eq!(removal.code, "invalid_input");
+    assert!(store
+        .workspace(&workspace.record.id)
+        .unwrap()
+        .root
+        .is_some());
     let session = store
         .create_session(CreateSessionRequest {
             workspace_id: None,
@@ -669,7 +694,7 @@ fn completed_codex_events_reconcile_into_durable_app_owned_projection() {
 fn migration_eight_keeps_project_record_history_trigger_and_new_kinds() {
     let (_temporary, store, _workspace_root) = fixture();
     let workspace = store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Theory".into(),
             root: None,
             operation_id: "create".into(),

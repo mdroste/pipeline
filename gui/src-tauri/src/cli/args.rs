@@ -41,7 +41,7 @@ pub(super) struct RunArgs {
 /// `--model PROVIDER[:MODEL[:THINKING]]` and `--model-everywhere`.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub(super) struct ModelArgs {
-    pub(super) review: Option<pipeline_gui_lib::commands::ReviewModelChoice>,
+    pub(super) review: Option<crate::commands::ReviewModelChoice>,
     pub(super) everywhere: bool,
     model_id: Option<String>,
     thinking: Option<String>,
@@ -76,10 +76,10 @@ impl ModelArgs {
         Ok(())
     }
 
-    pub(super) fn overrides(&self) -> Option<pipeline_gui_lib::commands::RunModelOverrides> {
+    pub(super) fn overrides(&self) -> Option<crate::commands::RunModelOverrides> {
         self.review
             .clone()
-            .map(|review| pipeline_gui_lib::commands::RunModelOverrides {
+            .map(|review| crate::commands::RunModelOverrides {
                 review: Some(review),
                 clear_settings_exceptions: self.everywhere,
                 override_workflow_pins: self.everywhere,
@@ -118,7 +118,7 @@ fn parse_model(
             } else {
                 rest.split_once(':').unwrap_or((rest, ""))
             };
-            let choice = pipeline_gui_lib::commands::ReviewModelChoice {
+            let choice = crate::commands::ReviewModelChoice {
                 provider: provider.to_string(),
                 model: id.trim().to_string(),
                 effort: effort.trim().to_ascii_lowercase(),
@@ -154,8 +154,8 @@ pub(super) struct LimitArgs {
 }
 
 impl LimitArgs {
-    pub(super) fn overrides(self) -> pipeline_gui_lib::commands::ReviewLimitOverrides {
-        pipeline_gui_lib::commands::ReviewLimitOverrides {
+    pub(super) fn overrides(self) -> crate::commands::ReviewLimitOverrides {
+        crate::commands::ReviewLimitOverrides {
             max_cost_usd: self
                 .max_cost_micro_usd
                 .map(|micro| micro as f64 / 1_000_000.0),

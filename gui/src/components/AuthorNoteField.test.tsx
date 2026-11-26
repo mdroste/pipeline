@@ -10,38 +10,26 @@ function Editor() {
   return <AuthorNoteField value={value} onChange={setValue} />;
 }
 
-it("reveals and focuses the optional note, retains its collapsed excerpt, and removes it", async () => {
+it("keeps instructions visible and restores focus after clearing", async () => {
   const user = userEvent.setup();
   render(<Editor />);
-  expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  await user.click(
-    screen.getByRole("button", { name: /Additional instructions/ }),
-  );
-  const input = screen.getByRole("textbox");
-  expect(input).toHaveFocus();
+  const input = screen.getByRole("textbox", {
+    name: "Additional instructions",
+  });
+  expect(input).toBeVisible();
   await user.type(input, "Prioritize the model.");
-  await user.click(
-    screen.getByRole("button", { name: /Additional instructions/ }),
-  );
-  expect(
-    screen.getByText("Prioritize the model.", { selector: "p" }),
-  ).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: /Additional instructions/ }),
-  );
   expect(input).toHaveValue("Prioritize the model.");
   await user.click(screen.getByRole("button", { name: "Clear" }));
   expect(input).toHaveValue("");
   expect(input).toHaveFocus();
-  expect(screen.getByText(/Optional ·/)).toBeVisible();
+  expect(screen.getByText("Optional")).toBeVisible();
+  expect(
+    screen.queryByText("Shared with every review agent."),
+  ).not.toBeInTheDocument();
 });
 
 it("counts Unicode characters and retains over-limit text with an accessible error", async () => {
-  const user = userEvent.setup();
   render(<Editor />);
-  await user.click(
-    screen.getByRole("button", { name: /Additional instructions/ }),
-  );
   const input = screen.getByRole("textbox");
   fireEvent.change(input, { target: { value: "🦀".repeat(4000) } });
   expect(input).toHaveAttribute("aria-invalid", "false");
@@ -49,6 +37,17 @@ it("counts Unicode characters and retains over-limit text with an accessible err
   expect(input).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByRole("alert")).toHaveTextContent("4,000");
   expect(input).toHaveValue("🦀".repeat(4001));
+});
+
+it("focuses instructions when requested by the launch flow without clearing the draft", () => {
+  const { rerender } = render(
+    <AuthorNoteField value="Keep this note" onChange={() => {}} />,
+  );
+  rerender(
+    <AuthorNoteField value="Keep this note" onChange={() => {}} focusKey={1} />,
+  );
+  expect(screen.getByRole("textbox")).toHaveFocus();
+  expect(screen.getByRole("textbox")).toHaveValue("Keep this note");
 });
 
 it("normalizes only outer Unicode whitespace and line endings, preserving literal placeholders", () => {

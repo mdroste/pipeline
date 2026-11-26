@@ -278,31 +278,46 @@ impl Environment {
             ])
             .arg(&self.claude)
             .args(args);
-        crate::agent_runtime::claude::configure_subscription(&mut command);
+        crate::agent_runtime::claude::configure_native_auth(&mut command);
         command
     }
-    pub(super) fn status(&self) -> Result<Value, String> {
-        let auth_args =
-            crate::agent_runtime::claude::subscription_args(&["auth".into(), "status".into()]);
+    pub(super) fn status(
+        &self,
+        mode: crate::agent_runtime::claude::AuthMode,
+    ) -> Result<Value, String> {
+        let auth_args = crate::agent_runtime::claude::sandbox_auth_args(
+            mode,
+            None,
+            &["auth".into(), "status".into()],
+        );
         let output = crate::process::run_bounded_independent(
             &mut self.command(&auth_args, "/tmp"),
             Duration::from_secs(15),
             64 * 1024,
-        )?;
+        )
+        .map_err(|e| format!("{} WSL authentication check failed: {e}", mode.error()))?;
+        if output.stdout_truncated || output.stderr_truncated {
+            return Err("[claude-auth] WSL authentication status exceeded its output limit".into());
+        }
         let status: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-            "Could not read Claude's WSL2 sign-in. Run wsl --exec claude auth login"
+            format!(
+                "{} Could not read the WSL2 sign-in. Run the login command inside WSL.",
+                mode.error()
+            )
         })?;
-        crate::agent_runtime::claude::validate_subscription_status(&status,output.status.success()).map_err(|_|"Sign in to Claude inside WSL2: wsl --exec claude auth login. Native Windows sign-in is separate.")?;
+        crate::agent_runtime::claude::validate_auth_status(mode, &status, output.status.success())
+            .map_err(|error| format!("{error} For WSL2, run the login command inside WSL; native Windows sign-in is separate."))?;
         Ok(status)
     }
     pub(super) fn prepare(
         &self,
+        mode: crate::agent_runtime::claude::AuthMode,
         sandbox: Option<&Value>,
         args: &[String],
         directory: &Path,
         working: Option<&Path>,
     ) -> Result<(tokio::process::Command, Value, OwnedGroup), String> {
-        let status = self.status()?;
+        let status = self.status(mode)?;
         let scratch = self.path(directory.to_str().ok_or("Scratch path is not UTF-8")?)?;
         let cwd = match working {
             Some(path) => self.path(path.to_str().ok_or("Working path is not UTF-8")?)?,
@@ -331,7 +346,7 @@ impl Environment {
                 let _ = &args[i + 1];
             }
         }
-        let args = crate::agent_runtime::claude::sandbox_subscription_args(sandbox.as_ref(), &args);
+        let args = crate::agent_runtime::claude::sandbox_auth_args(mode, sandbox.as_ref(), &args);
         let config = json!({"cwd":cwd,"executable":self.claude,"args":args,"home":self.home});
         std::fs::write(
             directory.join("wsl-launch.json"),
@@ -350,7 +365,7 @@ impl Environment {
             &format!("{scratch}/wsl-launch.json"),
             &format!("{scratch}/wsl-group.json"),
         ]);
-        crate::agent_runtime::claude::configure_subscription(&mut command);
+        crate::agent_runtime::claude::configure_native_auth(&mut command);
         let mut command = tokio::process::Command::from(command);
         command.kill_on_drop(true);
         Ok((

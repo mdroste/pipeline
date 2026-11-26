@@ -2,7 +2,7 @@
 
 use super::args::WorkflowArgs;
 use super::io::emit_stdout;
-use pipeline_gui_lib::{commands, pipeline_config};
+use crate::{commands, pipeline_config};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,7 @@ fn read_workflow_source(source: &str) -> Result<String, String> {
             .read_to_end(&mut bytes)
             .map_err(|error| format!("Failed to read workflow from stdin: {error}"))?;
     } else {
-        let file = pipeline_gui_lib::safety::open_regular_file(Path::new(source))
+        let file = crate::safety::open_regular_file(Path::new(source))
             .map_err(|error| format!("Failed to read workflow '{source}': {error}"))?;
         file.take(MAX_WORKFLOW_BYTES as u64 + 1)
             .read_to_end(&mut bytes)

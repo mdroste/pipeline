@@ -579,7 +579,7 @@ async fn bind_review_handoff(
     let Some(id) = id else {
         return Ok(None);
     };
-    crate::workbench::commands::run_store(move |store| {
+    crate::workbench::runtime::run_store(move |store| {
         crate::workbench::release::validate_handoff_inputs(&store, &id, &paths)?;
         Ok(Some(id))
     })

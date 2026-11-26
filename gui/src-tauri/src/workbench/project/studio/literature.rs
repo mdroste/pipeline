@@ -357,7 +357,7 @@ pub(super) fn save_literature(
     )
 }
 /// Blank inactive TeX spans without moving the byte offsets used to open citations.
-fn citation_source(text: &str) -> String {
+pub(crate) fn citation_source(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut visible = bytes.to_vec();
     let mut i = 0;
@@ -494,8 +494,8 @@ pub async fn zotero_preview(
             "http://127.0.0.1:23119/api/{endpoint}?format=json&limit=100&start={start}"
         ))
         .header("Zotero-API-Version", "3");
-    if let Some(server) = expected_server {
-        bounded(&server, 200)?;
+    if let Some(server) = &expected_server {
+        bounded(server, 200)?;
         request = request.header("Zotero-Server-ID", server);
     }
     let mut response=request.send().await.map_err(|_|WorkbenchError::invalid("Zotero local API is unavailable. Open Zotero and enable local application communication, or import BibTeX."))?;
@@ -510,6 +510,11 @@ pub async fn zotero_preview(
         .get("Zotero-Server-ID")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    if expected_server.is_some() && expected_server != server_id {
+        return Err(WorkbenchError::conflict(
+            "Zotero database identity changed; start a new preview",
+        ));
+    }
     if response
         .headers()
         .get("Zotero-API-Version")

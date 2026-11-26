@@ -124,7 +124,7 @@ export interface ReconcileResult {
 
 export interface CreateWorkspaceRequest {
   name: string;
-  root?: string | null;
+  root: string;
   operationId: string;
 }
 

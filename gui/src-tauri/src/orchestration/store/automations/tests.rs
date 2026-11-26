@@ -131,3 +131,53 @@ fn unreadable_records_do_not_poison_the_combined_automation_index() {
     assert_eq!(rows[0].id, "healthy");
     assert!(store.automations("history", 0).unwrap().is_empty());
 }
+
+fn query_plan(c: &rusqlite::Connection, sql: &str) -> String {
+    let mut q = c.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    let unbound = vec![rusqlite::types::Null; q.parameter_count()];
+    let rows = q
+        .query_map(rusqlite::params_from_iter(unbound), |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    rows.join("\n")
+}
+
+#[test]
+fn list_pages_read_newest_first_without_sorting_all_history() {
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(root.path()).unwrap();
+    // Reopening an indexed store is a no-op.
+    let store = Store::open(&store.root).unwrap();
+    let c = store.connection().unwrap();
+
+    let automations = query_plan(&c, PAGE);
+    for index in [
+        "SCAN runs USING INDEX run_updated",
+        "SCAN missions USING INDEX mission_updated",
+        "SCAN discovery_runs USING INDEX discovery_updated",
+    ] {
+        assert!(automations.contains(index), "{automations}");
+    }
+    assert!(
+        !automations.contains("USE TEMP B-TREE FOR ORDER BY"),
+        "{automations}"
+    );
+
+    // Finished runs accumulate, so History reads the newest-first index.
+    let history = query_plan(&c, &super::super::runs::summaries_sql("history", false));
+    assert!(
+        history.contains("SCAN runs USING INDEX run_updated"),
+        "{history}"
+    );
+    assert!(!history.contains("run_ready"), "{history}");
+    let session = query_plan(&c, &super::super::runs::summaries_sql("history", true));
+    assert!(session.contains("USING INDEX run_session"), "{session}");
+    // The few ready runs still come from the state index.
+    let ready = query_plan(&c, &super::super::runs::summaries_sql("ready", false));
+    assert!(ready.contains("USING INDEX run_ready"), "{ready}");
+    let signals = query_plan(&c, "DELETE FROM signals WHERE run_id='run'");
+    assert!(signals.contains("INDEX signal_run"), "{signals}");
+}

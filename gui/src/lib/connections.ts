@@ -3,13 +3,19 @@ import type { DepsReport, Settings } from "./settingsTypes";
 import registry from "../../connections.json";
 
 export type ConnectionId =
-  "codex" | "claude" | "openai-api" | "anthropic-api" | "google-api" | "local";
+  | "codex"
+  | "claude"
+  | "claude-code-api"
+  | "openai-api"
+  | "anthropic-api"
+  | "google-api"
+  | "local";
 export type ProviderFamily = "claude" | "codex" | "antigravity" | "local";
 export interface ConnectionDescription {
   id: ConnectionId;
   label: string;
   family: ProviderFamily;
-  access: "subscription" | "api";
+  access: "subscription" | "code_api" | "api";
 }
 export const connections = registry.connections as ConnectionDescription[];
 export const providerFamilies = registry.families as {
@@ -31,6 +37,7 @@ export function reviewConnectionId(
     family === "codex"
       ? settings.codex_access_mode
       : settings.claude_access_mode;
+  if (family === "claude" && mode === "code_api") return "claude-code-api";
   const key =
     family === "codex" ? settings.openai_api_key : settings.anthropic_api_key;
   const api = mode === "api" || (!mode && !!key?.trim());
@@ -65,7 +72,14 @@ export function connectionAvailability(
     report.deps.find(({ name }) => names.includes(name));
   if (id === "local")
     return dependency("Local LLM server")?.found ? "ready" : "missing";
-  if (id === "claude") {
+  if (id === "claude" || id === "claude-code-api") {
+    // Readiness probes the selected Review mode. Another connection needs its
+    // own native auth check; never borrow the other account's signed-in result.
+    if (
+      (id === "claude-code-api") !==
+      (settings.claude_access_mode === "code_api")
+    )
+      return "unknown";
     const cli = dependency("Claude CLI");
     if (!cli) return "unknown";
     if (cli.cli_auth_status === "signed_in") return "ready";

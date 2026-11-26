@@ -54,7 +54,7 @@ pub(crate) fn render_slide_pdf(
             "PowerPoint was rendered with LibreOffice. The generated PDF and page images show the converted layout, including hidden slides; speaker notes remain separate. Font substitution or unsupported PowerPoint features may change appearance.".to_string(),
         Ok(_) => "Beamer was compiled to PDF. Use the generated PDF and page images for visual findings; cite PDF pages separately from source frames because overlays can change pagination.".to_string(),
         Err(error) => {
-            if crate::commands::is_cancelled() || crate::pipeline::review_budget::stopped(error) {
+            if crate::cancellation::is_cancelled() || crate::pipeline::review_budget::stopped(error) {
                 return Err(error.clone());
             }
             format!("Automatic slide rendering failed: {error}. This review has source content only; visual layout could not be verified. See the slide-render log.")
@@ -76,7 +76,7 @@ fn render(
     transcript: &mut String,
 ) -> Result<PathBuf, String> {
     crate::pipeline::review_budget::check()?;
-    if crate::commands::is_cancelled() {
+    if crate::cancellation::is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
     let output = workspace.join("output");
@@ -152,7 +152,7 @@ fn run_converter(
     transcript: &mut String,
 ) -> Result<(), String> {
     crate::pipeline::review_budget::check()?;
-    if crate::commands::is_cancelled() {
+    if crate::cancellation::is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
     let remaining = RENDER_TIMEOUT
@@ -167,7 +167,7 @@ fn run_converter(
         transcript.push_str("\n[converter output truncated]\n");
     }
     crate::pipeline::review_budget::check()?;
-    if crate::commands::is_cancelled() {
+    if crate::cancellation::is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
     if !result.status.success() {

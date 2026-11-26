@@ -211,22 +211,17 @@ export default function ManuscriptBuildSheet({
         disabled={busy}
         onClick={() =>
           void run(async () => {
-            const saved = await studioClient.mutate<ProjectRecord<BuildRecord>>(
-              workspaceId,
-              {
-                action: "saveBuild",
-                id: configId || null,
-                expectedRevision: chosen?.revision ?? 0,
-                config: {
-                  ...config,
-                  ...(documentId ? { documentId } : {}),
-                  inputs: lines(config.inputs.join("\n")),
-                  advancedArgv: advanced.trim()
-                    ? parseArgvText(advanced)
-                    : null,
-                },
+            const saved = await studioClient.mutate(workspaceId, {
+              action: "saveBuild",
+              id: configId || null,
+              expectedRevision: chosen?.revision ?? 0,
+              config: {
+                ...config,
+                ...(documentId ? { documentId } : {}),
+                inputs: lines(config.inputs.join("\n")),
+                advancedArgv: advanced.trim() ? parseArgvText(advanced) : null,
               },
-            );
+            });
             setConfigId(saved.id);
             setConfig(saved.body.config);
             setAdvanced(

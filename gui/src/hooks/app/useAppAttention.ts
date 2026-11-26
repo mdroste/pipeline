@@ -1,3 +1,4 @@
+import { listenConversationEvents } from "../../lib/workbench/events";
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { AppPage } from "../../components/NavRail";
@@ -69,7 +70,7 @@ export function useAppAttention(page: AppPage) {
       .catch(() => {
         bootstrapping = false;
       });
-    void listen<WorkbenchEvent>("workbench:event", ({ payload }) => {
+    void listenConversationEvents(({ payload }) => {
       if (
         bootstrapping &&
         ["serverRequest", "serverRequestResolved", "connectionClosed"].includes(

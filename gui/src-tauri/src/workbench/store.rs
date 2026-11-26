@@ -8,7 +8,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 25;
+pub const CURRENT_SCHEMA_VERSION: u32 = 28;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -129,6 +129,13 @@ pub struct Store {
     codex_home: PathBuf,
 }
 
+#[cfg(test)]
+thread_local! { static CONNECTION_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+#[cfg(test)]
+pub(crate) fn connection_opens() -> usize {
+    CONNECTION_OPENS.with(std::cell::Cell::get)
+}
+
 fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -207,7 +214,15 @@ fn validate_overrides(overrides: &Value) -> WorkbenchResult<String> {
     if let Some(runtime) = overrides.get("runtime") {
         if !matches!(
             runtime.as_str(),
-            Some("codex" | "claude" | "openai-api" | "anthropic-api" | "google-api" | "local")
+            Some(
+                "codex"
+                    | "claude"
+                    | "claude-code-api"
+                    | "openai-api"
+                    | "anthropic-api"
+                    | "google-api"
+                    | "local"
+            )
         ) {
             return Err(WorkbenchError::invalid(
                 "Choose an available conversation provider",
@@ -379,6 +394,8 @@ impl Store {
     }
 
     pub(crate) fn connection(&self) -> WorkbenchResult<Connection> {
+        #[cfg(test)]
+        CONNECTION_OPENS.with(|count| count.set(count.get() + 1));
         let connection = Connection::open(&self.database)
             .map_err(|error| WorkbenchError::storage("Failed to open Workbench database", error))?;
         configure_timeout(&connection)?;

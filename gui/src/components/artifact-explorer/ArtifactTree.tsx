@@ -1,3 +1,4 @@
+import { Icon } from "../../ui/icons";
 import { memo, useMemo, useState } from "react";
 import type { ArtifactEntry, RunManifest } from "../../lib/artifactTypes";
 import ResizeHandle from "../ResizeHandle";
@@ -27,7 +28,7 @@ const ArtifactList = memo(function ArtifactList({
               title={`${item.rel_path} · ${formatBytes(item.bytes)}`}
               className={`w-full truncate rounded px-2 py-1 text-left text-xs transition-colors ${
                 selected === item.rel_path
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                  ? "ui-selected"
                   : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
               }`}
             >
@@ -132,20 +133,7 @@ export default function ArtifactTree({
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                            dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
               >
-                <svg
-                  aria-hidden="true"
-                  className="h-3.5 w-3.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.8}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="m9 6 6 6-6 6"
-                  />
-                </svg>
+                <Icon name="chevron-right" className="h-3.5 w-3.5" />
               </button>
             </div>
             {GROUPS.map((g) => {
@@ -220,20 +208,7 @@ export default function ArtifactTree({
                      focus-visible:ring-inset focus-visible:ring-gray-400 dark:border-gray-800 dark:hover:bg-gray-900
                      dark:text-gray-400 dark:hover:text-gray-100"
         >
-          <svg
-            aria-hidden="true"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={1.7}
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M7 4.5h10M7 9.5h10M7 14.5h6M4 4.5h.01M4 9.5h.01M4 14.5h.01"
-            />
-          </svg>
+          <Icon name="notes" className="h-4 w-4" />
         </button>
       )}
     </>

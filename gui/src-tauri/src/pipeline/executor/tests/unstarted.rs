@@ -63,24 +63,26 @@ async fn run(
     let bus: crate::emit::EventBus = recorder.clone();
     let empty = std::collections::HashMap::new();
     let preloaded = std::collections::HashMap::new();
-    let result = execute_steps(
-        &bus,
+    let result = execute_steps(crate::pipeline::executor::ExecutionRequest {
+        app: &bus,
         config,
-        "",
-        &serde_json::Value::Null,
-        "",
-        "",
-        source_path,
-        "",
-        "",
-        &empty,
-        &empty,
-        &empty,
-        &preloaded,
-        None,
+        variables: &empty,
+        extra_inputs: &empty,
+        extra_input_sources: &empty,
+        preloaded: &preloaded,
+        write_dir: None,
         settings,
-        None,
-    )
+        author_note: None,
+        sources: crate::pipeline::executor::ExecutionSources {
+            orientation_path: "",
+            orientation_value: &serde_json::Value::Null,
+            paper_text_path: "",
+            document_bundle_path: "",
+            source_path,
+            paper_type: "",
+            survey_hint: "",
+        },
+    })
     .await
     .unwrap();
     let events = recorder.0.lock().unwrap().clone();
@@ -196,24 +198,26 @@ async fn a_skipped_step_is_checkpointed_for_recovery() {
     let bus: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
     let empty = std::collections::HashMap::new();
     let preloaded = std::collections::HashMap::new();
-    execute_steps(
-        &bus,
-        &workflow,
-        "",
-        &serde_json::Value::Null,
-        "",
-        "",
-        "",
-        "",
-        "",
-        &empty,
-        &empty,
-        &empty,
-        &preloaded,
-        run_dir.path().to_str(),
-        &crate::settings::Settings::default(),
-        None,
-    )
+    execute_steps(crate::pipeline::executor::ExecutionRequest {
+        app: &bus,
+        config: &workflow,
+        variables: &empty,
+        extra_inputs: &empty,
+        extra_input_sources: &empty,
+        preloaded: &preloaded,
+        write_dir: run_dir.path().to_str(),
+        settings: &crate::settings::Settings::default(),
+        author_note: None,
+        sources: crate::pipeline::executor::ExecutionSources {
+            orientation_path: "",
+            orientation_value: &serde_json::Value::Null,
+            paper_text_path: "",
+            document_bundle_path: "",
+            source_path: "",
+            paper_type: "",
+            survey_hint: "",
+        },
+    })
     .await
     .unwrap();
 

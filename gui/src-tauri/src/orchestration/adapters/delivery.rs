@@ -4,7 +4,7 @@ use super::export_file;
 use crate::orchestration::store::Store;
 use crate::orchestration::store::{err, Result};
 use crate::workbench::{
-    commands::run_store,
+    runtime::run_store,
     tasks::delivery::{self, DeliveryFile},
 };
 use serde_json::Value;

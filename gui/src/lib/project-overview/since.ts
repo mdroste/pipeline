@@ -1,4 +1,5 @@
-import { authors, refPath } from "./repository";
+import { authors } from "./repository";
+import { commitUrl, remoteLabel } from "../repositoryClient";
 import type { OverviewBlock, OverviewRow, ProjectSignals } from "./types";
 import type { ProjectHome } from "../projectClient";
 import type { Visit } from "./visits";
@@ -20,31 +21,49 @@ export function sinceBlock(
   const current = snapshotFiles(data.inventory?.body.files);
   if (visit.baseline && current) {
     const diff = diffFiles(visit.baseline, current);
-    const paths = [...diff.changed, ...diff.added, ...diff.removed];
-    if (paths.length)
+    const meaningful = (path: string) =>
+      !/(^|\/)(\.git|node_modules|__pycache__|\.pipeline[^/]*|_freeze)(\/|$)|\.(aux|log|toc|out|fls|fdb_latexmk|synctex\.gz|bbl|blg)$/i.test(
+        path,
+      );
+    const paths = [...diff.changed, ...diff.added, ...diff.removed].filter(
+      meaningful,
+    );
+    for (const path of paths.slice(0, 20))
       rows.push({
-        id: "files",
-        text: `${plural(paths.length, "file")} changed in the project folder`,
-        detail: [
-          paths.slice(0, 3).join(", "),
-          paths.length > 3 ? `and ${paths.length - 3} more` : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
+        id: `file-${path}`,
+        text: path,
+        detail: diff.removed.includes(path)
+          ? "Removed from the folder"
+          : diff.added.includes(path)
+            ? "Added to the folder"
+            : "Changed in the folder",
+        action: diff.removed.includes(path)
+          ? { kind: "tab", label: "Inspect folder", tab: "files" }
+          : { kind: "file", label: "Open file", location: { path } },
+      });
+    if (paths.length > 20)
+      rows.push({
+        id: "more-files",
+        text: `${paths.length - 20} other changed files`,
         action: { kind: "tab", label: "Open files", tab: "files" },
       });
   }
 
   for (const paper of data.papers)
-    if (paper.revision && after(paper.revision.capturedAt, since))
+    if (
+      !paper.paper.archived &&
+      paper.revision &&
+      after(paper.revision.capturedAt, since)
+    )
       rows.push({
         id: `version-${paper.revision.id}`,
         text: `New version captured: ${paper.paper.title}`,
         detail: overviewDay(paper.revision.capturedAt),
         action: {
           kind: "document",
-          label: "Open",
+          label: "Compare versions",
           revisionId: paper.revision.id,
+          mode: "compare",
         },
       });
 
@@ -53,7 +72,7 @@ export function sinceBlock(
     after(commit.date, since),
   );
   if (commits.length) {
-    const web = repository?.remote?.webUrl;
+    const web = commitUrl(repository?.remote ?? null, commits[0].sha);
     rows.push({
       id: "commits",
       text: `${plural(commits.length, "commit")} by ${authors(commits)}`,
@@ -63,14 +82,13 @@ export function sinceBlock(
           .map((commit) => commit.subject)
           .join("; "),
       ),
-      action:
-        web && repository?.branch
-          ? {
-              kind: "link",
-              label: "View on GitHub",
-              url: `${web}/commits/${refPath(repository.branch)}`,
-            }
-          : { kind: "tab", label: "Open files", tab: "files" },
+      action: web
+        ? {
+            kind: "link",
+            label: `View on ${remoteLabel(repository?.remote ?? null)}`,
+            url: web,
+          }
+        : { kind: "tab", label: "Inspect commits", tab: "version-control" },
     });
   }
 
@@ -114,5 +132,5 @@ export function sinceBlock(
       action: { kind: "automation", label: "Open", taskId: task.id },
     });
 
-  return block("since", "Since you were last here", rows);
+  return block("since", "Recent changes", rows);
 }

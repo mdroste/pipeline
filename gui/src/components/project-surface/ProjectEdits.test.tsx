@@ -11,6 +11,16 @@ import type { SurfaceApi } from "./shared";
 import type { ProjectHome } from "../../lib/projectClient";
 import { makeProjectHome } from "../../test/projectSurfaceFixtures";
 
+vi.mock("../../lib/fileDiffClient", async () => {
+  const { fileHunks } = await import("../../lib/fileDiff");
+  return {
+    startFileDiff: (before: string, after: string) => ({
+      result: Promise.resolve(fileHunks(before, after)),
+      cancel: vi.fn(),
+    }),
+  };
+});
+
 const mocks = vi.hoisted(() => ({
   preview: vi.fn(),
   mutate: vi.fn(),

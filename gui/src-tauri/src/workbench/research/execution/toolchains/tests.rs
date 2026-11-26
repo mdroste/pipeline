@@ -398,6 +398,37 @@ mod unix {
     }
 
     #[test]
+    fn project_environment_programs_are_never_started_during_detection() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let marker = temp.path().join("project-program-started");
+        file(
+            &nested(&root, &[".venv", "pyvenv.cfg"]),
+            "home = /usr/bin\nversion_info = 3.11.4\n",
+        );
+        let script = format!(
+            "#!/bin/sh\ntouch '{}'\necho 'Python 9.9.9'\n",
+            marker.display()
+        );
+        file(&nested(&root, &[".venv", "bin", "python"]), &script);
+        file(&nested(&root, &[".venv", "bin", "jupyter"]), &script);
+        let mut linux = host(Platform::Linux);
+        linux.probe_versions = true;
+        let report = detect_with(&linux, Some(&root));
+        let python = tools(&report, "python");
+        assert_eq!(python[0].source, "projectEnvironment");
+        assert_eq!(python[0].version.as_deref(), Some("3.11.4"));
+        assert_eq!(python[0].version_source, "pyvenv.cfg");
+        let jupyter = tools(&report, "jupyter");
+        assert_eq!(jupyter[0].version, None);
+        assert!(jupyter[0].version_source.contains("project folder"));
+        assert!(
+            !marker.exists(),
+            "detection must not start a project's own programs"
+        );
+    }
+
+    #[test]
     fn missing_project_folders_are_reported_as_absent() {
         let report = detect_with(
             &host(Platform::Linux),

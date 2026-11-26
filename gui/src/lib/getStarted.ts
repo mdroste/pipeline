@@ -12,7 +12,7 @@ export interface GetStartedRecord {
   pendingSettings?: boolean;
 }
 
-export type GetStartedView = "setup" | "example";
+export type GetStartedView = "setup" | "example" | "project-example";
 
 const EMPTY: GetStartedRecord = {
   version: 1,

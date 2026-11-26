@@ -65,11 +65,7 @@ export default function WorkspaceMessageActions({
       </button>
       <span
         role="status"
-        className={
-          status === "failed"
-            ? "text-xs text-red-600 dark:text-red-400"
-            : "sr-only"
-        }
+        className={status === "failed" ? "text-xs text-danger" : "sr-only"}
       >
         {status === "failed"
           ? "Could not copy. Select the text and copy manually."

@@ -85,6 +85,35 @@ describe("EnginesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("refreshes automatic GPU setup and preserves a successful CPU parser", async () => {
+    const gpu = engine({
+      id: "paddleocr-vl-gpu",
+      label: "Graphics card recognition",
+    });
+    let current = [engine({ installed: true }), gpu];
+    invoke.mockImplementation(() => Promise.resolve(current));
+    render(<EnginesPanel />);
+    await screen.findByText("Graphics card recognition");
+    current = [engine({ installed: true }), { ...gpu, installing: true }];
+    await act(async () => handlers.get("engines:changed")!({ payload: {} }));
+    expect(screen.getByRole("button", { name: /Cancel/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Repair" })).toBeDisabled();
+    current = [
+      engine({ installed: true }),
+      {
+        ...gpu,
+        setup_message:
+          "No supported graphics card was found. The parser uses the processor.",
+      },
+    ];
+    await act(async () => handlers.get("engines:changed")!({ payload: {} }));
+    expect(
+      await screen.findByText(/No supported graphics card was found/),
+    ).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Repair" })).toBeEnabled();
+  });
+
   it("surfaces an engine-list failure and retries it", async () => {
     let listAttempts = 0;
     invoke.mockImplementation((cmd: string) => {
@@ -479,7 +508,7 @@ describe("EnginesPanel", () => {
       "llama.cpp runtime download failed",
     );
     expect(screen.getByText("OCR model").closest("li")).toHaveClass(
-      "text-red-700",
+      "text-danger",
     );
     expect(screen.getByText("Show details")).toBeVisible();
     expect(screen.queryByRole("progressbar")).toBeNull();

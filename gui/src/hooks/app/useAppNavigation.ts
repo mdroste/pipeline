@@ -192,7 +192,7 @@ export function useAppNavigation() {
 
   const openWorkspaceProject = async (
     projectId: string,
-    destination: WorkspaceDestination = "overview",
+    destination?: WorkspaceDestination,
   ) => {
     await router.navigate({
       page: "workspace",
@@ -281,7 +281,17 @@ export function useAppNavigation() {
       const previous = historySourceRef.current;
       const next = source ? { runId, target: source } : null;
       setHistorySource(next);
-      if (await router.navigate({ page: "history", runId })) return;
+      const origin = router.route;
+      const projectId =
+        origin.page === "workspace" ? origin.projectId : undefined;
+      if (
+        await router.navigate({
+          page: "history",
+          runId,
+          ...(projectId ? { projectId } : {}),
+        })
+      )
+        return;
       // Declined: restore the earlier source unless a newer one replaced it.
       setHistorySource((current) => (current === next ? previous : current));
     },
@@ -406,10 +416,10 @@ export function useAppRouteCommits(
         try {
           if (next.projectId) {
             // Opening a conversation leaves the project's own tab as it was.
-            if (next.destination || !next.sessionId)
+            if (next.destination)
               saveDeskLayout(next.projectId, {
                 ...loadDeskLayout(next.projectId),
-                tab: (next.destination ?? "overview") as WorkspaceDestination,
+                tab: next.destination,
                 object: null,
                 comparison: null,
               });

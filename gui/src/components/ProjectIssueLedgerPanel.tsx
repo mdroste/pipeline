@@ -28,12 +28,10 @@ const STATUS_ORDER: Record<ProjectIssueStatus, number> = {
 };
 
 const STATUS_STYLES: Record<ProjectIssueStatus, string> = {
-  open: "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
-  addressed:
-    "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
-  dismissed: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
-  regressed:
-    "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
+  open: "ui-tone-running",
+  addressed: "ui-tone-success",
+  dismissed: "ui-tone-idle",
+  regressed: "ui-tone-attention",
 };
 
 function formatDate(value: string, withTime = false): string {
@@ -147,7 +145,7 @@ function exportLedger(project: Project, issues: ProjectIssue[]): string {
       return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Collection note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
     })
     .join("\n\n");
-  return `# ${project.name} — Findings across reviews\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
+  return `# ${project.name} — Findings across reviews\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No findings match the current filters."}\n`;
 }
 
 export default function ProjectIssueLedgerPanel({
@@ -368,9 +366,9 @@ export default function ProjectIssueLedgerPanel({
     const scope = scopeRef.current;
     const target = ledger?.issues.find((i) => i.id === targetIssueId);
     const confirmed = await confirmDialog(
-      `“${issue.title}” will be removed and its report observations moved to “${target?.title ?? "the chosen issue"}”. This can't be undone.`,
+      `“${issue.title}” will be removed and its report observations moved to “${target?.title ?? "the chosen finding"}”. This can't be undone.`,
       {
-        title: "Combine these issues?",
+        title: "Combine these findings?",
         confirmLabel: "Combine",
         destructive: true,
       },
@@ -411,7 +409,7 @@ export default function ProjectIssueLedgerPanel({
           .replace(/[^a-z0-9]+/gi, "-")
           .replace(/^-|-$/g, "")
           .toLowerCase() || "project"
-      }-issues.md`;
+      }-findings.md`;
       // The backend runs the native save dialog and writes only to the
       // user-chosen path; the webview never supplies a filesystem path.
       await reportExportClient.saveText({
@@ -420,7 +418,7 @@ export default function ProjectIssueLedgerPanel({
       });
     } catch (caught) {
       setError(
-        `Issue-ledger export failed: ${caught instanceof Error ? caught.message : String(caught)}`,
+        `Finding export failed: ${caught instanceof Error ? caught.message : String(caught)}`,
       );
     }
   };
@@ -469,14 +467,14 @@ export default function ProjectIssueLedgerPanel({
       {error && (
         <div
           role="alert"
-          className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          className="mt-4 rounded-lg border border-danger bg-danger-soft p-3 text-xs text-danger"
         >
           {error}
           <ReportIssueLink />
         </div>
       )}
       {ledger && ledger.warnings.length > 0 && (
-        <details className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+        <details className="mt-4 rounded-lg border border-warning bg-warning-soft px-3 py-2 text-xs text-warning">
           <summary>
             {ledger.warnings.length} run
             {ledger.warnings.length === 1 ? " was" : "s were"} not fully
@@ -514,14 +512,14 @@ export default function ProjectIssueLedgerPanel({
 
       <div className="mt-4 grid gap-2 lg:grid-cols-[minmax(12rem,1fr)_auto_auto_auto_auto]">
         <input
-          aria-label="Search collection issues"
+          aria-label="Search collection findings"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search titles, locations, notes, or report text…"
           className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
         />
         <select
-          aria-label="Issue status filter"
+          aria-label="Finding status filter"
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
@@ -533,7 +531,7 @@ export default function ProjectIssueLedgerPanel({
           <option value="dismissed">Dismissed</option>
         </select>
         <select
-          aria-label="Issue severity filter"
+          aria-label="Finding severity filter"
           value={severityFilter}
           onChange={(event) => setSeverityFilter(event.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
@@ -546,12 +544,12 @@ export default function ProjectIssueLedgerPanel({
           ))}
         </select>
         <select
-          aria-label="Issue review type filter"
+          aria-label="Finding review design filter"
           value={workflowFilter}
           onChange={(event) => setWorkflowFilter(event.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
         >
-          <option value="all">All review types</option>
+          <option value="all">All review designs</option>
           {workflows.map(([id, name]) => (
             <option key={id} value={id}>
               {name}
@@ -559,7 +557,7 @@ export default function ProjectIssueLedgerPanel({
           ))}
         </select>
         <select
-          aria-label="Issue report filter"
+          aria-label="Finding report filter"
           value={runFilter}
           onChange={(event) => setRunFilter(event.target.value)}
           className="max-w-56 rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
@@ -840,8 +838,8 @@ export default function ProjectIssueLedgerPanel({
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-300">
               {ledger?.issues.length
-                ? "No issues match these filters."
-                : "No structured issues were found in this collection’s reports."}
+                ? "No findings match these filters."
+                : "No structured findings were found in this collection’s reports."}
             </p>
             <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-ink-muted">
               Findings appear here when a review saves them as individual items.

@@ -75,10 +75,7 @@ export default function AnalyzerStepPanel({
         {info === undefined ? (
           <p className="mt-1 text-xs text-gray-500">Loading…</p>
         ) : info === null ? (
-          <p
-            role="alert"
-            className="mt-1 text-xs text-red-600 dark:text-red-400"
-          >
+          <p role="alert" className="mt-1 text-xs text-danger">
             This version of Pipeline does not provide this check. The review
             cannot run until the step is removed.
           </p>

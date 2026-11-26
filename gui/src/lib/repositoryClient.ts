@@ -9,7 +9,7 @@ export interface RepositoryRemote {
   owner: string;
   repo: string;
   /** Null for hosts other than GitHub and Bitbucket. */
-  provider?: "github" | "bitbucket" | null;
+  provider?: "github" | "bitbucket" | "overleaf" | null;
   /** Present only for GitHub and Bitbucket. */
   webUrl: string | null;
 }
@@ -20,6 +20,7 @@ export interface RepositoryCommit {
   subject: string;
 }
 export interface RepositoryStatus {
+  remoteHead?: string | null;
   /** Null while HEAD is detached. */
   branch: string | null;
   /** Null before the first commit. */
@@ -68,7 +69,7 @@ const pathSegments = (value: string) =>
 
 /** Where a host shows a commit, or null for hosts with no known layout. */
 export function commitUrl(remote: RepositoryRemote | null, sha: string) {
-  if (!remote?.webUrl) return null;
+  if (!remote?.webUrl || remote.provider === "overleaf") return null;
   return remote.provider === "bitbucket"
     ? `${remote.webUrl}/commits/${sha}`
     : `${remote.webUrl}/commit/${sha}`;
@@ -79,7 +80,7 @@ export function pullRequestUrl(
   remote: RepositoryRemote | null,
   branch: string,
 ) {
-  if (!remote?.webUrl) return null;
+  if (!remote?.webUrl || remote.provider === "overleaf") return null;
   return remote.provider === "bitbucket"
     ? `${remote.webUrl}/pull-requests/new?source=${encodeURIComponent(branch)}&t=1`
     : `${remote.webUrl}/compare/${pathSegments(branch)}?expand=1`;

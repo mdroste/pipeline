@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 // Structural outline editor for automation chains. Steps are sentences with
 // inline editors; add, reorder, nest, and delete without touching JSON. The
 // exact definition remains visible in the builder's advanced view.
@@ -137,12 +139,12 @@ function StepEditor({
             onChange={(input) => set({ input })}
           />
           <label className="task-field">
-            Review workflow
+            Review design
             <select
               value={step.profileId}
               onChange={(event) => set({ profileId: event.target.value })}
             >
-              <option value="">Select a review workflow</option>
+              <option value="">Select a review design</option>
               {shared.profiles.map((profile) => (
                 <option key={profile.id} value={profile.id}>
                   {profile.name}
@@ -385,9 +387,9 @@ function NestedLists({
             <p className="task-branch-label">
               Branch {index + 1}
               {step.branches.length > 1 && (
-                <button
+                <IconButton
                   type="button"
-                  aria-label={`Remove branch ${index + 1}`}
+                  label={`Remove branch ${index + 1}`}
                   onClick={() =>
                     onChange({
                       ...step,
@@ -395,8 +397,8 @@ function NestedLists({
                     })
                   }
                 >
-                  ×
-                </button>
+                  <Icon name="close" className="h-4 w-4" />
+                </IconButton>
               )}
             </p>
             <StepList
@@ -518,13 +520,13 @@ function StepList({
                 >
                   ↓
                 </button>
-                <button
+                <IconButton
                   type="button"
-                  aria-label={`Remove ${step.label}`}
+                  label={`Remove ${step.label}`}
                   onClick={() => onChange(steps.filter((_, i) => i !== index))}
                 >
-                  ×
-                </button>
+                  <Icon name="close" className="h-4 w-4" />
+                </IconButton>
               </span>
             </div>
             {open && (

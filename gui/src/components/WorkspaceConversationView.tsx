@@ -88,7 +88,7 @@ interface Props {
 }
 /** Why a turn did not finish. Saved with the turn, so it stays in the transcript. */
 function TurnFailure({ text }: { text: string }) {
-  return <p className="my-2 text-sm text-red-700 dark:text-red-300">{text}</p>;
+  return <p className="my-2 text-sm text-danger">{text}</p>;
 }
 /** The answer as it arrives. Flushes re-render this message and nothing else. */
 function LiveMessage({
@@ -332,6 +332,8 @@ export default function WorkspaceConversationView({
                     text={text}
                     role={roleFor(item)}
                     selected={selectedMessage === item.id}
+                    workspaceId={snapshot?.session.workspaceId ?? undefined}
+                    conversationId={snapshot?.session.id}
                   />
                 )}
                 {failure && <TurnFailure text={failure} />}
@@ -400,7 +402,7 @@ export default function WorkspaceConversationView({
           <div
             key={warning}
             role="status"
-            className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+            className="rounded-lg border border-warning bg-warning-soft p-3 text-sm text-warning"
           >
             {warning}
           </div>
@@ -408,7 +410,7 @@ export default function WorkspaceConversationView({
         {error && (
           <div
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+            className="rounded-lg border border-danger bg-danger-soft p-3 text-sm text-danger"
           >
             {error}
             <ReportIssueLink />

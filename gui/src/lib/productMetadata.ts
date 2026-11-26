@@ -13,7 +13,7 @@ export const REPORT_WORKSPACE_TABS = [
   },
   {
     id: "issues",
-    label: "Issues",
+    label: "Findings",
     description:
       "Findings you can accept, reject, or annotate. Appears when the review produces findings.",
   },

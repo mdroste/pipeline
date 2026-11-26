@@ -3,8 +3,8 @@
 use super::args::EnginesArgs;
 use super::interrupt::{install_engine_with_interrupt, report_run_error};
 use super::io::emit_stdout;
-use pipeline_gui_lib::emit::{CliEvents, EventBus};
-use pipeline_gui_lib::engines;
+use crate::emit::{CliEvents, EventBus};
+use crate::engines;
 use std::sync::Arc;
 
 pub(super) async fn cmd_engines(args: EnginesArgs) -> i32 {

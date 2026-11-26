@@ -94,7 +94,7 @@ test("Linux native tests build and retain their command helper", () => {
 test("clean checkouts retain a Poppler resource for native test builds", () => {
   const directory = path.join(ROOT, "gui", "src-tauri", "resources", "poppler");
   assert.ok(
-    [".gitkeep", "pdftotext", "pdftotext.exe"].some((name) =>
+    [".gitkeep", "pdftotext", "pdftotext.exe", "Library/bin/pdftotext.exe"].some((name) =>
       fs.existsSync(path.join(directory, name))),
     "Tauri's Poppler resource glob must match a file before native tests can compile",
   );
@@ -118,9 +118,9 @@ test("Windows PDF tests use the pinned Poppler tools before system executables",
   assert.ok(setup, "Windows CI must install Poppler instead of using the runner's Xpdf");
   assert.match(setup, /if: runner\.os == 'Windows'/);
   assert.match(setup, /bash scripts\/release\/bundle-poppler\.sh windows/);
-  assert.match(setup, /cygpath -w "\$PWD\/gui\/src-tauri\/resources\/poppler" >> "\$GITHUB_PATH"/);
+  assert.match(setup, /cygpath -w "\$PWD\/gui\/src-tauri\/resources\/poppler\/Library\/bin" >> "\$GITHUB_PATH"/);
   const pdfTest = contents.split("- name: Native PDF export").at(-1);
-  assert.match(pdfTest, /export PATH="\$PWD\/resources\/poppler:\$PATH"/);
+  assert.match(pdfTest, /export PATH="\$PWD\/resources\/poppler\/Library\/bin:\$PATH"/);
 });
 
 test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
@@ -284,7 +284,7 @@ test("every release script runs somewhere", () => {
   const callers = [...workflows, readText("gui", "package.json"), readText("gui", "src-tauri", "tauri.conf.json")];
   const within = (name) => scripts.filter((other) => other !== name).map((other) => readText("scripts", "release", other));
   // Run by hand: the runbook gives the command, and art changes are rare.
-  const manual = { "qualify-release.mjs": "docs/releasing.md", "render-installer-art.py": "docs/releasing.md" };
+  const manual = { "qualify-release.mjs": "docs/releasing.md", "render-installer-art.py": "docs/releasing.md", "make-poppler-fixtures.py": "docs/releasing.md" };
   for (const name of scripts) {
     if (name === "release.test.mjs") continue;
     if (manual[name]) {
@@ -322,5 +322,10 @@ test("current public version references match the application metadata", () => {
   const { version } = JSON.parse(readText("gui", "package.json"));
   assert.ok(readText("README.md").includes(`version-${version}-blue`));
   assert.ok(readText(".github", "ISSUE_TEMPLATE", "bug_report.yml").includes(`placeholder: "${version}"`));
-  assert.ok(readText("CHANGELOG.md").includes(`## ${version} —`));
+  // New entries belong under the version being prepared, never under a
+  // release that is already tagged: the newest version heading is this one.
+  const newest = readText("CHANGELOG.md")
+    .split(/\r?\n/)
+    .find((line) => /^## (?!Unreleased\b)/.test(line));
+  assert.ok(newest?.startsWith(`## ${version} —`), `newest changelog version is "${newest}", not ${version}`);
 });

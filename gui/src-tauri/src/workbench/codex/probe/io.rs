@@ -235,19 +235,15 @@ pub(super) async fn streamed_command_pid(
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(encoded)
                     .map_err(|error| format!("Command output was not valid base64: {error}"))?;
-                if decoded.len() > 64usize.saturating_sub(stdout.len()) {
-                    return Err("Command readiness output exceeded 64 bytes".to_string());
+                // ConPTY emits cursor modes and a window title around the
+                // fixture's output. Bound that preamble, but never parse its
+                // numeric escape parameters as a process id.
+                if decoded.len() > 4096usize.saturating_sub(stdout.len()) {
+                    return Err("Command readiness output exceeded 4096 bytes".to_string());
                 }
                 stdout.extend_from_slice(&decoded);
-                if stdout.contains(&b'\n') {
-                    let line = String::from_utf8_lossy(&stdout);
-                    return line
-                        .lines()
-                        .next()
-                        .unwrap_or_default()
-                        .trim()
-                        .parse::<u32>()
-                        .map_err(|_| format!("Command emitted an invalid process id: {line:?}"));
+                if let Some(pid) = readiness_pid(&stdout)? {
+                    return Ok(pid);
                 }
             }
             FrameKind::Response(response) if response.get("id") == Some(request_id) => {
@@ -264,4 +260,47 @@ pub(super) async fn streamed_command_pid(
         }
     }
     Err("Codex App Server emitted too many frames before command readiness".to_string())
+}
+
+fn readiness_pid(output: &[u8]) -> Result<Option<u32>, String> {
+    let text = String::from_utf8_lossy(output);
+    let Some((_, marked)) = text.split_once("PIPELINE_PROBE_PID:") else {
+        return Ok(None);
+    };
+    let Some((pid, _)) = marked.split_once(":END") else {
+        return Ok(None);
+    };
+    pid.parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 0 && *pid <= i32::MAX as u32)
+        .map(Some)
+        .ok_or_else(|| "Command emitted an invalid fixture process id".into())
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::readiness_pid;
+
+    #[test]
+    fn conpty_controls_and_fragmented_frames_do_not_become_process_ids() {
+        let output =
+            b"\x1b[?9001h\x1b[?1004h\x1b[2J\r\n\x1b]0;Codex\x07PIPELINE_PROBE_PID:12345:END\r\n";
+        let end = output.len() - 2;
+        for length in 0..end {
+            assert_eq!(readiness_pid(&output[..length]).unwrap(), None);
+        }
+        assert_eq!(readiness_pid(output).unwrap(), Some(12345));
+        assert_eq!(readiness_pid(b"9001\r\n").unwrap(), None);
+    }
+
+    #[test]
+    fn readiness_requires_a_valid_marked_process_id() {
+        for text in ["", "0", "-1", "not-a-pid", "4294967296", "2147483648"] {
+            assert!(readiness_pid(format!("PIPELINE_PROBE_PID:{text}:END").as_bytes()).is_err());
+        }
+        assert_eq!(
+            readiness_pid(b"PIPELINE_PROBE_PID:42:END\n").unwrap(),
+            Some(42)
+        );
+    }
 }

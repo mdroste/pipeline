@@ -75,7 +75,7 @@ export function ModelDefaultsSection({
     <>
       <SectionHeader
         title="Review models"
-        description="Reviews use the default model unless a stage or workflow step overrides it."
+        description="Reviews use the default model unless a stage or review-design step overrides it."
       />
       <div className="space-y-0">
         <section className="space-y-5">
@@ -415,7 +415,7 @@ export function WorkflowSection({
 
         <SettingRow
           label="Step time limit"
-          description="Per model call. Document bundle preparation and PDF extraction get half this time."
+          description="Per model call, including document bundle preparation. PDF extraction has its own time limit under PDF extraction."
         >
           <select
             aria-label="Step time limit"

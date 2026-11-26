@@ -27,7 +27,7 @@ describe("PipelinePage persistence", () => {
     render(<PipelinePage onClose={() => {}} onOpenGallery={onOpenGallery} />);
 
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Gallery" }));
 
@@ -41,11 +41,11 @@ describe("PipelinePage persistence", () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
-    await screen.findByRole("combobox", { name: "Active review" });
+    await screen.findByRole("combobox", { name: "Active review design" });
 
     dialogMocks.open.mockRejectedValueOnce(new Error("picker unavailable"));
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Import" }));
     await waitFor(() => {
@@ -65,7 +65,7 @@ describe("PipelinePage persistence", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     await user.click(screen.getByRole("button", { name: /^Export/ }));
-    await user.click(screen.getByRole("menuitem", { name: /Export review/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Export design/ }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
         "Export failed: save picker unavailable",
@@ -95,15 +95,17 @@ describe("PipelinePage persistence", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active review",
+      name: "Active review design",
     });
     await user.click(selector);
     await user.click(screen.getByRole("option", { name: "Quick Review" }));
 
     expect(selector).toBeDisabled();
     expect(selector.parentElement).toHaveAttribute("aria-busy", "true");
-    await user.click(screen.getByRole("button", { name: "Review actions" }));
-    expect(screen.getByRole("menuitem", { name: "Reset" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Design actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Reset to defaults" }),
+    ).toBeDisabled();
     expect(
       invoke.mock.calls.filter((call) => call[0] === "switch_profile"),
     ).toHaveLength(1);
@@ -141,8 +143,10 @@ describe("PipelinePage persistence", () => {
     );
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Review actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Reset" }));
+    await user.click(screen.getByRole("button", { name: "Design actions" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "Reset to defaults" }),
+    );
     unmount();
     await act(async () => finishReset(makeConfig()));
 
@@ -185,20 +189,24 @@ describe("PipelinePage persistence", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active review",
+      name: "Active review design",
     });
     expect(selector).toHaveAttribute("data-value", "custom");
     await user.click(
-      await screen.findByRole("button", { name: "Review actions" }),
+      await screen.findByRole("button", { name: "Design actions" }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     expect(selector).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Review actions" }));
-    expect(screen.getByRole("menuitem", { name: "New review" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Design actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "New review design" }),
+    ).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Duplicate" })).toBeDisabled();
     expect(screen.getByRole("menuitem", { name: "Rename" })).toBeDisabled();
-    expect(screen.getByRole("menuitem", { name: "Reset" })).toBeDisabled();
+    expect(
+      screen.getByRole("menuitem", { name: "Reset to defaults" }),
+    ).toBeDisabled();
     expect(
       invoke.mock.calls.some(([command]) => command === "switch_profile"),
     ).toBe(false);

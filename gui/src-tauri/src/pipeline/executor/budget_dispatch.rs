@@ -187,3 +187,25 @@ mod tests {
         assert!(budget.admit(Some(("claude-sonnet", 1, 1))).is_err());
     }
 }
+
+#[cfg(test)]
+#[test]
+fn native_claude_api_cannot_bypass_a_dollar_budget() {
+    let mut budget = DispatchBudget::new(
+        RunBudget {
+            max_cost_usd: Some(10.0),
+            ..Default::default()
+        },
+        1,
+    );
+    let error = budget
+        .admit(Some((
+            crate::usage_allowance::CLAUDE_CODE_API_BILLING,
+            0,
+            0,
+        )))
+        .unwrap_err();
+    assert!(error.contains("cost control"));
+    assert_eq!(budget.attempts, 0);
+    assert!(budget.admit(None).is_ok());
+}

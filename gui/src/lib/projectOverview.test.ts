@@ -193,6 +193,44 @@ describe("silence and single actions", () => {
 });
 
 describe("state of the draft", () => {
+  it("does not attach a newer slide build to the paper", () => {
+    const block = draftBlock(
+      withManuscript(),
+      signals({
+        builds: [
+          {
+            id: "slide-build",
+            updatedAt: "2099-01-01",
+            body: {
+              recordType: "receipt",
+              documentId: "slides",
+              outcome: "completed",
+              diagnostics: [],
+            },
+          },
+        ] as never,
+      }),
+    );
+    expect(row(block, "build")).toBeUndefined();
+  });
+  it("recognizes identical reimports by hash and does not count failed reviews as coverage", () => {
+    const identity = {
+      content_hash: "hash-rev",
+      selection_key: "paper",
+      lineage_id: "paper",
+    };
+    const data = withManuscript("2099-01-01T00:00:00Z");
+    const exact = reviewRun({ input_identity: identity });
+    expect(
+      row(draftBlock(data, signals({ runs: [exact] })), "review")?.detail,
+    ).toContain("Matches this saved version");
+    expect(
+      row(
+        draftBlock(data, signals({ runs: [{ ...exact, status: "failed" }] })),
+        "review",
+      )?.text,
+    ).toBe("No completed review matched to this saved version");
+  });
   it("reports the manuscript and that it was never reviewed", () => {
     const block = draftBlock(withManuscript(), signals({ runs: [] }));
     expect(row(block, "manuscript")?.action).toEqual({
@@ -201,7 +239,7 @@ describe("state of the draft", () => {
       revisionId: "rev",
     });
     expect(row(block, "review")).toMatchObject({
-      text: "This draft has not been reviewed",
+      text: "This saved version has not been reviewed",
       action: { kind: "review" },
     });
   });
@@ -211,20 +249,20 @@ describe("state of the draft", () => {
     expect(currentManuscript(data).chosen).toBe(false);
     expect(row(draftBlock(data, NO_SIGNALS), "manuscript")?.action).toEqual({
       kind: "tab",
-      label: "Choose the current version",
+      label: "Choose the manuscript",
       tab: "project-settings",
     });
   });
 
-  it("flags a version imported after the last review", () => {
+  it("does not infer review coverage from dates", () => {
     const block = draftBlock(
       withManuscript("2026-09-20T10:00:00Z"),
       signals({ runs: [reviewRun({ created: "2026-09-10T10:00:00Z" })] }),
     );
     expect(row(block, "review")).toMatchObject({
-      text: "The current version has not been reviewed",
+      text: "No completed review matched to this saved version",
       attention: true,
-      action: { kind: "review" },
+      action: { kind: "run" },
     });
   });
 
@@ -234,7 +272,15 @@ describe("state of the draft", () => {
       signals({
         runs: [
           reviewRun({ run_id: "old", created: "2026-09-05T10:00:00Z" }),
-          reviewRun({ run_id: "new", created: "2026-09-12T10:00:00Z" }),
+          reviewRun({
+            run_id: "new",
+            created: "2026-09-12T10:00:00Z",
+            input_identity: {
+              content_hash: "hash-rev",
+              selection_key: "paper",
+              lineage_id: "paper",
+            },
+          }),
         ],
       }),
     );
@@ -286,6 +332,7 @@ describe("state of the draft", () => {
             updatedAt: "2026-09-21T10:00:00Z",
             body: {
               recordType: "receipt",
+              documentId: "paper-rev",
               executionId: "exec",
               outcome: "failed",
               diagnostics: [
@@ -474,12 +521,15 @@ describe("visits", () => {
       },
     );
     expect(block?.rows.map((item) => item.id)).toEqual([
-      "files",
+      "file-analysis/main.do",
       "version-rev",
       "review-after",
       "automation-task",
     ]);
-    expect(row(block, "files")?.detail).toBe("analysis/main.do");
+    expect(row(block, "file-analysis/main.do")?.action).toMatchObject({
+      kind: "file",
+      location: { path: "analysis/main.do" },
+    });
     expect(row(block, "automation-task")).toMatchObject({
       text: "Automation failed: Re-review loop",
       attention: true,
@@ -790,7 +840,7 @@ describe("repository", () => {
       detail: "Tighten the introduction",
       action: {
         kind: "link",
-        url: "https://github.com/mdroste/minwage/commits/main",
+        url: "https://github.com/mdroste/minwage/commit/1111111",
       },
     });
     expect(
@@ -802,7 +852,7 @@ describe("repository", () => {
   });
 });
 
-describe("arranging by stage", () => {
+describe("arranging attention", () => {
   const rows = (ids: string[]) =>
     ids.map((id) => ({
       id,
@@ -825,39 +875,35 @@ describe("arranging by stage", () => {
   const ids = (block: { rows: { id: string }[] } | null) =>
     block?.rows.map((item) => item.id) ?? null;
 
-  it("leads with at most three rows chosen by the paper's stage", () => {
-    const revising = arrangeOverview(home(), blocks(), "revising");
-    expect(ids(revising.next)).toEqual(["progress", "undrafted", "findings"]);
-    // A row that moved up is not repeated where it came from.
-    expect(revising.blocks.map(ids)).toEqual([["build", "review"]]);
-    expect(ids(arrangeOverview(home(), blocks(), "drafting").next)).toEqual([
+  it("keeps blockers first regardless of stage and excludes progress statements", () => {
+    const arranged = arrangeOverview(home(), blocks(), "revising");
+    expect(arranged.next).toBeNull();
+    expect(ids(arranged.needs)).toEqual([
       "build",
-      "review",
       "findings",
-    ]);
-    const idea = arrangeOverview(home(), blocks(), "idea");
-    expect(idea.next).toBeNull();
-    expect(idea.blocks).toHaveLength(2);
-    // With no stage set, a general order still applies.
-    expect(ids(arrangeOverview(home(), blocks(), null).next)).toEqual([
-      "build",
-      "progress",
+      "review",
       "undrafted",
     ]);
+    expect(arranged.blocks.map(ids)).toEqual([["progress"]]);
+    expect(arrangeOverview(home(), blocks(), "drafting").needs).toEqual(
+      arranged.needs,
+    );
   });
 
   it("gathers everything waiting on the researcher in one list", () => {
     const data = home();
     data.applications = [{ body: { state: "recovery_required" } }] as never;
     data.changes = [
-      { body: { state: "review", instruction: "Tighten the introduction" } },
+      {
+        id: "edit",
+        revision: 1,
+        body: { state: "review", instruction: "Tighten the introduction" },
+      },
       { body: { state: "isolated", instruction: "Not ready" } },
     ] as never;
     const arranged = arrangeOverview(data, [syncBlock(data)!], "drafting");
-    expect(ids(arranged.needs)).toEqual(["recovery", "edits"]);
-    expect(arranged.needs?.rows[1].text).toBe(
-      "1 proposed edit awaits your decision",
-    );
+    expect(ids(arranged.needs)).toEqual(["recovery", "edit-edit"]);
+    expect(arranged.needs?.rows[1].text).toBe("Tighten the introduction");
     expect(arranged.blocks).toEqual([]);
     expect(arrangeOverview(home(), [], "drafting").needs).toBeNull();
   });
@@ -869,5 +915,21 @@ it("does not treat slide decks as the main paper", () => {
   deck.paper.role = "other";
   const data = home({ papers: [deck] });
   data.settings.body.manuscriptRevisionId = "slides";
+  expect(currentManuscript(data).paper).toBeNull();
+});
+
+it("follows a primary document's latest capture without changing its reference version", () => {
+  const first = paper("new", "2026-11-23T12:00:00Z");
+  const other = paper("other", "2026-11-23T13:00:00Z");
+  const data = home({ papers: [other, first] });
+  data.settings.body.primaryDocumentId = first.paper.id;
+  data.settings.body.manuscriptRevisionId = "historical-reference";
+  expect(currentManuscript(data)).toEqual({
+    paper: first,
+    chosen: true,
+    superseded: false,
+  });
+  expect(data.settings.body.manuscriptRevisionId).toBe("historical-reference");
+  data.papers = [other];
   expect(currentManuscript(data).paper).toBeNull();
 });

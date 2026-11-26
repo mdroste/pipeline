@@ -4,7 +4,7 @@ import { authorNoteLength, AUTHOR_NOTE_MAX_CHARS } from "../lib/authorNote";
 import PaperSelector from "./PaperSelector";
 import WorkflowPanel from "./WorkflowPanel";
 import RunModelChoice from "./RunModelChoice";
-import RunPlanPreview from "./RunPlanPreview";
+import ReviewWorkflowSteps from "./review-setup/ReviewWorkflowSteps";
 import PageHeader from "../ui/PageHeader";
 import { Icon } from "../ui/icons";
 import type { DepsReport } from "../lib/settingsTypes";
@@ -40,6 +40,7 @@ interface Props {
   /** Reviews already queued or running, and how many may run at once. */
   runActivity?: { running: number; queued: number; limit: number };
   onConfigureWorkflow: (stageId?: string) => void;
+  onConnectModel?: () => void;
   onGenerate: () => void;
   onPaperPathChange: (path: string | null) => void;
   onInputSelectionChange: (selection: PrimaryInputSelection | null) => void;
@@ -70,6 +71,7 @@ export default function RunSetupPanel({
   selectionKey,
   runActivity,
   onConfigureWorkflow,
+  onConnectModel,
   onGenerate,
   onPaperPathChange,
   onInputSelectionChange,
@@ -84,9 +86,9 @@ export default function RunSetupPanel({
   const reason = preparingRun
     ? "Preparing preview…"
     : configLoading
-      ? "Loading workflow…"
+      ? "Loading review design…"
       : configError
-        ? "Reload the workflow to continue."
+        ? "Reload the review design to continue."
         : missingInput
           ? "Choose a document to preview this review."
           : noteTooLong
@@ -111,12 +113,11 @@ export default function RunSetupPanel({
     }
   };
   return (
-    <div className="ui-page review-setup" data-testid="run-setup-panel">
-      <PageHeader
-        variant="compact"
-        title="New review"
-        description="Set up your review, then preview the plan."
-      />
+    <div
+      className="ui-page ui-page--setup review-setup"
+      data-testid="run-setup-panel"
+    >
+      <PageHeader variant="standard" title="New review" />
       <div className="review-setup-grid">
         <div className="review-setup-column">
           <section
@@ -126,7 +127,7 @@ export default function RunSetupPanel({
           >
             <h2>Document</h2>
             {inputMode === "none" ? (
-              <p>This workflow runs without a source document.</p>
+              <p>This review design runs without a source document.</p>
             ) : (
               <PaperSelector
                 key={selectionKey}
@@ -149,8 +150,20 @@ export default function RunSetupPanel({
               )}
           </section>
           <section
+            id="review-workflow"
+            className="review-setup-card"
+            aria-label="Review design"
+          >
+            <WorkflowPanel
+              disabled={configLoading || preparingRun}
+              onConfigure={() => onConfigureWorkflow()}
+              onProfileChange={onProfileChange}
+              refreshKey={configVersion}
+            />
+          </section>
+          <section
             id="review-note"
-            className="review-setup-note"
+            className="review-setup-card review-setup-note"
             aria-label="Review focus"
           >
             <AuthorNoteField
@@ -163,27 +176,6 @@ export default function RunSetupPanel({
           </section>
         </div>
         <div className="review-setup-column">
-          <section
-            id="review-workflow"
-            className="review-setup-card"
-            aria-label="Review workflow"
-          >
-            <WorkflowPanel
-              disabled={configLoading || preparingRun}
-              onConfigure={() => onConfigureWorkflow()}
-              onProfileChange={onProfileChange}
-              refreshKey={configVersion}
-            />
-            <details className="review-workflow-diagram">
-              <summary>View workflow steps</summary>
-              <RunPlanPreview
-                refreshKey={configVersion}
-                inputMode={inputMode}
-                hasInput={!!paperPath}
-                onOpenDesigner={onConfigureWorkflow}
-              />
-            </details>
-          </section>
           <RunModelChoice
             value={parallelOverrides}
             disabled={configLoading || preparingRun}
@@ -191,6 +183,16 @@ export default function RunSetupPanel({
             localLlmActive={localLlmActive}
             refreshKey={configVersion}
             onChange={onParallelOverridesChange}
+            onConnectModel={onConnectModel}
+            workflowSteps={
+              <ReviewWorkflowSteps
+                refreshKey={configVersion}
+                inputMode={inputMode}
+                hasInput={!!paperPath}
+                disabled={configLoading || preparingRun}
+                onConfigure={onConfigureWorkflow}
+              />
+            }
           />
         </div>
       </div>
@@ -198,8 +200,8 @@ export default function RunSetupPanel({
         <div role="alert" className="review-setup-errors">
           {configError && (
             <div>
-              <p>Couldn't load the workflow. {configError}</p>
-              <button onClick={onRetryConfig}>Retry workflow</button>
+              <p>Couldn't load the review design. {configError}</p>
+              <button onClick={onRetryConfig}>Retry review design</button>
             </div>
           )}
           {launchError && <p>Couldn't prepare the review. {launchError}</p>}
@@ -213,7 +215,6 @@ export default function RunSetupPanel({
       )}
       <footer className="review-setup-footer">
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="review-preview-heading">Preview your review</p>
           {reason ? (
             <p
               id="review-preview-reason"
@@ -232,9 +233,8 @@ export default function RunSetupPanel({
               )}
             </p>
           ) : (
-            <p className="text-ui-meta text-ink-muted">
-              Check model calls, estimated use, and data sharing before
-              starting.
+            <p className="text-ui-meta text-ink-muted" role="status">
+              Ready to preview
             </p>
           )}
           {runActivity && runActivity.running + runActivity.queued > 0 && (
@@ -253,6 +253,7 @@ export default function RunSetupPanel({
           <button
             type="button"
             onClick={onGenerate}
+            data-review-tour="preview"
             disabled={!!reason}
             aria-describedby={reason ? "review-preview-reason" : undefined}
             className="ui-button ui-button--primary review-preview-button"

@@ -303,6 +303,69 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
 }
 
 #[test]
+fn added_models_skip_pipeline_checks_and_editorial_stages_keep_one_editor() {
+    use crate::pipeline_config::{Phase, StepConfig, StepKind};
+    let mut config = empty_test_config();
+    config.steps = vec![
+        StepConfig {
+            id: "review".into(),
+            phase: Phase::Parallel,
+            ..Default::default()
+        },
+        StepConfig {
+            id: "editor".into(),
+            phase: Phase::Parallel,
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "x-pipeline-editorial-stage": "candidates-v1"
+            })),
+            ..Default::default()
+        },
+        StepConfig {
+            id: "check".into(),
+            phase: Phase::Parallel,
+            kind: StepKind::Analyzer,
+            ..Default::default()
+        },
+    ];
+    let snapshot = RunSnapshot {
+        review_handoff_id: None,
+        author_note: None,
+        settings: crate::settings::Settings::default(),
+        config,
+        profile_name: "Test".into(),
+        config_fingerprint: "base".into(),
+        fingerprint: "base".into(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
+        agent_overrides: None,
+    };
+    let overrides = RunModelOverrides {
+        agents: vec!["codex".into(), "claude".into()],
+        ..Default::default()
+    };
+
+    let bound = bind_model_overrides(snapshot, Some(&overrides)).unwrap();
+
+    assert_eq!(bound.config.steps[0].agents, vec!["codex", "claude"]);
+    assert_eq!(bound.config.steps[1].agents, vec!["codex"]);
+    assert!(bound.config.steps[2].agents.is_empty());
+
+    // Settings with several Parallel models follow the same rule.
+    let mut defaults = bound.config.clone();
+    defaults.steps[1].agents.clear();
+    let settings = crate::settings::Settings {
+        default_parallel_agents: vec!["claude".into(), "codex".into()],
+        ..Default::default()
+    };
+    crate::pipeline_config::apply_agent_defaults(&mut defaults, &settings);
+    assert_eq!(defaults.steps[1].agents, vec!["claude"]);
+    assert!(defaults.steps[2].agents.is_empty());
+}
+
+#[test]
 fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
     let mut config = empty_test_config();
     config.merge.agents = vec!["antigravity".into()];

@@ -89,7 +89,7 @@ pub async fn call_llm(
             None
         } else {
             Some(
-                crate::commands::await_or_cancel(
+                crate::cancellation::await_or_cancel(
                     crate::model_catalog::resolve(provider, &settings, requested.as_ref()),
                     None,
                 )
@@ -97,6 +97,11 @@ pub async fn call_llm(
             )
         };
         let mut effective_overrides = overrides.clone();
+        effective_overrides.claude_auth = if settings.claude_access_mode == "code_api" {
+            crate::agent_runtime::claude::AuthMode::Api
+        } else {
+            crate::agent_runtime::claude::AuthMode::Subscription
+        };
         if let Some(resolution) = &resolution {
             effective_overrides.model = resolution.command_model.as_deref();
             effective_overrides.model_resolved = true;
@@ -120,7 +125,11 @@ pub async fn call_llm(
         // check it against what the CLI reports once the call finishes.
         let cli_chooses =
             transport != "api" && overrides.model.map(str::trim).is_none_or(str::is_empty);
-        let chooser = request_provider_label(provider, transport);
+        let chooser = if connection == crate::connections::ConnectionId::ClaudeCodeApi {
+            "Claude Code (API)"
+        } else {
+            request_provider_label(provider, transport)
+        };
         let expected_model = cli_chooses
             .then(|| crate::model_catalog::cli_default_model(provider))
             .flatten();
@@ -192,6 +201,7 @@ pub async fn call_llm(
             serde_json::json!({
                 "provider": provider,
                 "provider_label": provider_label,
+                "connection": connection,
                 "transport": transport,
                 "model": if cli_chooses {
                     expected_model.as_deref().unwrap_or("")

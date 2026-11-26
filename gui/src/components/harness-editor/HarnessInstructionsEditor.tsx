@@ -120,15 +120,12 @@ function HarnessInstructionsEditor({
             maximum 256 KiB
           </p>
           {!baseInstructions.trim() && (
-            <p className="text-xs text-red-700 dark:text-red-300">
+            <p className="text-xs text-danger">
               Enter a replacement prompt or choose Use {provider} default.
             </p>
           )}
           {baseLint.map((hit) => (
-            <p
-              key={hit.message}
-              className="text-xs text-amber-700 dark:text-amber-300"
-            >
+            <p key={hit.message} className="text-xs text-warning">
               {hit.message}
             </p>
           ))}
@@ -149,7 +146,7 @@ function HarnessInstructionsEditor({
                 Pipeline supplies the base instructions for this API
                 conversation. Edit the base prompt above to customize them.
               </p>
-            ) : runtime === "claude" ? (
+            ) : runtime === "claude" || runtime === "claude-code-api" ? (
               <p>
                 Claude Code supplies its own native base prompt. Pipeline does
                 not retrieve or display that prompt. The instructions below are
@@ -217,8 +214,8 @@ function HarnessInstructionsEditor({
               key={hit.message}
               className={`rounded border px-2 py-1.5 text-[0.6875rem] ${
                 hit.level === "error"
-                  ? "border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
-                  : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                  ? "border-danger bg-danger-soft text-danger"
+                  : "border-warning bg-warning-soft text-warning"
               }`}
             >
               {hit.message}

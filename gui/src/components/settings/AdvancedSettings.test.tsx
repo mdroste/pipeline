@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => Promise.resolve(appVersion),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
+vi.mock("./CommandLineSettings", () => ({ default: () => null }));
 vi.mock("../../lib/projectClient", () => ({
   projectClient: { capabilities: () => Promise.reject(new Error("n/a")) },
 }));

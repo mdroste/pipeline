@@ -1,3 +1,5 @@
+import { Icon } from "../../ui/icons";
+import IconButton from "../../ui/IconButton";
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
   onGetStartedRequest,
@@ -12,6 +14,7 @@ import type { DepsReport } from "../../lib/settingsTypes";
 // The guide and the sample Review load only when opened.
 const GetStartedSheet = lazy(() => import("./GetStartedSheet"));
 const ExampleReview = lazy(() => import("./ExampleReview"));
+const ExampleProject = lazy(() => import("./ExampleProject"));
 
 /** Focus a destination element once its lazily loaded page has rendered. */
 export function focusWhenPresent(id: string, attempts = 40) {
@@ -103,6 +106,12 @@ export default function GetStartedHost({
     action();
   };
 
+  if (view === "project-example")
+    return (
+      <Suspense fallback={null}>
+        <ExampleProject onClose={() => setView(null)} />
+      </Suspense>
+    );
   if (view === "example")
     return (
       <Suspense fallback={null}>
@@ -135,9 +144,9 @@ export default function GetStartedHost({
         >
           Return to setup
         </button>
-        <button aria-label="Dismiss setup reminder" onClick={close}>
-          ×
-        </button>
+        <IconButton label="Dismiss setup reminder" onClick={close}>
+          <Icon name="close" className="h-4 w-4" />
+        </IconButton>
       </aside>
     ) : null;
   return (

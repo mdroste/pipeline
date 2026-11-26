@@ -1,7 +1,7 @@
 //! CLI signal handling, owned cancellation waits, and interruption status.
 
-use pipeline_gui_lib::emit::EventBus;
-use pipeline_gui_lib::{commands, engines};
+use crate::emit::EventBus;
+use crate::{commands, engines};
 
 #[cfg(unix)]
 async fn shutdown_signal() {
@@ -65,7 +65,7 @@ pub(super) async fn run_with_interrupt(
 }
 
 pub(super) fn is_interruption(error: &str) -> bool {
-    commands::is_pipeline_cancellation_error(error)
+    crate::cancellation::is_pipeline_cancellation_error(error)
         || matches!(
             error,
             "Pipeline cancelled by interrupt"

@@ -1,7 +1,7 @@
 //! One read-only idea session on the selected subscription. Provider events
 //! establish child identity and completion independently of the lead's text.
 use super::super::tasks::activity::{Agent, Entry, Snapshot};
-use super::super::{claude, codex, commands, tasks};
+use super::super::{claude, codex, runtime, tasks};
 use crate::connections::ConnectionId;
 use std::collections::BTreeSet;
 use tokio::sync::watch;
@@ -144,8 +144,8 @@ pub async fn run(
     if !(1..=crate::orchestration::discovery::model::MAX_IDEA_AGENTS).contains(&count) {
         return Err("Invalid idea subagent count".into());
     }
-    let _permit = commands::research_team_permit()?;
-    let (provider, model, effort) = commands::run_store(move |s| {
+    let _permit = runtime::research_team_permit()?;
+    let (provider, model, effort) = runtime::run_store(move |s| {
         tasks::validate_binding(&s, &binding)?;
         if !matches!(
             super::role_policy(&s, &binding.session_id)?,
@@ -175,8 +175,14 @@ pub async fn run(
                 .run_idea_team(prompt, model, effort, count, Some(progress))
                 .await?
         }
-        Some(ConnectionId::ClaudeCode) => {
-            claude::idea_team::run(prompt, model, effort, count, Some(progress)).await?
+        Some(connection @ (ConnectionId::ClaudeCode | ConnectionId::ClaudeCodeApi)) => {
+            let mode = if connection == ConnectionId::ClaudeCodeApi {
+                crate::agent_runtime::claude::AuthMode::Api
+            } else {
+                crate::agent_runtime::claude::AuthMode::Subscription
+            };
+            crate::usage_allowance::claude_dispatch(mode)?;
+            claude::idea_team::run(mode, prompt, model, effort, count, Some(progress)).await?
         }
         _ => return Err("Idea subagents require ChatGPT or Claude Code".into()),
     };

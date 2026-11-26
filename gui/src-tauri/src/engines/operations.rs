@@ -34,14 +34,16 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
         if gpu_recognition_sound().await? {
             log(app, format!("{} passed its check", spec.label));
             emit_phase(app, engine_id, "gpu", "done");
+            record_gpu_setup(&Ok(true))?;
             return Ok(());
         }
-        let (space_plan, required_mb) = install_space_requirement(engine_id, false, false, false)?;
-        if let Ok(free) = fs2::available_space(&home) {
-            check_install_space(free, space_plan, required_mb)
-                .map_err(|error| format!("{} ({})", error, spec.label))?;
-        }
-        return install_gpu_recognition(app, spec).await;
+        let result = install_gpu_recognition(app, spec).await;
+        record_gpu_setup(&result)?;
+        return match result {
+            Ok(true) => Ok(()),
+            Ok(false) => Err("No supported graphics card was found. Update your graphics driver and retry, or use the processor.".into()),
+            Err(error) => Err(error),
+        };
     }
     // Never refuse a working install that only needs its sidecar refreshed.
     if !lightweight_parser_refresh {
@@ -76,6 +78,7 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
 
     let result = install_paddle_full_parser(app, spec).await;
     if result.is_ok() {
+        prepare_default_gpu_locked(app, engine_id).await;
         match cleanup_managed_engine_storage_locked() {
             Ok(removed) if removed > 0 => log(
                 app,
@@ -107,12 +110,15 @@ pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> R
     })?;
 
     if engine_id == GPU_RECOGNITION_ID {
+        // Explicit removal must not be undone by default setup on next launch.
+        dismiss_gpu_setup()?;
         return uninstall_gpu_recognition(app).await;
     }
     let roots = [
         paddle_parser_root()?,
         paddle_root()?,
         gpu_recognition_root_at(&pipeline_home()?.join("native")),
+        pipeline_home()?.join("native").join(GPU_RUNTIME_DIR),
     ];
     tokio::task::spawn_blocking(move || {
         for root in roots {

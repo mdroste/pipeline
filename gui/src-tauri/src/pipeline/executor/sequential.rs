@@ -144,7 +144,7 @@ pub(super) async fn run_sequential_step(
         .map(|a| a.to_string())
         .unwrap_or_else(|| settings.preferred_provider.clone());
     let model_selection = step.model_selection_for(settings, &provider);
-    let resolution = crate::commands::await_or_cancel(
+    let resolution = crate::cancellation::await_or_cancel(
         crate::model_catalog::resolve(&provider, settings, model_selection.as_ref()),
         Some(&step.id),
     )

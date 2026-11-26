@@ -26,14 +26,13 @@ fn identity() -> WorkbenchResult<String> {
     getrandom::fill(&mut bytes).map_err(|e| WorkbenchError::invalid(e.to_string()))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
-use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
+use super::runtime::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
 use super::turn_loop::{persist_and_publish, TurnEvents, UnsavedText};
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::Emitter;
 use tokio::sync::watch;
 
 pub(crate) const NAMESPACE: &str = "api-local-v1";
@@ -218,7 +217,7 @@ pub(crate) async fn submit(
     turn.item(&app, "user", "userMessage", &request.text)
         .await
         .map_err(error)?;
-    super::commands::accept_local_turn(epoch, &thread, &id);
+    super::runtime::accept_local_turn(epoch, &thread, &id);
     let (cancel, receiver) = watch::channel(false);
     *running().lock().unwrap_or_else(|e| e.into_inner()) = Some(Running {
         thread: thread.clone(),
@@ -249,23 +248,14 @@ pub(crate) async fn submit(
         if result.is_err() {
             task_turn.save_unfinished(&app).await;
         }
-        let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
-        super::conversation_tools::report_capture(&app, epoch, capture);
-        let cleanup_thread = thread.clone();
-        let cleanup_turn = id.clone();
-        let _ = run_store(move |store| {
-            super::research::cancel_executions_for_provider_turn(
-                &store,
-                &cleanup_thread,
-                &cleanup_turn,
-            )
-        })
-        .await;
-        let (status, detail) = match result {
-            Ok(()) => ("completed", None),
-            Err(message) if message == "interrupted" => ("interrupted", None),
-            Err(message) => ("failed", Some(message)),
+        let completion = super::runtime::finalization::LocalCompletion {
+            epoch,
+            thread: &thread,
+            turn: &id,
+            binding: &task_turn.binding,
         };
+        completion.capture(&app).await;
+        let (status, detail) = super::runtime::finalization::outcome(result);
         if let Some(message) = detail.as_deref() {
             let _ = task_turn
                 .item(
@@ -283,17 +273,15 @@ pub(crate) async fn submit(
             status: status.into(),
             turn: json!({"id":id,"status":status,"error":detail,"usage":{"apiCalls":task_turn.usage.lock().unwrap_or_else(|e|e.into_inner()).clone()}}),
         };
-        if task_turn.emit(&app, event.clone()).await.is_err() {
-            let _ = app.emit("workbench:event", event);
-        }
-        *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
-        super::commands::finish_local_turn(epoch, &thread, &id);
-        // The terminal event above went out while this turn still held the permit.
-        super::commands::announce_active_turn(&app, None);
+        completion
+            .publish(&app, event, || {
+                *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
+            })
+            .await;
         if status == "completed" && !automated {
-            super::commands::spawn_title_generation(
+            super::runtime::spawn_title_generation(
                 app,
-                super::commands::TitleRuntime::Api { epoch, connection },
+                super::runtime::TitleRuntime::Api { epoch, connection },
                 thread,
                 id,
             );
@@ -305,7 +293,7 @@ pub(crate) async fn submit(
         let session = request.session_id;
         let submission = request.client_submission_id;
         run_store(move |store| {
-            super::commands::clear_sent_draft(&store, &session, &original, &submission)
+            super::runtime::clear_sent_draft(&store, &session, &original, &submission)
         })
         .await
         .unwrap_or(false)
@@ -362,7 +350,7 @@ pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> 
     };
     // Submission records the turn before installing its process owner. Check
     // setup after the snapshot so a newly recorded turn cannot look abandoned.
-    if super::commands::turn_setup_in_progress() {
+    if super::runtime::turn_setup_in_progress() {
         return Ok(true);
     }
     for turn in snapshot

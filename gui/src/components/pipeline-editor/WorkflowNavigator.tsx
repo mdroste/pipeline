@@ -116,7 +116,7 @@ export function WorkflowNavigator({
   const activeInvalid = profiles.find((p) => p.id === activeProfile)?.invalid;
 
   return (
-    <div className="designer-layout" ref={surface}>
+    <div className="ui-layout-workspace designer-layout" ref={surface}>
       <header className="designer-page-head">
         <h1 className="sr-only">Review designer</h1>
         <div className="designer-title-row">
@@ -125,7 +125,7 @@ export function WorkflowNavigator({
             aria-busy={profileMutationPending}
           >
             <Select
-              label="Active review"
+              label="Active review design"
               value={activeProfile}
               onChange={handleSwitchProfile}
               disabled={profileMutationPending}
@@ -306,10 +306,10 @@ export function WorkflowNavigator({
                   Export selected step
                 </MenuItem>
                 <MenuItem onSelect={handleExportProfile}>
-                  Export review &ldquo;{activeProfileName}&rdquo;
+                  Export design &ldquo;{activeProfileName}&rdquo;
                 </MenuItem>
                 <MenuItem onSelect={handleExportBundle}>
-                  Export all (reviews + settings)
+                  Export all (designs + settings)
                 </MenuItem>
               </Menu>
             </div>
@@ -321,28 +321,26 @@ export function WorkflowNavigator({
               aria-expanded={profileMenuOpen}
               onClick={() => setProfileMenuOpen((open) => !open)}
             >
-              Review actions{" "}
+              Design actions{" "}
               <Icon name="chevron-down" className="h-3.5 w-3.5" />
             </Button>
             <Menu
               open={profileMenuOpen}
               onClose={() => setProfileMenuOpen(false)}
               anchorRef={profileTrigger}
-              label="Review actions"
+              label="Design actions"
               side="bottom"
               width={256}
             >
+              {onOpenGallery && (
+                <MenuItem onSelect={onOpenGallery}>Gallery</MenuItem>
+              )}
+              <MenuSeparator />
               <MenuItem
                 onSelect={handleNewProfile}
                 disabled={profileMutationPending}
               >
-                New review
-              </MenuItem>
-              <MenuItem
-                onSelect={handleReset}
-                disabled={profileMutationPending}
-              >
-                Reset
+                New review design
               </MenuItem>
               <MenuItem
                 onSelect={handleDuplicateProfile}
@@ -356,6 +354,16 @@ export function WorkflowNavigator({
               >
                 Rename
               </MenuItem>
+              <MenuSeparator />
+              <MenuItem onSelect={handleImport}>Import</MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                onSelect={handleReset}
+                disabled={profileMutationPending}
+                danger
+              >
+                Reset to defaults
+              </MenuItem>
               <MenuItem
                 onSelect={handleDeleteProfile}
                 disabled={
@@ -367,11 +375,6 @@ export function WorkflowNavigator({
               >
                 Delete
               </MenuItem>
-              <MenuSeparator />
-              <MenuItem onSelect={handleImport}>Import</MenuItem>
-              {onOpenGallery && (
-                <MenuItem onSelect={onOpenGallery}>Gallery</MenuItem>
-              )}
             </Menu>
           </div>
         </div>

@@ -442,12 +442,24 @@ pub fn snapshot_conversation_file(
 ) -> WorkbenchResult<PathBuf> {
     let root = store.runtime_root(session_id)?;
     let path = conversation_relative_path(&root, value)?;
-    let folder = files::SafeRoot::open(&root)?;
-    let program = folder.marked_as_program(&path)?;
-    crate::file_viewer::check_openable(&path, program).map_err(WorkbenchError::invalid)?;
-    let bytes = folder.read(&path)?;
+    snapshot_for_opening(store, &root, &path)
+}
+
+/// An immutable, app-owned copy of a file for the system's default application.
+/// A folder a model can still write (a conversation's files, a task copy) is
+/// never handed to the opener directly: the file's type, mode or contents could
+/// change between this check and the moment the system resolves the path.
+pub(super) fn snapshot_for_opening(
+    store: &Store,
+    root: &Path,
+    path: &str,
+) -> WorkbenchResult<PathBuf> {
+    let folder = files::SafeRoot::open(root)?;
+    let program = folder.marked_as_program(path)?;
+    crate::file_viewer::check_openable(path, program).map_err(WorkbenchError::invalid)?;
+    let bytes = folder.read(path)?;
     let digest = hash(&bytes);
-    let suffix = Path::new(&path)
+    let suffix = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
         .filter(|extension| {

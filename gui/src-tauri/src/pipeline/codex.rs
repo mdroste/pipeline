@@ -131,7 +131,7 @@ pub async fn call_codex(
                     // A cancelled warm-up says nothing about the CLI's
                     // session support; leave the slot empty so a later unit
                     // can warm the shared session again.
-                    if !crate::commands::is_pipeline_cancellation_error(&error) {
+                    if !crate::cancellation::is_pipeline_cancellation_error(&error) {
                         *base = Some(format!("{SESSION_UNAVAILABLE_PREFIX}{error}"));
                     }
                     Err(error)
@@ -221,7 +221,7 @@ pub async fn call_codex(
             // A cancelled warm-up or fork must not disable caching for the
             // remaining units, and dispatching a fallback call mid-cancel
             // would spawn a fresh Codex process; propagate it instead.
-            if crate::commands::is_pipeline_cancellation_error(&error) {
+            if crate::cancellation::is_pipeline_cancellation_error(&error) {
                 return Err(error);
             }
             let mut base = slot.lock().await;

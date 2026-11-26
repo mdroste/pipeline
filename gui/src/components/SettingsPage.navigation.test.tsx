@@ -464,7 +464,7 @@ describe("SettingsPage navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("offers system, light, and dark appearance choices", async () => {
+  it("offers System, Light, Dark, and Custom appearance buttons", async () => {
     mockLoad(makeSettings());
     const onThemeChange = vi.fn();
     const user = userEvent.setup();
@@ -479,5 +479,6 @@ describe("SettingsPage navigation", () => {
     expect(await screen.findByRole("radio", { name: "System" })).toBeChecked();
     await user.click(screen.getByRole("radio", { name: "Dark" }));
     expect(onThemeChange).toHaveBeenCalledWith("dark");
+    expect(screen.getByRole("radio", { name: "Custom" })).toBeVisible();
   });
 });

@@ -1,6 +1,6 @@
 //! Shared timing, partial text, and event projection for API and Claude turns.
 
-use super::commands::run_store;
+use super::runtime::run_store;
 use crate::agent_runtime::events::NormalizedEvent;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -114,7 +114,7 @@ impl TurnEvents for tauri::AppHandle {
     }
 
     fn publish_request(&self, event: NormalizedEvent) -> Result<(), String> {
-        self.emit("workbench:event", super::commands::with_session(event))
+        self.emit("workbench:event", super::runtime::with_session(event))
             .map_err(|error| error.to_string())
     }
 }

@@ -94,7 +94,14 @@ pub fn list(
     lookahead: bool,
 ) -> Result<Vec<Summary>> {
     let c = s.connection()?;
-    let mut q=c.prepare("SELECT id,json_extract(body,'$.definition.name'),state,json_extract(body,'$.reason'),workspace_id,updated_at,json_array_length(body,'$.rounds'),(SELECT COUNT(*) FROM json_each(body,'$.questions') WHERE json_extract(value,'$.answer') IS NULL) FROM missions WHERE (?1 IS NULL OR workspace_id=?1) ORDER BY updated_at DESC,id LIMIT ?3 OFFSET ?2").map_err(err)?;
+    // Separate filters let SQLite use the project index or the newest-first
+    // index; a disjunction would scan every mission.
+    let filter = if workspace.is_some() {
+        "workspace_id=?1"
+    } else {
+        "?1 IS NULL"
+    };
+    let mut q=c.prepare(&format!("SELECT id,json_extract(body,'$.definition.name'),state,json_extract(body,'$.reason'),workspace_id,updated_at,json_array_length(body,'$.rounds'),(SELECT COUNT(*) FROM json_each(body,'$.questions') WHERE json_extract(value,'$.answer') IS NULL) FROM missions WHERE {filter} ORDER BY updated_at DESC,id LIMIT ?3 OFFSET ?2")).map_err(err)?;
     let rows = q
         .query_map(
             params![workspace, offset, if lookahead { 51 } else { 50 }],

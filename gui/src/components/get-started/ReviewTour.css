@@ -1,0 +1,213 @@
+/* Tutorial chrome floats above the unchanged application screens. */
+.review-tutorial {
+  height: 100%;
+  min-height: 0;
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  outline: none;
+}
+.review-tutorial-standalone {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.review-tutorial-screen {
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.review-tutorial-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.review-tutorial-mask path {
+  fill: rgb(0 0 0 / 0.58);
+}
+.review-tutorial-spotlight {
+  position: fixed;
+  z-index: 61;
+  pointer-events: none;
+  border: 2px solid var(--ui-running);
+  border-radius: var(--ui-radius-md);
+  box-shadow:
+    0 0 0 4px var(--ui-running-soft),
+    0 0 28px var(--ui-running-soft);
+  transition:
+    left 180ms,
+    top 180ms,
+    width 180ms,
+    height 180ms;
+}
+.review-tutorial-beacon {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ui-running);
+  box-shadow: 0 0 0 4px var(--ui-running-soft);
+  animation: tutorial-beacon 1.4s ease-in-out 3;
+}
+.review-tutorial-coach {
+  position: fixed;
+  z-index: 70;
+  right: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-raised);
+  color: var(--ui-text);
+  box-shadow: var(--ui-shadow-3);
+  padding: 1.125rem 1.25rem 0.75rem;
+  font-size: var(--ui-text-body);
+  animation: tutorial-arrive 180ms ease-out;
+}
+.review-tutorial-coach[style] {
+  right: auto;
+  bottom: auto;
+}
+.review-tutorial-coach header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.review-tutorial-coach header > span {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: var(--ui-text-meta);
+  font-weight: 600;
+  color: var(--ui-muted);
+}
+.review-tutorial-coach header > button {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--ui-radius-sm);
+}
+.review-tutorial-coach header > button:hover {
+  background: var(--ui-sunken);
+}
+.review-tutorial-meter {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ui-border);
+  margin: 0.5rem 0 1rem;
+  overflow: hidden;
+}
+.review-tutorial-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--ui-running);
+  transition: width 200ms;
+}
+.review-tutorial-coach h2 {
+  font-size: 1.0625rem;
+  line-height: 1.4;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  outline: none;
+}
+.review-tutorial-coach > p {
+  margin-top: 0.625rem;
+  font-size: var(--ui-text-label);
+  line-height: 1.65;
+  color: var(--ui-muted);
+}
+.review-tutorial-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.review-tutorial-actions .ui-button {
+  font-size: var(--ui-text-label);
+}
+.review-tutorial-prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--ui-running);
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+}
+.review-tutorial-coach footer {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  border-top: 1px solid var(--ui-border);
+  margin-top: 0.875rem;
+  padding-top: 0.625rem;
+  font-size: var(--ui-text-meta);
+  color: var(--ui-muted);
+}
+.review-tutorial-coach footer > span {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.review-tutorial-coach footer button:hover:not(:disabled) {
+  color: var(--ui-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.review-tutorial-coach footer button:disabled {
+  opacity: 0.4;
+}
+.review-tutorial-coach button:focus-visible {
+  outline: 2px solid var(--ui-running);
+  outline-offset: 3px;
+}
+.review-tutorial-coach.is-complete {
+  width: min(320px, calc(100vw - 32px));
+}
+.review-tutorial-coach.is-complete h2 {
+  margin-top: 0.75rem;
+}
+@keyframes tutorial-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes tutorial-beacon {
+  50% {
+    box-shadow: 0 0 0 8px var(--ui-running-soft);
+  }
+}
+@media (max-width: 600px) {
+  .review-tutorial-screen {
+    scroll-padding-bottom: 20rem;
+  }
+  .review-tutorial-screen > .review-setup {
+    padding-bottom: 20rem;
+  }
+  .review-tutorial-coach {
+    padding: 0.75rem 1rem;
+  }
+  .review-tutorial-coach > p {
+    line-height: 1.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-tutorial-spotlight,
+  .review-tutorial-beacon,
+  .review-tutorial-coach,
+  .review-tutorial-meter > span {
+    animation: none;
+    transition: none;
+  }
+}

@@ -145,6 +145,17 @@ impl Store {
                 CREATE INDEX usage_task ON usage_calls(task_id);
                 PRAGMA user_version=5; COMMIT;").map_err(err)?;
         }
+        // Newest-first list pages stop at their limit through these instead of
+        // sorting every record, and deleting a run finds its signals. Indexes
+        // only add read paths, so they carry no schema version: builds that
+        // refuse a newer version still open this store.
+        c.execute_batch(
+            "CREATE INDEX IF NOT EXISTS run_updated ON runs(updated_at DESC,id);
+            CREATE INDEX IF NOT EXISTS mission_updated ON missions(updated_at DESC,id);
+            CREATE INDEX IF NOT EXISTS discovery_updated ON discovery_runs(updated_at DESC,id);
+            CREATE INDEX IF NOT EXISTS signal_run ON signals(run_id);",
+        )
+        .map_err(err)?;
         Ok(store)
     }
     pub fn connection(&self) -> Result<rusqlite::Connection> {

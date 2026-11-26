@@ -958,7 +958,7 @@ fn conversation_files_stop_at_every_budget_instead_of_failing_the_backup() {
 fn a_backup_keeps_page_locators_instead_of_image_copies_and_still_restores() {
     let (_root, source, session) = fixture();
     let workspace = source
-        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+        .create_legacy_workspace(crate::workbench::store::CreateWorkspaceRequest {
             name: "Pages".into(),
             root: None,
             operation_id: "workspace".into(),

@@ -104,7 +104,7 @@ function SchemaNode({
         </span>
         {required && (
           <span
-            className="text-[0.625rem] font-medium text-amber-700 dark:text-amber-400"
+            className="text-[0.625rem] font-medium text-warning"
             title="required"
           >
             required

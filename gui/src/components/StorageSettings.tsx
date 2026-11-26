@@ -143,7 +143,7 @@ export default function StorageSettings({
         )
       )}
       {(error || location?.error) && (
-        <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">
+        <p role="alert" className="mt-3 text-sm text-danger">
           {error || location?.error}
           <ReportIssueLink />
         </p>

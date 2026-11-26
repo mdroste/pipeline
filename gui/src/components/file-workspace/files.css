@@ -546,11 +546,11 @@
 .file-source-editor,
 .file-code-block,
 .file-syntax {
-  --file-syntax-keyword: #85499a;
-  --file-syntax-type: #2e6c8e;
-  --file-syntax-string: #3b7650;
-  --file-syntax-number: #96661a;
-  --file-syntax-comment: #868980;
+  --file-syntax-keyword: var(--syntax-keyword, #85499a);
+  --file-syntax-type: var(--syntax-type, #2e6c8e);
+  --file-syntax-string: var(--syntax-string, #3b7650);
+  --file-syntax-number: var(--syntax-number, #96661a);
+  --file-syntax-comment: var(--syntax-comment, #868980);
 }
 
 /* Editor */
@@ -771,11 +771,11 @@
 .dark .file-source-editor,
 .dark .file-code-block,
 .dark .file-syntax {
-  --file-syntax-keyword: #d3a6e0;
-  --file-syntax-type: #8fc1e3;
-  --file-syntax-string: #a6d3a6;
-  --file-syntax-number: #e4c27b;
-  --file-syntax-comment: #919191;
+  --file-syntax-keyword: var(--syntax-keyword, #d3a6e0);
+  --file-syntax-type: var(--syntax-type, #8fc1e3);
+  --file-syntax-string: var(--syntax-string, #a6d3a6);
+  --file-syntax-number: var(--syntax-number, #e4c27b);
+  --file-syntax-comment: var(--syntax-comment, #919191);
 }
 .dark .file-source-editor .cm-cursor {
   border-left-color: white;
@@ -787,6 +787,20 @@
 .dark .file-source-editor .cm-tooltip {
   background: #262626;
   color: #e5e5e5;
+}
+
+/* Keep editor selections and completion/search chrome in the chosen palette.
+   Default retains CodeMirror's existing light colors and the dark rules above. */
+:root[data-color-theme]:not([data-color-theme="default"])
+  .file-source-editor
+  .cm-selectionBackground {
+  background: rgb(var(--color-accent-400) / 0.35) !important;
+}
+:root[data-color-theme]:not([data-color-theme="default"])
+  .file-source-editor
+  :is(.cm-panels, .cm-tooltip) {
+  background: var(--ui-raised);
+  color: var(--ui-text);
 }
 
 .file-tab-panel {

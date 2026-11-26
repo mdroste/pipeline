@@ -492,7 +492,7 @@ export default function WorkspaceHarnessEditor({
               type="button"
               disabled={busy || disabled || !catalog}
               onClick={newProfile}
-              className="mt-3 block w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white disabled:opacity-50 dark:bg-gray-100 dark:text-gray-900"
+              className="ui-button ui-button--primary ui-button--sm mt-3 block w-full"
             >
               New profile
             </button>
@@ -555,7 +555,7 @@ export default function WorkspaceHarnessEditor({
         {error && (
           <div
             role="alert"
-            className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+            className="m-3 rounded-lg border border-danger bg-danger-soft p-3 text-sm text-danger"
           >
             {error}
             <ReportIssueLink />

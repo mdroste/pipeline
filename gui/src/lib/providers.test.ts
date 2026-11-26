@@ -9,6 +9,7 @@ import {
   effortOptions,
   encodeModelSelection,
   providerTransport,
+  withDefaultProvider,
 } from "./providers";
 
 function settings(overrides: Partial<Settings> = {}): Settings {
@@ -27,6 +28,28 @@ function settings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe("provider model utilities", () => {
+  it("changes the default provider without rewriting legacy access modes or credentials", () => {
+    const original = settings({
+      preferred_provider: "codex",
+      default_model: "old-model",
+      default_effort: "high",
+      claude_access_mode: undefined,
+      anthropic_api_key: "legacy-key",
+    });
+    const next = withDefaultProvider(original, "claude");
+    expect(next).toMatchObject({
+      preferred_provider: "claude",
+      default_model_chosen: true,
+      default_model: "",
+      default_effort: "",
+      anthropic_api_key: "legacy-key",
+    });
+    expect(next.claude_access_mode).toBeUndefined();
+    expect(providerTransport(next, "claude")).toBe(
+      providerTransport(original, "claude"),
+    );
+  });
+
   it("keeps transport mode explicit even when a key is stored", () => {
     const cli = settings();
     expect(providerTransport(cli, "claude")).toBe("cli");

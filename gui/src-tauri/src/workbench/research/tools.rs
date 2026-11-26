@@ -219,7 +219,13 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
             )?)
             .map_err(|e| WorkbenchError::storage("Row preview", e))?),
             "workbench_research_search_v1" => {
-                search::advance(store, &workspace_id)?;
+                // Cover what fits in a moment, research material first; the
+                // page reports whether the index is complete.
+                search::advance_within(
+                    store,
+                    &workspace_id,
+                    std::time::Duration::from_millis(1500),
+                )?;
                 Ok(serde_json::to_value(search::search(
                     store,
                     search::SearchRequest {

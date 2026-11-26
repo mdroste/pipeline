@@ -2,8 +2,8 @@
 
 Pipeline is released under the [MIT License](LICENSE). Its installers also
 contain Rust and JavaScript libraries and the Poppler PDF tools, which keep
-their own licenses as described below. The Windows installer also contains
-llama.cpp.
+their own licenses as described below. The optional Windows graphics card
+download contains llama.cpp.
 
 Every installer includes this notice, Pipeline's MIT license,
 `THIRD_PARTY_LIBRARIES.txt`, and the Poppler license text that came with that
@@ -34,13 +34,15 @@ Source code for Poppler and its distributions is available from:
 
 The installed app doesn't include these source archives.
 
-## Bundled llama.cpp on Windows
+## Optional llama.cpp on Windows
 
-The Windows installer includes `llama-server` and the libraries it loads from
-llama.cpp's Vulkan release, for optional graphics card recognition. The archive
+The engine installer downloads `llama-server` and the libraries it loads from
+llama.cpp's Vulkan release for graphics card recognition. These files are not
+included in the desktop installer. The upstream archive
 is pinned by URL and SHA-256 in `scripts/release/llama-vulkan-lock.json`, and
 Pipeline signs these files. llama.cpp is licensed under the MIT license, and its
-license text is bundled in `llama-vulkan/licenses`. The archive also contains
+license text is included in the downloaded runtime's `runtime/licenses` directory.
+The archive also contains
 Microsoft's `libomp140.x86_64.dll`, distributed under its Visual Studio
 redistribution terms.
 
@@ -67,6 +69,25 @@ in `THIRD_PARTY_LIBRARIES.txt`, under `katex` and `pdfjs-dist`.
 | qcms, in pdf.js | PDF color management | MIT |
 | QuickJS, in pdf.js | Scripts in PDF forms | Distributed with pdf.js |
 
+## Bundled interface and report fonts
+
+Pipeline bundles these fonts as local WOFF2 files under the SIL Open Font
+License 1.1. Full copyright notices and license texts are included with the
+frontend assets in `fonts/licenses/`. The source URLs and SHA-256 checksums
+for the font files and licenses are recorded in `fonts/manifest.json`.
+
+| Family | Upstream source |
+| --- | --- |
+| Inter | [Inter](https://github.com/rsms/inter) |
+| Instrument Sans | [Instrument Sans](https://github.com/Instrument/instrument-sans) |
+| IBM Plex Sans | [IBM Plex](https://github.com/IBM/plex) |
+| Source Sans 3 | [Adobe Source Sans](https://github.com/adobe-fonts/source-sans) |
+| Source Serif 4 | [Adobe Source Serif](https://github.com/adobe-fonts/source-serif) |
+
+The app includes upright and italic variable fonts and each family's available
+script subsets. The typeface preference changes display within Pipeline; it
+does not install fonts on the operating system.
+
 ## Optional PDF parser
 
 These components aren't in the installer. Pipeline downloads them only when
@@ -77,7 +98,7 @@ them when you uninstall the parser.
 | --- | --- | --- |
 | PaddleOCR-VL 1.6 GGUF model and vision projector | Model revision `511b09642bb324401f15f97cc23bc67e8f0a291d` | Apache-2.0 |
 | PaddleOCR-VL 1.6 model, on new Windows installs | Model revision `c5630abae1d940eafe0697512a0325494b02ab42` | Apache-2.0 |
-| `llama.cpp` runtime, from the project's GitHub releases, except on new Windows installs | b9637 | MIT |
+| `llama.cpp` runtime, including optional signed Vulkan support on Windows | b9637 | MIT |
 | uv | 0.11.26 | MIT or Apache-2.0 |
 | CPython | 3.12.13 | Python Software Foundation License |
 | `paddleocr` and `paddlepaddle`, with their locked dependencies | 3.7.0 and 3.2.1 | Apache-2.0 |

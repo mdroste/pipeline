@@ -8,7 +8,7 @@ use crate::orchestration::{
     state::Receipt,
     store::{err, Result, Scope, Store},
 };
-use crate::workbench::{commands::run_store, tasks};
+use crate::workbench::{runtime::run_store, tasks};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{io::Read, path::Path};

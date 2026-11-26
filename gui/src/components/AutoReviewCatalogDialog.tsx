@@ -1,3 +1,5 @@
+import { Icon } from "../ui/icons";
+import IconButton from "../ui/IconButton";
 import { useEffect, useMemo, useState } from "react";
 import { workflowSchemaClient } from "../lib/workflowSchemaClient";
 import useModalDialog from "../hooks/useModalDialog";
@@ -83,7 +85,8 @@ function GroupedTab({
             key={group.id}
             type="button"
             onClick={() => onSelectGroup(group.id)}
-            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs ${group.id === active.id ? "bg-blue-50 font-medium text-blue-900 dark:bg-blue-950/50 dark:text-blue-100" : "text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"}`}
+            aria-current={group.id === active.id ? "true" : undefined}
+            className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs ${group.id === active.id ? "ui-selected" : "text-ink-muted hover:bg-sunken"}`}
           >
             <span>{group.label}</span>
             <span className="ml-2 text-[0.625rem] text-gray-400">
@@ -209,14 +212,13 @@ export default function AutoReviewCatalogDialog({
                 specialists from this list.
               </p>
             </div>
-            <button
+            <IconButton
               type="button"
               onClick={onClose}
-              aria-label="Close specialist catalog"
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+              label="Close specialist catalog"
             >
-              ✕
-            </button>
+              <Icon name="close" className="h-4 w-4" />
+            </IconButton>
           </div>
           {catalog && (
             <div className="mt-3 flex flex-wrap gap-2 text-[0.6875rem] text-gray-600 dark:text-gray-300">
@@ -272,7 +274,7 @@ export default function AutoReviewCatalogDialog({
             </p>
           )}
           {error && (
-            <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+            <p role="alert" className="text-sm text-danger">
               Could not load the specialist catalog: {error}
               <ReportIssueLink />
             </p>
@@ -311,7 +313,7 @@ export default function AutoReviewCatalogDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-xs font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+            className="ui-button ui-button--primary ui-button--sm"
           >
             Done
           </button>

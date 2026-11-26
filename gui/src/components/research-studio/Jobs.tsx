@@ -258,7 +258,7 @@ export default function Jobs({
               </div>
             )}
             {staleOutputs(j).length > 0 && (
-              <p className="w-full text-amber-700 dark:text-amber-400">
+              <p className="w-full text-warning">
                 The command finished without rewriting{" "}
                 {staleOutputs(j).join(", ")}, so Pipeline can’t confirm{" "}
                 {staleOutputs(j).length > 1 ? "they match" : "it matches"} the

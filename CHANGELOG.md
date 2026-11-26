@@ -3,6 +3,61 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.5.4 — 2026-11-26
+
+- Stop sandboxed commands from reading folders outside the project through a
+  `.git` or `.gitconfig` link. Commands that run inside Pipeline's data folder
+  can no longer read its saved keys or research records.
+- Find a project's Python environment from its `pyvenv.cfg` file without
+  starting programs from the project folder.
+
+- Publish a branch under its own name unless you chose a destination for that
+  branch. Open files from an edit conversation's copy in other apps as
+  read-only snapshots.
+- Let reviews use the PDF parser while graphics card support downloads. Setup
+  pauses and resumes later.
+- Search a project's papers, sources, and notes before its conversations and
+  records.
+- Keep Pipeline checks and Declaude editing stages working when you add review
+  models.
+
+- Give document bundle preparation the full review step time limit. PDF
+  extraction uses its own time limit, now defaulting to 45 minutes.
+
+- Fix graphics card support installation in Windows development builds when
+  the matching Pipeline release does not yet contain the optional runtime.
+
+- Install, repair, or remove the optional terminal command from Advanced & About
+  settings. Share the desktop engine through a small launcher while keeping
+  existing CLI command paths working. Trim unused Windows Poppler libraries
+  and fix the language-data layout for CJK PDF extraction.
+
+- Download Windows graphics card recognition through the engine installer
+  instead of including its runtime in every desktop installation. Set it up
+  automatically for supported Full Parser users, preserve GPU opt-outs, and
+  reuse downloaded models when repairing or upgrading the graphics runtime.
+
+- Choose Inter, Instrument Sans, IBM Plex Sans, or Source Sans 3 with Source
+  Serif 4 in Appearance settings. Fonts are bundled for offline use, and the
+  selected typeface is restored at startup.
+
+- Start Full Parser PDF extraction sooner by verifying its runtime once per
+  document instead of three times.
+- Keep report images loaded while other reviews run, and update the Markdown
+  preview beside the editor when typing pauses instead of on every keystroke.
+- List automations and tasks newest first without sorting their whole history.
+- Stop keeping a copy of the project file list each time a project is checked
+  for changes, and remove the copies already kept. Delete conversations and
+  show automation progress faster with new project storage indexes.
+
+- Reduce repeated reads when opening project overviews and review history.
+  Keep database operations responsive while checking folders or opening files.
+
+- Enforce Windows file read boundaries for ChatGPT conversations and reviews
+  with Codex's MXC sandbox, while retaining project-local instructions.
+- Upgrade project storage to accept integration, submission, citation-check,
+  and captured-context records while preserving existing records and history.
+
 ## 1.5.3 — 2026-11-17
 
 - Give Declaude descriptive editing-stage names, preserve exact quoted text,

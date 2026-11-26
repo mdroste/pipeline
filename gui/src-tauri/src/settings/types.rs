@@ -401,7 +401,7 @@ fn default_paddle_full_layout_merge_bboxes_mode() -> String {
 }
 
 fn default_pdf_extraction_timeout_secs() -> u64 {
-    1800
+    2700
 }
 
 fn default_reuse_pdf_extraction_cache() -> bool {

@@ -1,10 +1,28 @@
 use super::*;
 
+/// Admit before spawning: queued previews must not fill the blocking pool, and
+/// cancelling the async caller must not release a still-running read's permit.
+async fn run_artifact_read<T: Send + 'static>(
+    read: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    static READERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let permit = READERS
+        .acquire()
+        .await
+        .map_err(|_| "Artifact readers are unavailable".to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        read()
+    })
+    .await
+    .map_err(|error| format!("Artifact read task failed: {error}"))?
+}
+
 // --- Run artifacts ---
 
 #[tauri::command]
 pub async fn get_run_manifest(run_id: String) -> Result<crate::runs::RunManifest, String> {
-    crate::runs::load_manifest(&run_id)
+    run_artifact_read(move || crate::runs::load_manifest(&run_id)).await
 }
 
 #[tauri::command]
@@ -12,7 +30,7 @@ pub async fn read_artifact(
     run_id: String,
     rel_path: String,
 ) -> Result<crate::runs::ArtifactContent, String> {
-    crate::runs::read_artifact(&run_id, &rel_path)
+    run_artifact_read(move || crate::runs::read_artifact(&run_id, &rel_path)).await
 }
 
 #[tauri::command]
@@ -21,11 +39,7 @@ pub async fn read_pdf_artifact_page(
     rel_path: String,
     page: u32,
 ) -> Result<crate::runs::PdfArtifactPage, String> {
-    tokio::task::spawn_blocking(move || {
-        crate::runs::read_pdf_artifact_page(&run_id, &rel_path, page)
-    })
-    .await
-    .map_err(|error| format!("PDF preview task failed: {error}"))?
+    run_artifact_read(move || crate::runs::read_pdf_artifact_page(&run_id, &rel_path, page)).await
 }
 
 #[tauri::command]
@@ -33,22 +47,18 @@ pub async fn read_page_artifact(
     run_id: String,
     page: u32,
 ) -> Result<crate::runs::ArtifactContent, String> {
-    crate::runs::read_page_artifact(&run_id, page)
+    run_artifact_read(move || crate::runs::read_page_artifact(&run_id, page)).await
 }
 
 #[tauri::command]
 pub async fn read_pdf_artifact_bytes(run_id: String, rel_path: String) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || crate::runs::read_pdf_artifact_bytes(&run_id, &rel_path))
-        .await
-        .map_err(|e| format!("PDF read failed: {e}"))?
+    run_artifact_read(move || crate::runs::read_pdf_artifact_bytes(&run_id, &rel_path)).await
 }
 
 /// The structured report for a past run (for run-vs-run comparison).
 #[tauri::command]
 pub async fn get_run_report(run_id: String) -> Result<PipelineReport, String> {
-    tokio::task::spawn_blocking(move || load_run_report(&run_id))
-        .await
-        .map_err(|e| format!("Report read failed: {e}"))?
+    run_artifact_read(move || load_run_report(&run_id)).await
 }
 
 /// LLM reconciliation of two runs: which concerns were addressed, which remain,
@@ -82,14 +92,7 @@ pub async fn reconcile_runs(
 /// List past runs (newest first) for the history page.
 #[tauri::command]
 pub async fn list_runs() -> Result<Vec<crate::runs::RunSummary>, String> {
-    tokio::task::spawn_blocking(|| {
-        // A cancelled run is finalized after the original command returns,
-        // so History refresh is also a recovery point in the current process.
-        let _ = crate::runs::recover_resumable_runs();
-        crate::runs::list_runs()
-    })
-    .await
-    .map_err(|e| format!("Run listing task failed: {e}"))?
+    crate::runs::history_reads::list().await
 }
 
 /// Rename / retag a past run.
@@ -130,9 +133,7 @@ pub async fn permanently_delete_trashed_run(run_id: String) -> Result<(), String
 /// Number of runs on disk and total bytes they occupy.
 #[tauri::command]
 pub async fn runs_disk_usage() -> Result<crate::runs::RunsDiskUsage, String> {
-    tokio::task::spawn_blocking(crate::runs::disk_usage)
-        .await
-        .map_err(|e| format!("Disk-usage task failed: {e}"))?
+    crate::runs::history_reads::usage().await
 }
 
 /// Preview the completed runs selected by the supplied retention limits.

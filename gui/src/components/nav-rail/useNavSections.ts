@@ -31,26 +31,33 @@ function readChoices(): Choices {
  * a section clears a choice to keep it shut, so a click never lands on a
  * closed section.
  */
-export default function useNavSections(active: NavSection | null) {
+export default function useNavSections(
+  active: NavSection | null,
+  transient = false,
+) {
   const [choices, setChoices] = useState(readChoices);
   useEffect(() => {
-    if (!active) return;
+    if (!active || transient) return;
     setChoices((current) => {
       if (current[active] !== false) return current;
       const { [active]: _cleared, ...rest } = current;
       return rest;
     });
-  }, [active]);
+  }, [active, transient]);
   useEffect(() => {
+    if (transient) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(choices));
     } catch {
       /* Optional view preference. */
     }
-  }, [choices]);
+  }, [choices, transient]);
   const isOpen = useCallback(
-    (section: NavSection) => choices[section] ?? section === active,
-    [active, choices],
+    (section: NavSection) =>
+      transient && section === active
+        ? true
+        : (choices[section] ?? section === active),
+    [active, choices, transient],
   );
   const toggle = useCallback(
     (section: NavSection) =>

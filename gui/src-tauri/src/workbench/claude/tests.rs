@@ -13,6 +13,7 @@ fn success_marks_only_the_last_answer_final_without_duplicate_transcript_items()
             .record_turn_submission(&bound.id, "submission", "claude-turn")
             .unwrap();
         let turn = Turn {
+            auth_mode: crate::agent_runtime::claude::AuthMode::Subscription,
             epoch: fresh_epoch(),
             thread: "claude-thread".into(),
             id: "claude-turn".into(),
@@ -61,6 +62,7 @@ fn failed_claude_result_never_promotes_partial_json_to_a_final_answer() {
         .record_turn_submission(&bound.id, "submission", "claude-turn")
         .unwrap();
     let turn = Turn {
+        auth_mode: crate::agent_runtime::claude::AuthMode::Subscription,
         epoch: fresh_epoch(),
         thread: "claude-thread".into(),
         id: "claude-turn".into(),
@@ -267,7 +269,14 @@ async fn claude_subscription_handshake_probe() {
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let specs = tools::catalog(&effective);
     let args = protocol::arguments(&effective, None, None, None, Mode::Sandbox);
-    let mut process = transport::Process::start(&args, None, None).await.unwrap();
+    let mut process = transport::Process::start(
+        crate::agent_runtime::claude::AuthMode::Subscription,
+        &args,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     let result = process.initialize(&specs).await;
     process.stop().await;
     let initialization = result.unwrap();
@@ -281,7 +290,7 @@ async fn claude_subscription_handshake_probe() {
 async fn claude_subscription_model_probe() {
     let executable = crate::deps::resolve_command("claude").unwrap();
     let mut version = executable.command(["--version"]);
-    crate::agent_runtime::claude::configure_subscription(&mut version);
+    crate::agent_runtime::claude::configure_native_auth(&mut version);
     let version = crate::process::run_bounded_independent(
         &mut version,
         std::time::Duration::from_secs(15),
@@ -300,6 +309,7 @@ async fn claude_subscription_model_probe() {
         json!({"name":"pipeline_probe","description":"Return the verification marker.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
     ];
     let mut process = transport::Process::start(
+        crate::agent_runtime::claude::AuthMode::Subscription,
         &protocol::arguments(&effective, Some("haiku"), None, None, Mode::Sandbox),
         None,
         None,
@@ -423,6 +433,7 @@ fn recorded_turn(label: &str) -> Turn {
         .record_turn_submission(&bound.id, &format!("submission-{label}"), &id)
         .unwrap();
     Turn {
+        auth_mode: crate::agent_runtime::claude::AuthMode::Subscription,
         epoch: fresh_epoch(),
         thread,
         id,
@@ -657,6 +668,7 @@ async fn a_tool_mistake_goes_back_to_claude_as_a_failed_result() {
     let specs = vec![json!({"name":"project_create","inputSchema":{"type":"object"}})];
     let f = fixture();
     let turn = Turn {
+        auth_mode: crate::agent_runtime::claude::AuthMode::Subscription,
         epoch: fresh_epoch(),
         thread: "claude-thread".into(),
         id: "claude-turn".into(),
@@ -818,6 +830,7 @@ async fn claude_sandboxed_shell_probe() {
     let root = f.store.runtime_root(&f.session).unwrap();
     let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
+        crate::agent_runtime::claude::AuthMode::Subscription,
         &args,
         Some(&shell::sandbox(&root, &Default::default(), false)),
         None,
@@ -890,6 +903,7 @@ async fn claude_working_copy_network_probe() {
     let root = f.store.runtime_root(&f.session).unwrap();
     let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
+        crate::agent_runtime::claude::AuthMode::Subscription,
         &args,
         Some(&shell::sandbox(&root, &effective.capabilities, true)),
         None,
@@ -985,6 +999,7 @@ async fn claude_private_folder_probe() {
     let root = store.runtime_root(&session).unwrap();
     let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root), Mode::Sandbox);
     let mut process = transport::Process::start(
+        crate::agent_runtime::claude::AuthMode::Subscription,
         &args,
         Some(&shell::sandbox(&root, &effective.capabilities, false)),
         Some(&root),

@@ -34,6 +34,7 @@ export interface BranchInfo {
   remoteRef: string | null;
 }
 export interface RepositoryView {
+  remotes?: import("./repositoryClient").RepositoryRemote[];
   status: RepositoryStatus;
   files: ChangedFile[];
   filesTruncated: boolean;
@@ -58,7 +59,10 @@ export type VersionControlState =
 export type ConflictChoice = "ours" | "theirs" | "edited";
 export type VersionControlAction =
   | { kind: "initialize" }
+  | { kind: "clone"; url: string }
   | { kind: "setRemote"; url: string }
+  | { kind: "addRemote"; name: string; url: string }
+  | { kind: "selectRemote"; name: string; branch: string }
   | { kind: "setIdentity"; name: string; email: string }
   | {
       kind: "commit";
@@ -84,6 +88,7 @@ export interface ActionResult {
 }
 
 export type DiffRequest =
+  | { kind: "compare"; base: string; target: string }
   | { kind: "working"; path: string; oldPath: string | null }
   | { kind: "commit"; sha: string; path: string; oldPath: string | null };
 export interface FileDiff {

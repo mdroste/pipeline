@@ -1,6 +1,6 @@
 // The app's one icon set (18px stroke icons). NavRail, Home, and new
 // surfaces draw from here; do not redraw these paths locally.
-
+import type { CSSProperties } from "react";
 export type IconName =
   | "home"
   | "new"
@@ -42,17 +42,27 @@ export type IconName =
   | "image"
   | "table"
   | "media"
-  | "link";
+  | "link"
+  | "copy"
+  | "export"
+  | "archive"
+  | "arrow-down"
+  | "chevron-left"
+  | "info"
+  | "minus";
 
 export function Icon({
   name,
   className = "h-[18px] w-[18px]",
+  style,
 }: {
   name: IconName;
   className?: string;
+  style?: CSSProperties;
 }) {
   const common = {
     className,
+    style,
     fill: "none",
     viewBox: "0 0 24 24",
     stroke: "currentColor",
@@ -61,6 +71,71 @@ export function Icon({
   };
 
   switch (name) {
+    case "info":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path strokeLinecap="round" d="M12 11v6m0-10h.01" />
+        </svg>
+      );
+    case "minus":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" d="M5 12h14" />
+        </svg>
+      );
+    case "chevron-left":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m15 6-6 6 6 6"
+          />
+        </svg>
+      );
+    case "copy":
+      return (
+        <svg {...common}>
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"
+          />
+        </svg>
+      );
+    case "export":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 15V3m-4 4 4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"
+          />
+        </svg>
+      );
+    case "archive":
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="18" height="4" rx="1" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M5 7v13h14V7M10 11h4"
+          />
+        </svg>
+      );
+    case "arrow-down":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M12 5v14m-6-6 6 6 6-6"
+          />
+        </svg>
+      );
     case "book":
       return (
         <svg {...common}>

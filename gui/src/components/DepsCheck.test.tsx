@@ -68,7 +68,7 @@ describe("DepsCheck", () => {
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeVisible();
   });
 
-  it("keeps green for a ready status, off the row behind it", () => {
+  it("keeps success color on a ready status, off the row behind it", () => {
     render(
       <DepsCheck
         report={{
@@ -79,9 +79,9 @@ describe("DepsCheck", () => {
       />,
     );
     const row = screen.getByText("Claude").closest("li")!;
-    expect(row.className).not.toMatch(/emerald/);
+    expect(row.className).not.toMatch(/success/);
     expect(row.className).toContain("dark:bg-neutral-800/30");
-    expect(row.innerHTML).toMatch(/text-emerald/);
+    expect(row.innerHTML).toMatch(/text-success/);
   });
 
   it("opens with a progress message before the first result arrives", () => {
@@ -180,7 +180,7 @@ describe("DepsCheck", () => {
     const models = screen.getByRole("region", { name: "Model access" });
     expect(within(models).getByText("Needs attention")).toBeVisible();
     expect(within(models).getByText("Not connected")).toHaveClass(
-      "text-red-700",
+      "text-danger",
     );
     expect(within(models).getByText("Not set up")).toHaveClass("text-gray-500");
     expect(within(models).getByText(hint)).toBeVisible();
@@ -349,7 +349,7 @@ describe("DepsCheck", () => {
       />,
     );
     const label = screen.getByText("highly recommended");
-    expect(label).toHaveClass("text-red-700");
+    expect(label).toHaveClass("text-danger");
     expect(screen.queryByText("required")).not.toBeInTheDocument();
     expect(
       screen.getByText(/Required PDF parsing tools are missing\./),

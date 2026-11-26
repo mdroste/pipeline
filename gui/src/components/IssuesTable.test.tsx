@@ -134,7 +134,9 @@ describe("IssuesTable annotation lifecycle", () => {
     );
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "accept issue: First issue" }));
+      .click(
+        screen.getByRole("button", { name: "accept finding: First issue" }),
+      );
     await waitFor(
       () =>
         expect(invoke).toHaveBeenCalledWith(
@@ -164,7 +166,7 @@ describe("IssuesTable annotation lifecycle", () => {
     render(<IssuesTable issues={issues} runId="" />);
 
     await user.click(
-      screen.getByRole("button", { name: "accept issue: First issue" }),
+      screen.getByRole("button", { name: "accept finding: First issue" }),
     );
     await user.click(
       screen.getByRole("button", { name: "Export all decisions" }),
@@ -255,14 +257,14 @@ describe("IssuesTable annotation lifecycle", () => {
       />,
     );
     await user.click(
-      screen.getByRole("button", { name: "accept issue: First issue" }),
+      screen.getByRole("button", { name: "accept finding: First issue" }),
     );
     await user.click(
       screen.getByRole("button", { name: "Export all decisions" }),
     );
 
     expect(invoke).toHaveBeenCalledWith("save_text_file", {
-      suggestedName: "issue-decisions.md",
+      suggestedName: "finding-decisions.md",
       content: expect.stringContaining(
         "p. 7, node paragraph-12, artifact artifacts/pages/page-7.png — Identification claim",
       ),
@@ -328,7 +330,7 @@ describe("IssuesTable sticky controls", () => {
     render(<IssuesTable issues={many} runId="" />);
 
     const toolbar = screen
-      .getByRole("heading", { name: "Issues (30)" })
+      .getByRole("heading", { name: "Findings (30)" })
       .closest(".sticky");
     expect(toolbar).toHaveClass("top-0");
     await user.click(
@@ -337,17 +339,17 @@ describe("IssuesTable sticky controls", () => {
     expect(toolbar).toContainElement(await screen.findByRole("alert"));
 
     const row = screen.getByRole("checkbox", {
-      name: "Select issue: Issue 25",
+      name: "Select finding: Issue 25",
     });
     await user.click(row);
     const bar = screen.getByRole("group", {
-      name: "Decision for selected issues",
+      name: "Decision for selected findings",
     });
     expect(bar).toHaveClass("sticky", "bottom-0");
     expect(bar).toHaveTextContent("1 selected");
     // Inserted after the list, so no row above it moves.
     const lastRow = screen.getByRole("checkbox", {
-      name: "Select issue: Issue 30",
+      name: "Select finding: Issue 30",
     });
     expect(
       lastRow.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -389,7 +391,7 @@ describe("IssuesTable outside-source evidence", () => {
     const user = userEvent.setup();
     render(<IssuesTable issues={published} runId="" />);
     await user.type(
-      screen.getByRole("textbox", { name: "Search issues" }),
+      screen.getByRole("textbox", { name: "Search findings" }),
       "identification review",
     );
     await user.click(
@@ -516,7 +518,7 @@ describe("IssuesTable bulk decisions", () => {
     title: string,
   ) => {
     await user.click(
-      await screen.findByRole("checkbox", { name: `Select issue: ${title}` }),
+      await screen.findByRole("checkbox", { name: `Select finding: ${title}` }),
     );
   };
   const decide = async (
@@ -567,11 +569,11 @@ describe("IssuesTable bulk decisions", () => {
     const user = userEvent.setup();
     render(<IssuesTable runId={null} issues={issues} />);
     await user.type(
-      screen.getByRole("textbox", { name: "Search issues" }),
+      screen.getByRole("textbox", { name: "Search findings" }),
       "nothing matches",
     );
     expect(
-      screen.getByText("No issues match these filters."),
+      screen.getByText("No findings match these filters."),
     ).toBeInTheDocument();
   });
 
@@ -602,7 +604,7 @@ describe("IssuesTable bulk decisions", () => {
     render(<IssuesTable issues={two} runId="run-a" />);
     await waitFor(() =>
       expect(
-        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+        screen.getByRole("checkbox", { name: "Select finding: First issue" }),
       ).toBeEnabled(),
     );
     await select(user, "First issue");
@@ -610,7 +612,7 @@ describe("IssuesTable bulk decisions", () => {
     await decide(user, "Out of scope");
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Decision applied to 2 issues.",
+      "Decision applied to 2 findings.",
     );
     await waitFor(() => expect(savedAnnotations).not.toThrow(), {
       timeout: 1500,
@@ -626,19 +628,19 @@ describe("IssuesTable bulk decisions", () => {
     render(<IssuesTable issues={two} runId="run-a" />);
     await waitFor(() =>
       expect(
-        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+        screen.getByRole("checkbox", { name: "Select finding: First issue" }),
       ).toBeEnabled(),
     );
     await select(user, "First issue");
     await select(user, "Second issue");
     await user.click(screen.getByRole("button", { name: "high" }));
     expect(
-      screen.getByRole("group", { name: "Decision for selected issues" }),
+      screen.getByRole("group", { name: "Decision for selected findings" }),
     ).toHaveTextContent("1 selected, 1 hidden by filters");
     await decide(user, "Out of scope");
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Decision applied to 1 issue. 1 issue hidden by filters left unchanged.",
+      "Decision applied to 1 finding. 1 finding hidden by filters left unchanged.",
     );
     await waitFor(() => expect(savedAnnotations).not.toThrow(), {
       timeout: 1500,
@@ -654,7 +656,7 @@ describe("IssuesTable bulk decisions", () => {
     render(<IssuesTable issues={two} runId="run-a" />);
     await waitFor(() =>
       expect(
-        screen.getByRole("checkbox", { name: "Select issue: Second issue" }),
+        screen.getByRole("checkbox", { name: "Select finding: Second issue" }),
       ).toBeEnabled(),
     );
     await select(user, "Second issue");
@@ -680,11 +682,13 @@ describe("IssuesTable bulk decisions", () => {
     render(<IssuesTable issues={[issues[0]]} runId="run-a" />);
     await waitFor(() =>
       expect(
-        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+        screen.getByRole("checkbox", { name: "Select finding: First issue" }),
       ).toBeEnabled(),
     );
     await select(user, "First issue");
     await decide(user, "Out of scope");
-    expect(screen.getByRole("status")).toHaveTextContent("No issues changed.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No findings changed.",
+    );
   });
 });

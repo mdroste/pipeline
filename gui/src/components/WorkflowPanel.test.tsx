@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WorkflowPanel from "./WorkflowPanel";
 import type { PipelineConfig, ProfileSummary } from "../lib/workflowTypes";
@@ -149,7 +149,7 @@ describe("WorkflowPanel", () => {
     );
   });
 
-  it("shows workflow choices with outcomes and step counts", async () => {
+  it("shows workflow outcomes without the input and step-count summary", async () => {
     mockLoad(makeConfig());
     renderPanel();
 
@@ -157,11 +157,12 @@ describe("WorkflowPanel", () => {
     expect(screen.queryByText(/steps.*the full plan/)).not.toBeInTheDocument();
     // No per-step rows or toggles: the plan preview owns that.
     expect(screen.queryByText("Contribution")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit design/i })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: /edit workflow/i }),
+      screen.getByRole("button", { name: "Compare review designs" }),
     ).toBeVisible();
-    expect(screen.getByText("Compare workflows")).toBeVisible();
-    expect(screen.getAllByText(/configured steps/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/configured steps/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Paper or LaTeX source/)).not.toBeInTheDocument();
   });
 
   it("switches profile via switch_profile and notifies the parent", async () => {
@@ -179,30 +180,60 @@ describe("WorkflowPanel", () => {
     expect(select).toHaveValue("quick");
   });
 
-  it("calls onConfigure when Edit workflow is clicked", async () => {
+  it("compares every workflow in a dialog, restores focus, and switches from a later page", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    const onProfileChange = vi.fn();
+    renderPanel({ onProfileChange });
+    const compare = await screen.findByRole("button", {
+      name: "Compare review designs",
+    });
+    await user.click(compare);
+    expect(
+      screen.getByRole("dialog", { name: "Compare review designs" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(compare).toHaveFocus();
+    await user.click(compare);
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Next" }));
+    await user.click(
+      dialog.getByRole("button", { name: /Paper Review \(Quick\)/ }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(invoke).toHaveBeenCalledWith("switch_profile", { id: "quick" });
+    expect(onProfileChange).toHaveBeenCalledOnce();
+  });
+
+  it("calls onConfigure when Edit design is clicked", async () => {
     mockLoad(makeConfig());
     const onConfigure = vi.fn();
     renderPanel({ onConfigure });
 
-    const link = await screen.findByRole("button", { name: /edit workflow/i });
+    const link = await screen.findByRole("button", { name: /edit design/i });
     await userEvent.setup().click(link);
     expect(onConfigure).toHaveBeenCalledTimes(1);
   });
 
   it.each(["auto-paper-review", "auto-paper-review-fast"])(
-    "omits adaptive details for %s",
+    "separates specialist roles from models for %s",
     async (profile) => {
       const config = makeConfig();
       config.orientation_schema = { "x-pipeline-contract": "auto-review-v2" };
       mockLoad(config, profile);
       renderPanel();
       await screen.findByRole("combobox");
-      expect(screen.queryByText(/Adaptive agents:/)).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/This design selects.*specialist roles/),
+      ).toBeVisible();
       expect(
         screen.queryByRole("button", { name: "Browse specialist catalog" }),
       ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /edit workflow/i }),
+        screen.getByRole("button", { name: /edit design/i }),
       ).toBeEnabled();
     },
   );

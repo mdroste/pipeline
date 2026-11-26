@@ -10,6 +10,7 @@ import { studioClient } from "../../lib/studioClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { confirmDialog } from "../DialogService";
 import type { ProjectHome } from "../../lib/projectClient";
+import type { ContextItem } from "../../lib/deskClient";
 import type { ReviewHandoff } from "../../lib/workbench/releaseTypes";
 import { button, input } from "../../ui/classes";
 import "../project-surface/ProjectPage.css";
@@ -17,6 +18,23 @@ import ReportIssueLink from "../ReportIssueLink";
 export { button, input };
 export const panel = "project-section";
 export interface StudioProps {
+  onAsk?: (prompt: string, context: ContextItem[]) => Promise<void>;
+  onRelatedTarget?: (
+    tab: "tasks" | "edits" | "execution",
+    targetId: string,
+  ) => void;
+  responseTargetId?: string;
+  onResponseOpen?: (id: string, title: string) => void;
+  onAskSource?: (passage: {
+    path: string;
+    hash: string;
+    quote: string;
+    start: number;
+    end: number;
+    line: number;
+    draft: boolean;
+    checkpointId: string | null;
+  }) => void;
   documentId?: string | null;
   documentPath?: string | null;
   workspaceId: string;
@@ -174,7 +192,7 @@ export function ErrorNotice({ error }: { error: string | null }) {
     <p
       ref={alert}
       role="alert"
-      className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200"
+      className="rounded border border-danger bg-danger-soft p-3 text-sm text-danger"
     >
       {error}
       <ReportIssueLink />

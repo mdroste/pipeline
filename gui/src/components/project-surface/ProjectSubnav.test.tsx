@@ -17,11 +17,15 @@ it("shows every view in the section as a tab, with no menu", () => {
   expect(onSelect).toHaveBeenCalledWith("version-control");
 });
 
-it("offers Responses once the paper is past drafting", () => {
+it("keeps Responses available regardless of publication stage", () => {
   const { rerender } = render(
     <ProjectSubnav tab="reviews" stage="drafting" onSelect={vi.fn()} />,
   );
-  expect(labels()).toEqual(["Reviews & findings", "Send for review"]);
+  expect(labels()).toEqual([
+    "Reviews & findings",
+    "Responses",
+    "Send for review",
+  ]);
   rerender(<ProjectSubnav tab="reviews" stage="revising" onSelect={vi.fn()} />);
   expect(labels()).toEqual([
     "Reviews & findings",

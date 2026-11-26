@@ -7,6 +7,15 @@ pub(super) async fn verify(
     reader: &mut BufReader<tokio::process::ChildStdout>,
     root: &Path,
 ) -> Result<(), String> {
+    // A confined project must still load its own instructions. Disabling all
+    // project documents would hide ancestor-discovery errors but lose behavior.
+    let instructions = root.join("AGENTS.md");
+    std::fs::write(
+        &instructions,
+        "Local qualification instructions. No model turn.\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let instructions = instructions.canonicalize().map_err(|e| e.to_string())?;
     for (web, network, profile) in [
         (true, false, "workbench-inspect"),
         (false, true, "workbench-inspect-network"),
@@ -24,6 +33,16 @@ pub(super) async fn verify(
         request["params"]["config"] = config.clone();
         send(stdin, &request).await?;
         let started = response_for(reader, &id).await?;
+        let local_instructions = started["instructionSources"]
+            .as_array()
+            .filter(|sources| sources.len() == 1)
+            .and_then(|sources| sources[0].as_str())
+            .and_then(|path| Path::new(path).canonicalize().ok());
+        if local_instructions.as_ref() != Some(&instructions) {
+            return Err(format!(
+                "Project-local instructions were not preserved: {started}"
+            ));
+        }
         if started["activePermissionProfile"]["id"] != profile {
             return Err(format!(
                 "Conversation capability profile changed: {started}"

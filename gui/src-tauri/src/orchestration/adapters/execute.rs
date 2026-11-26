@@ -7,7 +7,7 @@ use crate::orchestration::{
     state::Ready,
     store::{err, Result, Store, TaskRun},
 };
-use crate::workbench::{commands::run_store, tasks};
+use crate::workbench::{runtime::run_store, tasks};
 use serde_json::{json, Value};
 
 fn resolve(binding: &Binding, run: &TaskRun, ready: &Ready) -> Result<Value> {
@@ -27,9 +27,9 @@ const LOST_TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 /// Closes what the runtime left open for this conversation. API and Claude turns
 /// settle in process; a Codex turn needs the desktop to reach App Server.
 pub(in crate::orchestration) async fn settle_turn(app: Option<tauri::AppHandle>, session: String) {
-    let local = crate::workbench::commands::reconcile_local_session(session.clone()).await;
+    let local = crate::workbench::runtime::reconcile_local_session(session.clone()).await;
     if let (Ok(false), Some(app)) = (local, app) {
-        let _ = crate::workbench::commands::workbench_codex_reconcile_session(app, session).await;
+        let _ = crate::workbench::runtime::codex_reconcile_session(app, session).await;
     }
 }
 
@@ -68,7 +68,7 @@ pub(in crate::orchestration) async fn await_turn(
     stop: &mut tokio::sync::watch::Receiver<bool>,
     grace: std::time::Duration,
 ) -> Result<Value> {
-    use crate::workbench::commands as workspace;
+    use crate::workbench::runtime as workspace;
     let mut unowned_since = None;
     loop {
         if *stop.borrow() {
@@ -78,7 +78,7 @@ pub(in crate::orchestration) async fn await_turn(
         if let Some(value) = read_outcome(session, submission).await? {
             return Ok(value);
         }
-        if let Some(question) = workspace::task_pending_request(thread, turn) {
+        if let Some(question) = workspace::codex::requests::task_pending_request(thread, turn) {
             let _ = workspace::interrupt_runtime_turn(thread.to_string(), turn.to_string()).await;
             return Err(unanswered_request(&question));
         }
@@ -274,9 +274,9 @@ async fn execute_inner(
                 )
             } else {
                 mark()?;
-                let sent = crate::workbench::commands::submit_turn(
+                let sent = crate::workbench::runtime::submit_turn(
                     app.clone(),
-                    crate::workbench::commands::SendTurnRequest {
+                    crate::workbench::runtime::SendTurnRequest {
                         session_id: session.clone(),
                         text,
                         client_submission_id: submission.clone(),

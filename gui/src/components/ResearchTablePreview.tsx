@@ -87,9 +87,7 @@ export default function ResearchTablePreview({
     <div className="overflow-auto">
       {table.error ? (
         <>
-          <p className="text-xs text-amber-700 dark:text-amber-300">
-            {table.error}
-          </p>
+          <p className="text-xs text-warning">{table.error}</p>
           <pre className="mt-2 whitespace-pre-wrap break-words text-xs">
             {text}
           </pre>

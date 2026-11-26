@@ -49,7 +49,7 @@ export default function RunOutput({
   if (!output) return <p className="text-gray-500">Loading output…</p>;
   const shown = streams.filter(([stream]) => output[stream]);
   const imported = run.validation.importedFrom != null && (
-    <p className="text-amber-700 dark:text-amber-300">
+    <p className="text-warning">
       Imported from a package. This run didn't happen on this computer.
     </p>
   );

@@ -52,7 +52,7 @@ describe("processor cores setting", () => {
 });
 
 describe("graphics card setting", () => {
-  it("stays hidden until graphics card recognition is installed", () => {
+  it("stays hidden on platforms without the graphics component", () => {
     engines = [paddleEngine({ installed: true })];
     render(
       <ExtractionSection settings={makeSettings()} setSettings={vi.fn()} />,
@@ -78,6 +78,25 @@ describe("graphics card setting", () => {
       ...settings,
       paddle_use_gpu: false,
     });
+  });
+
+  it("allows opting out before any graphics runtime is downloaded", async () => {
+    engines = [
+      paddleEngine({ installed: true }),
+      paddleEngine({ id: "paddleocr-vl-gpu", installed: false }),
+    ];
+    const settings = makeSettings();
+    const setSettings = vi.fn();
+    render(<ExtractionSection settings={settings} setSettings={setSettings} />);
+    await userEvent.click(screen.getByText("Advanced parser settings"));
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Use graphics card" }),
+    );
+    expect(setSettings).toHaveBeenCalledWith({
+      ...settings,
+      paddle_use_gpu: false,
+    });
+    expect(screen.getByText(/Downloads up to 2 GB/)).toBeInTheDocument();
   });
 });
 

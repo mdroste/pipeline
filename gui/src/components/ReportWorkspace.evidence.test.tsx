@@ -54,7 +54,7 @@ function pageCitation(pageManifest: Record<string, unknown>) {
 describe("an evidence link to a page", () => {
   const openIssue = async () => {
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: /Issues/ }));
+    await user.click(await screen.findByRole("tab", { name: /Findings/ }));
     await user.click(
       await screen.findByRole(
         "button",
@@ -115,7 +115,7 @@ describe("an evidence link to a source file", () => {
     const user = userEvent.setup();
     render(<ReportWorkspace runId="run" markdown="# Report" report={report} />);
 
-    await user.click(screen.getByRole("tab", { name: /Issues/ }));
+    await user.click(screen.getByRole("tab", { name: /Findings/ }));
     await user.click(
       await screen.findByRole(
         "button",

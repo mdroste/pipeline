@@ -14,6 +14,10 @@ const MAX_COMMIT_FILES: usize = 2000;
     rename_all_fields = "camelCase"
 )]
 pub enum DiffRequest {
+    Compare {
+        base: String,
+        target: String,
+    },
     Working {
         path: String,
         old_path: Option<String>,
@@ -127,6 +131,11 @@ fn valid_sha(sha: &str) -> WorkbenchResult<&str> {
 pub fn diff(root: &Path, request: DiffRequest) -> WorkbenchResult<FileDiff> {
     let git = opened(root)?;
     match request {
+        DiffRequest::Compare { base, target } => bounded_patch(
+            &git,
+            &["diff", "-M", valid_sha(&base)?, valid_sha(&target)?],
+            &["."],
+        ),
         DiffRequest::Working { path, old_path } => {
             let path = checked_path(&path)?;
             let row = status::changes(&git, &prefix(&git)?)?

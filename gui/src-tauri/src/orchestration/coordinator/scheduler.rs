@@ -116,7 +116,7 @@ impl Coordinator {
             let expected = adapters::task_binding(&run.scope)?;
             let operation = run.id.clone();
             let title = run.name.clone();
-            match crate::workbench::commands::run_store(move |s| {
+            match crate::workbench::runtime::run_store(move |s| {
                 if crate::workbench::tasks::owns_occurrence(&s, &operation, &expected.session_id)? {
                     return Ok(expected);
                 }

@@ -252,9 +252,15 @@ export const discoveryClient = {
     definition: DiscoveryDefinition,
     sessionId: string | null,
     operationId: string,
+    projectRoot?: string | null,
   ) =>
     invoke<DiscoveryRun>("discovery_start", {
-      request: { definition, sessionId, operationId },
+      request: {
+        definition,
+        sessionId,
+        operationId,
+        ...(projectRoot ? { projectRoot } : {}),
+      },
     }),
   list: (offset = 0, workspaceId: string | null = null) =>
     invoke<DiscoverySummary[]>("discovery_list", { offset, workspaceId }),

@@ -125,19 +125,16 @@ export const stageLabel = (id: string | null | undefined) =>
 
 /**
  * The tabs under a project section, always in the same order. Project setup
- * pages appear only once one of them is open, and Responses waits until the
- * paper is past drafting.
+ * pages appear only once one of them is open. Publication metadata never
+ * hides work such as imported referee responses.
  */
 export function sectionTabs(
   destination: WorkspaceDestination,
-  stage?: string | null,
+  _stage?: string | null,
 ): WorkspaceDestination[] {
   if (destination === "overview") return ["overview"];
   return destinationsInSection(destination).filter(
-    (id) =>
-      id === destination ||
-      (id !== "overview" &&
-        !(id === "responses" && (stage === "idea" || stage === "drafting"))),
+    (id) => id === destination || id !== "overview",
   );
 }
 

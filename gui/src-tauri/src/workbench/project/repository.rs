@@ -45,6 +45,7 @@ pub struct RepositoryCommit {
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepositoryStatus {
+    pub remote_head: Option<String>,
     /// None while HEAD is detached.
     pub branch: Option<String>,
     /// None before the first commit.
@@ -106,11 +107,18 @@ pub(super) fn parse_remote(name: &str, url: &str) -> Option<RepositoryRemote> {
     let provider = match host.as_str() {
         "github.com" if plain(owner, "-") => Some("github"),
         "bitbucket.org" if plain(owner, "._-") => Some("bitbucket"),
+        "git.overleaf.com" if owner.is_empty() => Some("overleaf"),
         _ => None,
     };
     Some(RepositoryRemote {
         name: name.to_string(),
-        web_url: provider.map(|_| format!("https://{host}/{owner}/{repo}")),
+        web_url: provider.map(|provider| {
+            if provider == "overleaf" {
+                format!("https://www.overleaf.com/project/{repo}")
+            } else {
+                format!("https://{host}/{owner}/{repo}")
+            }
+        }),
         provider: provider.map(str::to_string),
         host,
         owner: owner.to_string(),
@@ -243,19 +251,50 @@ pub(super) fn status_from(
     run: &GitRunner<'_>,
 ) -> RepositoryStatus {
     let mut status = parse_status(output);
+    if let Some(remote) = selected_remote(run) {
+        let target = match selected_branch(run, status.branch.as_deref()) {
+            Some(branch) => Some(format!("{remote}/{branch}")),
+            None => status
+                .upstream
+                .clone()
+                .filter(|target| target.starts_with(&format!("{remote}/"))),
+        };
+        status.upstream = None;
+        status.ahead = 0;
+        status.behind = 0;
+        if let Some(target) = target {
+            let reference = format!("HEAD...refs/remotes/{target}");
+            if let Ok(counts) = run(&["rev-list", "--left-right", "--count", &reference, "--"]) {
+                let counts = text(counts);
+                let mut counts = counts.split_whitespace();
+                status.ahead = counts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                status.behind = counts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                status.upstream = Some(target);
+            } else {
+                status.missing_upstream = Some(target);
+            }
+        }
+    }
     let limit = format!("-n{RECENT_COMMITS}");
     if status.head.is_some() {
         if let Ok(log) = run(&["log", &limit, "--no-color", LOG_FORMAT, "--", "."]) {
             status.commits = parse_log(&String::from_utf8_lossy(&log));
         }
     }
-    if status.upstream.is_some() && status.behind > 0 {
+    if let Some(target) = status.upstream.as_ref().filter(|_| status.behind > 0) {
         let limit = format!("-n{INCOMING_COMMITS}");
-        if let Ok(log) = run(&["log", &limit, "--no-color", LOG_FORMAT, "HEAD..@{upstream}"]) {
+        let range = format!("HEAD..refs/remotes/{target}");
+        if let Ok(log) = run(&["log", &limit, "--no-color", LOG_FORMAT, &range, "--"]) {
             status.incoming = parse_log(&String::from_utf8_lossy(&log));
         }
     }
     let remote = remote_name(&status, run);
+    status.remote_head = status
+        .upstream
+        .as_ref()
+        .and_then(|target| run(&["rev-parse", "--verify", &format!("refs/remotes/{target}")]).ok())
+        .map(text)
+        .map(|s| s.trim().to_string());
     if let Some(name) = &remote {
         let url = run(&["remote", "get-url", name]).ok();
         status.remote = Some(
@@ -270,7 +309,9 @@ pub(super) fn status_from(
                 }),
         );
     }
-    if let Some(dir) = git_dir {
+    let fetched_remote =
+        text(run(&["config", "--get", "pipeline.lastFetchedRemote"]).unwrap_or_default());
+    if let Some(dir) = git_dir.filter(|_| remote.as_deref() == Some(fetched_remote.trim())) {
         status.fetched_at = fs::metadata(root.join(dir).join("FETCH_HEAD"))
             .and_then(|meta| meta.modified())
             .ok()
@@ -281,6 +322,9 @@ pub(super) fn status_from(
 
 /// The remote the current branch tracks, else `origin` when it exists.
 pub(super) fn remote_name(status: &RepositoryStatus, run: &GitRunner<'_>) -> Option<String> {
+    if let Some(selected) = selected_remote(run) {
+        return Some(selected);
+    }
     let remotes = text(run(&["remote"]).ok()?);
     let remotes: Vec<&str> = remotes.lines().collect();
     status
@@ -296,6 +340,52 @@ pub(super) fn remote_name(status: &RepositoryStatus, run: &GitRunner<'_>) -> Opt
         .or_else(|| remotes.iter().find(|name| **name == "origin"))
         .or_else(|| remotes.first())
         .map(|name| name.to_string())
+}
+
+/// The destination branch chosen for `current`. A choice belongs to the branch
+/// it was made on: publishing a review branch must never update the branch
+/// chosen for `main`. A choice recorded without its branch (earlier builds)
+/// applies only to a branch of the same name.
+pub(super) fn selected_branch(run: &GitRunner<'_>, current: Option<&str>) -> Option<String> {
+    let current = current?;
+    let branch = text(run(&["config", "--get", "pipeline.remoteBranch"]).ok()?);
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return None;
+    }
+    let owner = run(&["config", "--get", "pipeline.localBranch"])
+        .ok()
+        .map(text);
+    let owner = owner.as_deref().map(str::trim).unwrap_or(branch);
+    (owner == current).then(|| branch.to_owned())
+}
+
+fn selected_remote(run: &GitRunner<'_>) -> Option<String> {
+    let selected = text(run(&["config", "--get", "pipeline.remote"]).ok()?);
+    let selected = selected.trim();
+    let remotes = text(run(&["remote"]).ok()?);
+    remotes
+        .lines()
+        .any(|name| name == selected)
+        .then(|| selected.to_string())
+}
+
+pub(super) fn list_remotes(run: &GitRunner<'_>) -> Vec<RepositoryRemote> {
+    let names = text(run(&["remote"]).unwrap_or_default());
+    names
+        .lines()
+        .map(|name| {
+            let url = text(run(&["remote", "get-url", name]).unwrap_or_default());
+            parse_remote(name, &url).unwrap_or_else(|| RepositoryRemote {
+                name: name.into(),
+                host: String::new(),
+                owner: String::new(),
+                repo: String::new(),
+                provider: None,
+                web_url: None,
+            })
+        })
+        .collect()
 }
 
 /// Updates remote-tracking refs from the project's remote. The working tree,
@@ -316,6 +406,7 @@ pub fn fetch(root: &Path) -> WorkbenchResult<RepositoryStatus> {
             error.message.trim_start_matches("Git task setup failed: ")
         ))
     })?;
+    direct.record_fetch(&remote)?;
     inspect(root)
         .ok_or_else(|| WorkbenchError::invalid("The project folder is not a Git repository"))
 }
@@ -332,6 +423,77 @@ pub fn repository_root(store: &Store, workspace_id: &str) -> WorkbenchResult<Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn incoming_commits_follow_the_selected_destination_with_or_without_a_git_upstream() {
+        let temp = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .current_dir(temp.path())
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "--initial-branch=main"]);
+        git(&["commit", "--allow-empty", "-m", "base"]);
+        let base = git(&["rev-parse", "HEAD"]);
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let incoming = git(&[
+            "commit-tree",
+            &tree,
+            "-p",
+            &base,
+            "-m",
+            "selected remote change",
+        ]);
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/origin.git",
+        ]);
+        git(&[
+            "remote",
+            "add",
+            "other",
+            "https://example.invalid/other.git",
+        ]);
+        git(&["update-ref", "refs/remotes/origin/main", &base]);
+        git(&["update-ref", "refs/remotes/other/review", &incoming]);
+        git(&["branch", "--set-upstream-to=origin/main", "main"]);
+        git(&["config", "pipeline.remote", "other"]);
+        git(&["config", "pipeline.remoteBranch", "review"]);
+        git(&["config", "pipeline.localBranch", "main"]);
+        for upstream in [true, false] {
+            if !upstream {
+                git(&["branch", "--unset-upstream"]);
+            }
+            let status = inspect(temp.path()).unwrap();
+            assert_eq!(status.upstream.as_deref(), Some("other/review"));
+            assert_eq!(status.behind, 1);
+            assert_eq!(
+                status
+                    .incoming
+                    .iter()
+                    .map(|c| c.sha.as_str())
+                    .collect::<Vec<_>>(),
+                vec![incoming.as_str()]
+            );
+        }
+    }
     #[cfg(unix)]
     use std::process::Command;
 
@@ -391,10 +553,13 @@ mod tests {
             bitbucket.web_url.as_deref(),
             Some("https://bitbucket.org/lab-team/minwage")
         );
-        // Other hosts are named but never turned into links.
+        // Overleaf projects have a known browser URL, independent of Git auth.
         let overleaf = parse_remote("origin", "https://git.overleaf.com/64f0c0ffee").unwrap();
         assert_eq!(overleaf.host, "git.overleaf.com");
-        assert_eq!(overleaf.web_url, None);
+        assert_eq!(
+            overleaf.web_url.as_deref(),
+            Some("https://www.overleaf.com/project/64f0c0ffee")
+        );
         assert!(parse_remote("origin", "/srv/git/local.git").is_none());
         assert!(parse_remote("origin", "https://github.com/a/b?x=<script>").is_none());
     }

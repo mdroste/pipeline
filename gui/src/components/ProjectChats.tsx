@@ -10,7 +10,7 @@ import { MoveConversationDialog } from "./WorkspaceConversationActions";
 
 export type ChatFilter = "all" | "unfiled" | "archived";
 const FILTERS: Array<[ChatFilter, string]> = [
-  ["all", "All chats"],
+  ["all", "All conversations"],
   ["unfiled", "No project"],
   ["archived", "Archived"],
 ];
@@ -87,16 +87,16 @@ export default function ProjectChats({
     }
   };
   return (
-    <section className="project-index-chats" aria-label="Chats">
+    <section className="project-index-chats" aria-label="Conversations">
       <div className="project-index-section-heading">
-        <h2>Chats</h2>
+        <h2>Conversations</h2>
         <p className="project-home-meta">
           Pick up any conversation, with or without a project.
         </p>
       </div>
       <div
         role="group"
-        aria-label="Show chats"
+        aria-label="Show conversations"
         className="project-chat-filters ui-segmented"
       >
         {FILTERS.map(([value, label]) => (
@@ -118,18 +118,18 @@ export default function ProjectChats({
       )}
       {loading && !visible.length && (
         <p role="status" className="project-home-empty">
-          Loading chats…
+          Loading conversations…
         </p>
       )}
       {!loading && !error && !visible.length && (
         <p role="status" className="project-home-empty">
           {term
-            ? `No chats match “${search}”.`
+            ? `No conversations match “${search}”.`
             : filter === "archived"
-              ? "No archived chats."
+              ? "No archived conversations."
               : filter === "unfiled"
-                ? "No chats without a project. Start a new chat here anytime."
-                : "No chats yet. Start a new chat, or open a project to chat there."}
+                ? "No conversations without a project. Start a new conversation here anytime."
+                : "No conversations yet. Start a new conversation, or open a project to continue there."}
         </p>
       )}
       {visible.map(({ session, projectName }) => (
@@ -182,7 +182,7 @@ export default function ProjectChats({
           disabled={loading}
           onClick={loadMore}
         >
-          Load more chats
+          Load more conversations
         </button>
       )}
       {moveTarget && (

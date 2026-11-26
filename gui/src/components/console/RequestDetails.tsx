@@ -1,3 +1,4 @@
+import { Icon } from "../../ui/icons";
 import { useState } from "react";
 import type {
   LlmRequestDetails,
@@ -15,7 +16,7 @@ import TokenUsage from "./TokenUsage";
 function TruncatedPreviewBadge({ truncated }: { truncated?: boolean }) {
   if (!truncated) return null;
   return (
-    <span className="rounded bg-amber-100 px-1.5 py-px text-[0.625rem] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+    <span className="rounded bg-warning-soft px-1.5 py-px text-[0.625rem] font-medium uppercase tracking-wide text-warning">
       Preview truncated
     </span>
   );
@@ -61,18 +62,10 @@ function PanelToggle({
           : "text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
       }`}
     >
-      <svg
-        aria-hidden
-        viewBox="0 0 12 12"
+      <Icon
+        name="chevron-right"
         className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-90" : ""}`}
-      >
-        <path
-          d="M4 2.5 7.5 6 4 9.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        />
-      </svg>
+      />
       {children}
     </button>
   );

@@ -51,18 +51,30 @@ export function applyFileHunks(
   hunks: FileHunk[],
   selected: number[],
 ): string {
-  let result = before;
+  // Validate every hunk, including unselected ones, against the original.
   let boundary = before.length;
-  for (const hunk of [...hunks].reverse()) {
+  for (let index = hunks.length - 1; index >= 0; index--) {
+    const hunk = hunks[index];
     if (
+      !Number.isInteger(hunk.from) ||
+      !Number.isInteger(hunk.to) ||
+      hunk.from < 0 ||
       hunk.to > boundary ||
       hunk.from > hunk.to ||
       before.slice(hunk.from, hunk.to) !== hunk.before
     )
       throw new Error("The source changed; refresh the comparison.");
     boundary = hunk.from;
-    if (selected.includes(hunk.id))
-      result = result.slice(0, hunk.from) + hunk.after + result.slice(hunk.to);
   }
-  return result;
+  const chosen = new Set(selected);
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (const hunk of hunks) {
+    if (!chosen.has(hunk.id)) continue;
+    pieces.push(before.slice(cursor, hunk.from), hunk.after);
+    cursor = hunk.to;
+  }
+  if (!pieces.length) return before;
+  pieces.push(before.slice(cursor));
+  return pieces.join("");
 }

@@ -194,7 +194,7 @@ fn context_is_exact_scoped_and_changes_harness_fingerprint() {
     assert!(save_context(&f.store, &f.session, 0, vec![]).is_err());
     let other = f
         .store
-        .create_workspace(CreateWorkspaceRequest {
+        .create_legacy_workspace(CreateWorkspaceRequest {
             name: "Other".into(),
             root: None,
             operation_id: "other".into(),
@@ -786,4 +786,63 @@ fn blob_writer_keeps_good_files_repairs_bad_ones_and_refuses_wrong_bytes() {
     assert_eq!(fs::read(&path).unwrap(), bytes);
     let names: Vec<_> = fs::read_dir(temp.path()).unwrap().flatten().collect();
     assert_eq!(names.len(), 1, "no temporary file is left behind");
+}
+
+#[test]
+fn a_search_reaches_papers_before_other_project_records() {
+    let f = fixture();
+    let path = f.root.join("paper.md");
+    fs::write(&path, "# Supply\nThe elasticity of quinoa supply\n").unwrap();
+    research::import_paper(
+        &f.store,
+        research::ImportPaperRequest {
+            workspace_id: f.ws.clone(),
+            paper_id: None,
+            title: "Supply".into(),
+            role: "other".into(),
+            document_type: None,
+            path: path.to_string_lossy().into_owned(),
+            operation_id: "paper".into(),
+        },
+    )
+    .unwrap();
+    // Desk records sort before papers by key and fill many first batches.
+    for n in 0..40 {
+        insert(
+            &f.store,
+            &f.ws,
+            "collection",
+            &format!("Reading list {n}"),
+            serde_json::json!({ "objects": [] }),
+            None,
+            &format!("list-{n}"),
+        )
+        .unwrap();
+    }
+    search::advance(&f.store, &f.ws).unwrap();
+    assert!(find(&f, "quinoa")
+        .hits
+        .iter()
+        .any(|hit| hit.object.kind == "paper"));
+
+    // A cursor saved by an earlier build restarts the index instead of
+    // comparing a bare key with the ranked order.
+    f.store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE research_index_state SET cursor='message:legacy',byte_offset=0,complete=0 WHERE workspace_id=?1",
+            [&f.ws],
+        )
+        .unwrap();
+    let before = search::status(&f.store, &f.ws).unwrap().generation;
+    let restarted = search::advance(&f.store, &f.ws).unwrap();
+    assert!(restarted.generation > before);
+    // The search tool keeps going within its budget until the index is whole.
+    let done = search::advance_within(&f.store, &f.ws, std::time::Duration::from_secs(60)).unwrap();
+    assert!(done.complete);
+    assert!(find(&f, "quinoa")
+        .hits
+        .iter()
+        .any(|hit| hit.object.kind == "paper"));
 }

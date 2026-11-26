@@ -154,7 +154,20 @@ pub(crate) fn list_notes_with_selection(
     selected: &[String],
 ) -> WorkbenchResult<Vec<ResearchNote>> {
     validate_id("workspace id", workspace_id)?;
-    let connection = open_connection(store)?;
+    list_notes_with_selection_on(
+        &open_connection(store)?,
+        workspace_id,
+        include_rejected,
+        selected,
+    )
+}
+
+pub(crate) fn list_notes_with_selection_on(
+    connection: &Connection,
+    workspace_id: &str,
+    include_rejected: bool,
+    selected: &[String],
+) -> WorkbenchResult<Vec<ResearchNote>> {
     let sql = if include_rejected {
         "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE workspace_id = ?1 ORDER BY (id IN (SELECT value FROM json_each(?2))) DESC, pinned DESC, updated_at DESC,id LIMIT 500"
     } else {

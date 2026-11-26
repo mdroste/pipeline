@@ -2,8 +2,8 @@
 //! workers; network waits never hold a worker or the archive gate.
 //! Receipts precede side effects. A repeated or interrupted call is never rerun.
 use super::{
-    commands::run_store,
     research::EffectiveHarness,
+    runtime::run_store,
     store::{Store, WorkbenchError, WorkbenchResult},
 };
 use rusqlite::{params, OptionalExtension};
@@ -229,7 +229,7 @@ pub(crate) async fn handle(input: Value) -> WorkbenchResult<Value> {
     // Native tool requests can race the turn/start acknowledgement. Wait for
     // the owner to attach the immutable snapshots before admitting any work.
     let ready = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        while super::commands::turn_setup_in_progress() {
+        while super::runtime::turn_setup_in_progress() {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
     });

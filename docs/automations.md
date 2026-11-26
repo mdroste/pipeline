@@ -46,7 +46,7 @@ Enter an idea under **Idea or instructions**, and the assistant drafts a paper
 in Markdown. To start from a file instead, open **Start from an existing
 paper**.
 
-Pipeline reviews the paper with the **Review workflow** you choose, asks the
+Pipeline reviews the paper with the **Review design** you choose, asks the
 assistant to revise it, and reviews it again. It stops when a complete review
 has no high-priority or unclassified findings, or after **Maximum reviews**.
 A review is complete when every step finished, the whole document was read, and
@@ -215,7 +215,8 @@ edits** on. Edits stay in the working copy until you accept them in
 
 Research discovery turns a topic into proposals, investigations, and reviewed
 paper drafts. It uses the same provider as the project conversation you
-choose, or ChatGPT for a new project. Choose **+ New automation**, then
+choose, or ChatGPT for a new project. A new project needs a folder; select it
+with **Choose project folder…** in the setup. Choose **+ New automation**, then
 **Discover research projects**. Under **Mode**, choose:
 
 Under **Who chooses the projects?**, choose one of two options:

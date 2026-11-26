@@ -86,6 +86,7 @@ export default function WorkspaceExchangePanel({
     "newWorkspace" | "existingWorkspace"
   >("newWorkspace");
   const [targetName, setTargetName] = useState("");
+  const [targetRoot, setTargetRoot] = useState<string | null>(null);
   // The preview keeps the package and target it was computed for; Import uses
   // exactly those and stays disabled once the selection differs.
   const [importPreview, setImportPreview] = useState<
@@ -156,7 +157,7 @@ export default function WorkspaceExchangePanel({
           name:
             targetName.trim() ||
             `${inspection?.workspaceName ?? "Imported"} (imported)`,
-          root: null,
+          root: targetRoot,
         }
       : { kind: "existingWorkspace", workspaceId };
   const previewMatchesTarget =
@@ -349,8 +350,8 @@ export default function WorkspaceExchangePanel({
             </p>
             {inspection.workspaceRoot && (
               <p className="text-gray-600 dark:text-gray-400">
-                Archived project folder: {inspection.workspaceRoot} (not
-                required; register a folder later if you want file work).
+                Original project folder: {inspection.workspaceRoot}. Choose its
+                location on this computer when creating a new project.
               </p>
             )}
             {inspection.limitations.map((l) => (
@@ -376,22 +377,49 @@ export default function WorkspaceExchangePanel({
                 </option>
               </select>
               {targetKind === "newWorkspace" && (
-                <input
-                  aria-label="New project name"
-                  className={input}
-                  value={targetName}
-                  onChange={(e) => {
-                    setTargetName(e.target.value);
-                    setImportPreview(null);
-                  }}
-                />
+                <>
+                  <input
+                    aria-label="New project name"
+                    className={input}
+                    value={targetName}
+                    onChange={(e) => {
+                      setTargetName(e.target.value);
+                      setImportPreview(null);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={busy}
+                    onClick={() =>
+                      onAction(async () => {
+                        const selected = await open({
+                          directory: true,
+                          multiple: false,
+                        });
+                        if (typeof selected === "string") {
+                          setTargetRoot(selected);
+                          setImportPreview(null);
+                        }
+                      })
+                    }
+                  >
+                    Choose project folder…
+                  </button>
+                  <span>
+                    {targetRoot ?? "A folder is required for the new project."}
+                  </span>
+                </>
               )}
               <button
                 type="button"
                 className={button}
-                disabled={busy}
+                disabled={
+                  busy || (targetKind === "newWorkspace" && !targetRoot)
+                }
                 onClick={() =>
                   onAction(async () => {
+                    if (targetKind === "newWorkspace" && !targetRoot) return;
                     const previewTarget = target();
                     const result =
                       await releaseClient.previewProjectExchangeImport(

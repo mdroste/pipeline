@@ -5,6 +5,8 @@
 /// step.model.as_str() directly.
 #[derive(Default, Clone, Debug)]
 pub struct LlmOverrides<'a> {
+    /// Native Claude billing choice, frozen by connection dispatch.
+    pub(crate) claude_auth: crate::agent_runtime::claude::AuthMode,
     pub model: Option<&'a str>,
     /// Human-readable resolved model provenance for the console. This can be
     /// populated even when CLI Automatic deliberately omits the model flag.

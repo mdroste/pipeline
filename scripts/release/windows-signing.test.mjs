@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import yaml from "../../gui/node_modules/js-yaml/index.js";
-import { LLAMA_VULKAN_RESOURCES, windowsSigningConfig } from "./prepare-windows-signing.mjs";
+import { windowsSigningConfig } from "./prepare-windows-signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -20,19 +20,22 @@ test("Windows signing preserves checkout paths with spaces as single arguments",
   assert.equal(config.bundle.createUpdaterArtifacts, true);
 });
 
-test("Windows packages keep the shared resources and add the signed Vulkan bundle", () => {
+test("Windows packages exclude the separately signed Vulkan engine download", () => {
   const { bundle } = JSON.parse(fs.readFileSync(path.join(root, "gui/src-tauri/tauri.conf.json"), "utf8"));
-  assert.ok(!bundle.resources.includes(LLAMA_VULKAN_RESOURCES));
-  assert.deepEqual(windowsSigningConfig(root, bundle.resources).bundle.resources, [
-    ...bundle.resources,
-    LLAMA_VULKAN_RESOURCES,
-  ]);
+  assert.ok(!bundle.resources.some(resource => resource.includes("llama-vulkan")));
+  assert.deepEqual(windowsSigningConfig(root, bundle.resources).bundle.resources, bundle.resources);
 
   const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
   assert.match(workflow, /bundle-llama-vulkan\.sh/);
   assert.match(workflow, /Get-ChildItem gui\/src-tauri\/resources\/poppler, gui\/src-tauri\/resources\/llama-vulkan/);
   const verify = fs.readFileSync(path.join(root, "scripts/release/verify-windows-package.ps1"), "utf8");
   assert.match(verify, /resources\/llama-vulkan|'llama-vulkan'/);
+  assert.match(verify, /must not be embedded/);
+  assert.match(workflow, /package-gpu-runtime\.ps1/);
+  const packageScript = fs.readFileSync(path.join(root, "scripts/release/package-gpu-runtime.ps1"), "utf8");
+  assert.match(packageScript, /-VerifyOnly/);
+  assert.match(packageScript, /signer sign --app-version/);
+  assert.match(packageScript, /gpu-runtime\.mjs'\) verify/);
 });
 
 test("the bundled Vulkan build matches the parser's pinned llama.cpp", () => {
@@ -42,6 +45,7 @@ test("the bundled Vulkan build matches the parser's pinned llama.cpp", () => {
   assert.ok(lock.archive.url.includes(`/${lock.version}/llama-${lock.version}-bin-win-vulkan-x64.zip`));
   assert.match(lock.archive.sha256, /^[0-9a-f]{64}$/);
   assert.match(lock.licenseText.sha256, /^[0-9a-f]{64}$/);
+  assert.match(lock.developmentIntegritySha256, /^[0-9a-f]{64}$/);
 });
 
 test("release verifies installed Windows signatures before upload and cannot use unsigned fallback", () => {
@@ -59,11 +63,14 @@ test("release verifies installed Windows signatures before upload and cannot use
   const compile = index("Compile Windows application before signing login");
   const prepare = index("Prepare Windows signing and sign bundled Poppler");
   const build = index("Build signed Windows package");
+  const runtime = index("Package signed optional GPU runtime");
   const verify = index("Verify Windows installer and installed signatures");
   assert.ok(compile < auth && auth < prepare && prepare < build && build < verify && verify < index("Upload immutable installer to draft"));
+  assert.ok(prepare < runtime && runtime < build);
+  assert.ok(verify < index("Upload immutable GPU runtime to draft"));
   assert.match(steps[compile].run, /build --no-bundle/);
   assert.match(steps[build].run, /tauri -- bundle --config/);
-  for (const i of [compile, auth, prepare, build, verify]) {
+  for (const i of [compile, auth, prepare, runtime, build, verify]) {
     assert.equal(steps[i].if, "matrix.id == 'windows'");
     assert.ok(!steps[i]["continue-on-error"]);
   }

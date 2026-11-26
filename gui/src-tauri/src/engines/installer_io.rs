@@ -4,6 +4,10 @@ pub(super) static ENGINE_OPERATION_RUNNING: AtomicBool = AtomicBool::new(false);
 pub(super) static INSTALL_RUNNING: AtomicBool = AtomicBool::new(false);
 pub(super) static INSTALL_CANCEL: AtomicBool = AtomicBool::new(false);
 pub(super) static INSTALL_CHILD_PID: Mutex<Option<u32>> = Mutex::new(None);
+/// Set while the optional graphics-card step (automatic setup, or the step after
+/// a parser install) holds the installer gate. Extraction asks it to yield
+/// instead of failing a review over an optional download.
+pub(super) static GPU_STEP_RUNNING: AtomicBool = AtomicBool::new(false);
 pub(super) static INSTALL_PROGRESS: OnceLock<Mutex<InstallProgressState>> = OnceLock::new();
 
 pub(super) const INSTALL_PROGRESS_LOG_LINES: usize = 200;
@@ -159,6 +163,78 @@ pub(super) fn acquire_install_guard() -> Result<InstallGuard, String> {
     acquire_engine_guard(true)
 }
 
+pub(super) fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
+
+fn engine_demand_path() -> Result<PathBuf, String> {
+    Ok(pipeline_home()?.join("engine.demand"))
+}
+
+fn gpu_step_marker_path() -> Result<PathBuf, String> {
+    Ok(pipeline_home()?.join("engine.yieldable"))
+}
+
+/// Record that a document needs the managed engine now. Every Pipeline process
+/// writes this one file, so a graphics-card step in the app also yields to a
+/// command-line review.
+pub(crate) fn record_engine_demand() {
+    if let Ok(path) = engine_demand_path() {
+        let _ = std::fs::write(path, unix_millis().to_string());
+    }
+}
+
+/// When a document last needed the managed engine, in Unix milliseconds.
+pub(super) fn last_engine_demand() -> u64 {
+    engine_demand_path()
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// True when the engine gate is held by the optional graphics-card step, which
+/// yields to a waiting extraction: in this process directly, in another one
+/// once it sees the demand file.
+pub(crate) fn gpu_step_holds_gate(error: &str) -> bool {
+    (error.contains("already running") && GPU_STEP_RUNNING.load(Ordering::SeqCst))
+        || (error.contains("Another Pipeline process")
+            && gpu_step_marker_path().is_ok_and(|path| path.is_file()))
+}
+
+/// Held by the optional graphics-card step while it owns the installer gate.
+pub(super) struct GpuStep {
+    started: u64,
+}
+
+impl GpuStep {
+    pub(super) fn begin() -> Self {
+        GPU_STEP_RUNNING.store(true, Ordering::SeqCst);
+        if let Ok(path) = gpu_step_marker_path() {
+            let _ = std::fs::write(path, std::process::id().to_string());
+        }
+        Self {
+            started: unix_millis(),
+        }
+    }
+
+    /// A document asked for the engine after this step started.
+    pub(super) fn yield_requested(&self) -> bool {
+        last_engine_demand() > self.started
+    }
+}
+
+impl Drop for GpuStep {
+    fn drop(&mut self) {
+        GPU_STEP_RUNNING.store(false, Ordering::SeqCst);
+        if let Ok(path) = gpu_step_marker_path() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 impl Drop for InstallGuard {
     fn drop(&mut self) {
         if self.installing {
@@ -182,8 +258,8 @@ pub(super) fn kill_install_child() {
         .unwrap_or_else(|error| error.into_inner())
         .take();
     if let Some(pid) = pid {
-        crate::commands::kill_process(pid);
-        crate::commands::unregister_engine_child_pid(pid);
+        crate::process_tree::kill_process(pid);
+        crate::process_tree::unregister_engine_child_pid(pid);
     }
 }
 

@@ -308,11 +308,11 @@ pub(super) fn run_bounded_output_observed(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // On Windows own the Job Object before a converter can start children.
-    let mut child = crate::commands::lifecycle::spawn_independent(&mut command)
+    let mut child = crate::process_tree::spawn_independent(&mut command)
         .map_err(|e| format!("Failed to start {label}: {e}"))?;
     let pid = child.id();
     if pid > 0 {
-        crate::commands::register_child_pid(pid);
+        crate::process_tree::register_child_pid(pid);
     }
 
     let stdout = child.stdout.take();
@@ -352,9 +352,9 @@ pub(super) fn run_bounded_output_observed(
         deliver_lines(&line_rx, &mut on_stdout_line);
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
-            Ok(None) if crate::commands::is_cancelled() => {
+            Ok(None) if crate::cancellation::is_cancelled() => {
                 if pid > 0 {
-                    crate::commands::kill_process(pid);
+                    crate::process_tree::kill_process(pid);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
@@ -362,7 +362,7 @@ pub(super) fn run_bounded_output_observed(
             }
             Ok(None) if started.elapsed() >= timeout => {
                 if pid > 0 {
-                    crate::commands::kill_process(pid);
+                    crate::process_tree::kill_process(pid);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
@@ -371,7 +371,7 @@ pub(super) fn run_bounded_output_observed(
             Ok(None) => {
                 if let Err(error) = crate::pipeline::review_budget::check() {
                     if pid > 0 {
-                        crate::commands::kill_process(pid);
+                        crate::process_tree::kill_process(pid);
                     }
                     let _ = child.kill();
                     let _ = child.wait();
@@ -387,7 +387,7 @@ pub(super) fn run_bounded_output_observed(
                             Ok(bytes) if bytes <= 250_000_000 => {}
                             Ok(bytes) => {
                                 if pid > 0 {
-                                    crate::commands::kill_process(pid);
+                                    crate::process_tree::kill_process(pid);
                                 }
                                 let _ = child.kill();
                                 let _ = child.wait();
@@ -397,7 +397,7 @@ pub(super) fn run_bounded_output_observed(
                             }
                             Err(error) => {
                                 if pid > 0 {
-                                    crate::commands::kill_process(pid);
+                                    crate::process_tree::kill_process(pid);
                                 }
                                 let _ = child.kill();
                                 let _ = child.wait();
@@ -410,7 +410,7 @@ pub(super) fn run_bounded_output_observed(
             }
             Err(e) => {
                 if pid > 0 {
-                    crate::commands::kill_process(pid);
+                    crate::process_tree::kill_process(pid);
                 }
                 let _ = child.kill();
                 let _ = child.wait();
@@ -429,7 +429,7 @@ pub(super) fn run_bounded_output_observed(
         .ok();
     if stdout_result.is_none() || stderr_result.is_none() {
         if pid > 0 {
-            crate::commands::kill_process(pid);
+            crate::process_tree::kill_process(pid);
         }
         let _ = child.kill();
         let _ = child.wait();
@@ -445,7 +445,7 @@ pub(super) fn run_bounded_output_observed(
         }
     }
     if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
+        crate::process_tree::unregister_child_pid(pid);
     }
     if stdout_result.is_some() {
         let _ = stdout_thread.join();
@@ -522,7 +522,7 @@ pub(crate) fn compute_hash(path: &Path) -> Result<String, String> {
         if count == 0 {
             break;
         }
-        if crate::commands::is_cancelled() {
+        if crate::cancellation::is_cancelled() {
             return Err("Pipeline cancelled".to_string());
         }
         hasher.update(&chunk[..count]);

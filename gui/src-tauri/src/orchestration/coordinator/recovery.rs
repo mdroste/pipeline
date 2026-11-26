@@ -32,7 +32,7 @@ impl Coordinator {
             return;
         }
         let key = session.clone();
-        let own = crate::workbench::commands::run_store(move |s| {
+        let own = crate::workbench::runtime::run_store(move |s| {
             crate::workbench::tasks::own_newest_turn(&s, &key, &operations)
         })
         .await;
@@ -59,7 +59,7 @@ impl Coordinator {
         }
         let newest = || {
             let (session, operations) = (session.clone(), operations.clone());
-            crate::workbench::commands::run_store(move |s| {
+            crate::workbench::runtime::run_store(move |s| {
                 crate::workbench::tasks::own_newest_turn(&s, &session, &operations)
             })
         };

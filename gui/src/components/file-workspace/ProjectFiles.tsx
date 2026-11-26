@@ -11,6 +11,9 @@ export default function ProjectFiles({
   onAsk,
   onAskFile,
   onSaved,
+  onNavigate,
+  onRunFile,
+  onFileRuns,
 }: {
   workspaceId: string;
   paths: string[];
@@ -18,6 +21,9 @@ export default function ProjectFiles({
   onAsk?: (passage: FilePassage) => void;
   onAskFile?: (path: string) => void;
   onSaved?: () => void;
+  onNavigate?: (location: FileLocation) => void;
+  onRunFile?: (path: string) => void;
+  onFileRuns?: (path: string, hash?: string) => void;
 }) {
   const [importPath, setImportPath] = useState<string | null>(null);
   const adapter = useMemo(
@@ -45,7 +51,10 @@ export default function ProjectFiles({
         initial={initial}
         onAsk={onAsk}
         onAskFile={onAskFile}
+        onRunFile={onRunFile}
+        onFileRuns={onFileRuns}
         onSaved={onSaved}
+        onNavigate={onNavigate}
         onAddToDocuments={async (path) => {
           const file = await adapter.read(path);
           if (file.streamToken) adapter.release?.(file.streamToken);

@@ -48,14 +48,16 @@ describe("confirmUpdateRestart", () => {
 
   it("restarts without asking when nothing is running", async () => {
     invoke.mockResolvedValue(0);
-    await expect(confirmUpdateRestart(work)).resolves.toBe(true);
+    await expect(confirmUpdateRestart(work, confirmDialog)).resolves.toBe(true);
     expect(confirmDialog).not.toHaveBeenCalled();
   });
 
   it("asks when an automation is running", async () => {
     invoke.mockResolvedValue(2);
     confirmDialog.mockResolvedValue(false);
-    await expect(confirmUpdateRestart(work)).resolves.toBe(false);
+    await expect(confirmUpdateRestart(work, confirmDialog)).resolves.toBe(
+      false,
+    );
     expect(confirmDialog).toHaveBeenCalledWith(
       "Restarting will stop running automations.",
       expect.objectContaining({ confirmLabel: "Restart now" }),
@@ -65,7 +67,7 @@ describe("confirmUpdateRestart", () => {
   it("still warns about known work if automations cannot be read", async () => {
     invoke.mockRejectedValue(new Error("unavailable"));
     confirmDialog.mockResolvedValue(true);
-    await confirmUpdateRestart({ ...work, reviews: true });
+    await confirmUpdateRestart({ ...work, reviews: true }, confirmDialog);
     expect(confirmDialog).toHaveBeenCalledWith(
       "Restarting will stop running reviews.",
       expect.anything(),
