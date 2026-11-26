@@ -3,7 +3,7 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
-## 1.5.4 — 2026-11-26
+## 1.5.5 — 2026-11-26
 
 - Stop sandboxed commands from reading folders outside the project through a
   `.git` or `.gitconfig` link. Commands that run inside Pipeline's data folder

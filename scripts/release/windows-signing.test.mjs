@@ -31,6 +31,9 @@ test("Windows packages exclude the separately signed Vulkan engine download", ()
   const verify = fs.readFileSync(path.join(root, "scripts/release/verify-windows-package.ps1"), "utf8");
   assert.match(verify, /resources\/llama-vulkan|'llama-vulkan'/);
   assert.match(verify, /must not be embedded/);
+  // The installed copy is checked through the inventory command, never an
+  // inline import, whose arguments would also run the module as a command.
+  assert.match(verify, /poppler-inventory\.mjs'\) --verify \$poppler/);
   assert.match(workflow, /package-gpu-runtime\.ps1/);
   const packageScript = fs.readFileSync(path.join(root, "scripts/release/package-gpu-runtime.ps1"), "utf8");
   assert.match(packageScript, /-VerifyOnly/);

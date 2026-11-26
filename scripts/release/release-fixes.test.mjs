@@ -73,6 +73,21 @@ test("cached Poppler inventory detects changed, missing and added files", () => 
     fs.writeFileSync(path.join(root,"pdftotext"),"test"); fs.writeFileSync(path.join(root,"extra"),"extra"); assert.throws(()=>verifyInventory(root),/changed/);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });
+test("the inventory command verifies the installed folder it is given", () => {
+  const script = fileURLToPath(new URL("./poppler-inventory.mjs", import.meta.url));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-installed-inventory-"));
+  try {
+    fs.mkdirSync(path.join(root, "Library", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(root, "Library", "bin", "pdftotext.exe"), "installed");
+    fs.writeFileSync(path.join(root, "BUNDLE_INVENTORY.json"), JSON.stringify({ schemaVersion: 1, files: inventoryFiles(root) }));
+    const passed = spawnSync(process.execPath, [script, "--verify", root], { encoding: "utf8" });
+    assert.equal(passed.status, 0, passed.stderr);
+    fs.writeFileSync(path.join(root, "Library", "bin", "pdftotext.exe"), "changed");
+    const changed = spawnSync(process.execPath, [script, "--verify", root], { encoding: "utf8" });
+    assert.notEqual(changed.status, 0);
+    assert.match(changed.stderr, /changed/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 test("an official build won't ship without its library list", () => {
   const repository = fileURLToPath(new URL("../../", import.meta.url));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-official-notices-"));

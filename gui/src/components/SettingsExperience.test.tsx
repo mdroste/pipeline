@@ -143,7 +143,10 @@ it("leaves partial keys private during search and asks before discarding a crede
 it("does not persist an empty retention field and only commits valid input", async () => {
   const user = userEvent.setup();
   view({ initialSection: "storage" });
-  const input = await screen.findByLabelText("Review history size limit in GB");
+  // The section re-renders as its storage details load; edit once they have.
+  await screen.findByText(/2 reports/);
+  const input = screen.getByLabelText("Review history size limit in GB");
+  await waitFor(() => expect(input).toHaveValue(5));
   await user.clear(input);
   await user.tab();
   await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));

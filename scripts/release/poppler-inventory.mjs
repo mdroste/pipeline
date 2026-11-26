@@ -47,6 +47,7 @@ function writeObservedInventory(root, platform, version) {
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../gui/src-tauri/resources/poppler");
-  if (process.argv[2] === "--verify") verifyInventory(root);
+  // `--verify [folder]` checks an installed copy too; with no folder, the bundle.
+  if (process.argv[2] === "--verify") verifyInventory(process.argv[3] ? path.resolve(process.argv[3]) : root);
   else writeInventory(root, process.argv[2]);
 }

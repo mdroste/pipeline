@@ -128,17 +128,21 @@ it("clears the banner when a retried action succeeds", async () => {
   const importButton = await screen.findByRole("button", {
     name: "Add document",
   });
+  // Start once the surface has loaded, so only this action's outcome is shown.
+  await waitFor(() => expect(mocks.home).toHaveBeenCalled());
   mocks.importPaper.mockRejectedValueOnce({ message: "The file is locked" });
   fireEvent.click(importButton);
   const dialog = await screen.findByRole("dialog");
   const add = within(dialog).getByRole("button", { name: "Add document" });
   fireEvent.click(add);
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "The file is locked",
-  );
+  // Clients this file leaves unmocked may report their own errors; follow
+  // this action's message rather than whichever alert renders first.
+  expect(await screen.findByText(/The file is locked/)).toBeVisible();
   fireEvent.click(add);
   await waitFor(() => expect(mocks.importPaper).toHaveBeenCalledTimes(2));
-  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByText(/The file is locked/)).toBeNull(),
+  );
 });
 
 it("opens a Search hit at its saved place with nothing selected", async () => {
