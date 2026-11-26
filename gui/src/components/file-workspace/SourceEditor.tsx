@@ -64,6 +64,17 @@ export const stataMode: StreamParser<{ block: boolean }> = {
     return null;
   },
 };
+/**
+ * The nonce the app's content security policy accepts for `<style>` elements.
+ * CodeMirror adds its layout styles at runtime, so without this the packaged
+ * app blocks them and shows only the line numbers. Tauri gives each inline
+ * style in index.html a new nonce on every load. Browsers hide the attribute
+ * once the page is parsed, so read the property first.
+ */
+export function styleNonce() {
+  const style = document.querySelector<HTMLStyleElement>("style[nonce]");
+  return style?.nonce || style?.getAttribute("nonce") || "";
+}
 /** Marks text the owner handed in, which `onChange` must not report back. */
 const fromOwner = Annotation.define<boolean>();
 const surrogate = (code: number, low: boolean) =>
@@ -183,6 +194,7 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         state: EditorState.create({
           doc: value,
           extensions: [
+            EditorView.cspNonce.of(styleNonce()),
             basicSetup,
             editorHighlight,
             configuration.lineSeparator.of(

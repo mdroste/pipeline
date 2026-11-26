@@ -9,6 +9,7 @@ import { beforeAll, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
 import { createRef } from "react";
 import SourceEditor, { type SourceEditorHandle } from "./SourceEditor";
+import tauriConfig from "../../../src-tauri/tauri.conf.json";
 import {
   fileLanguage,
   highlightedSource,
@@ -284,3 +285,24 @@ it.each(["\n", "\r\n"])(
     expect(view.state.sliceDoc()).toBe(reloaded);
   },
 );
+it("gives CodeMirror the page's style nonce so the packaged app's CSP admits its layout", () => {
+  // Tauri adds its per-load nonce to style-src only. A style-src-elem directive
+  // would block CodeMirror's runtime styles and leave the text below the gutter.
+  expect(tauriConfig.app.security.csp).not.toMatch(/style-src-elem/);
+  const page = document.createElement("style");
+  page.setAttribute("nonce", "page-nonce");
+  document.head.append(page);
+  try {
+    render(<SourceEditor path="paper/main.tex" value={"\section{A}"} />);
+    const view = EditorView.findFromDOM(
+      screen.getByRole("textbox", { name: "Source editor" }),
+    )!;
+    expect(view.state.facet(EditorView.cspNonce)).toBe("page-nonce");
+    const layout = [...document.head.querySelectorAll("style")].find(
+      (style) => style !== page && style.textContent?.includes(".cm-scroller"),
+    );
+    expect(layout?.getAttribute("nonce")).toBe("page-nonce");
+  } finally {
+    page.remove();
+  }
+});

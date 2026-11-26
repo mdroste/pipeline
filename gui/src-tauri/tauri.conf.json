@@ -29,7 +29,7 @@
     ],
     "security": {
       "capabilities": ["default"],
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self' blob:; img-src 'self' data: pipeline-file: http://pipeline-file.localhost; media-src 'self' pipeline-file: http://pipeline-file.localhost; frame-src pipeline-file: http://pipeline-file.localhost; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self' ipc: http://ipc.localhost pipeline-file: http://pipeline-file.localhost"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; font-src 'self' blob:; img-src 'self' data: pipeline-file: http://pipeline-file.localhost; media-src 'self' pipeline-file: http://pipeline-file.localhost; frame-src pipeline-file: http://pipeline-file.localhost; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self' ipc: http://ipc.localhost pipeline-file: http://pipeline-file.localhost"
     }
   },
   "plugins": {
