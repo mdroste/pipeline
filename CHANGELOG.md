@@ -3,6 +3,15 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.5.6 — 2026-11-26
+
+- Show file text in the Files editor again. The installed app's security
+  policy blocked the editor's styles, so source files showed only their line
+  numbers.
+- Leave agent worktrees, such as `.claude/worktrees`, and other nested Git
+  worktrees out of a project's file list. Files skipped because the list ran
+  out of hashing space now say so, instead of being reported as large files.
+
 ## 1.5.5 — 2026-11-26
 
 - Stop sandboxed commands from reading folders outside the project through a
