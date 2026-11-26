@@ -46,24 +46,54 @@ pub fn save_policy(
     )
 }
 
+fn concerns(policy: &CheckPolicy, paths: &[String]) -> bool {
+    policy.enabled
+        && paths
+            .iter()
+            .any(|path| path == &policy.source_path || policy.bibliographies.contains(path))
+}
+
+/// The project lock for a check, waiting briefly while another operation (a
+/// scan, a Git action, another save) finishes instead of failing the check.
+fn check_lock(store: &Store, ws: &str) -> WorkbenchResult<fs::File> {
+    let mut attempts = 0;
+    loop {
+        match lock(store, ws) {
+            Err(error) if error.code == "storage_conflict" && attempts < 20 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            result => return result,
+        }
+    }
+}
+
 pub fn run(
     store: &Store,
     ws: &str,
     changed: Option<&[String]>,
 ) -> WorkbenchResult<Option<ProjectRecord>> {
-    let _guard = lock(store, ws)?;
+    // Most saves concern no enabled check. They need neither the project lock
+    // nor a check, so a save never fails over one.
+    if let Some(paths) = changed {
+        let concerned = records(store, ws, "check_policy")?
+            .into_iter()
+            .next()
+            .map(|record| decode::<CheckPolicy>(&record))
+            .transpose()?
+            .is_some_and(|policy| concerns(&policy, paths));
+        if !concerned {
+            return Ok(None);
+        }
+    }
+    let _guard = check_lock(store, ws)?;
     let Some(policy_record) = records(store, ws, "check_policy")?.into_iter().next() else {
         return Ok(None);
     };
     let policy: CheckPolicy = decode(&policy_record)?;
-    if let Some(paths) = changed {
-        if !policy.enabled
-            || !paths
-                .iter()
-                .any(|path| path == &policy.source_path || policy.bibliographies.contains(path))
-        {
-            return Ok(None);
-        }
+    // The policy may have changed while waiting for the lock.
+    if changed.is_some_and(|paths| !concerns(&policy, paths)) {
+        return Ok(None);
     }
     let result = citations::inspect(
         store,

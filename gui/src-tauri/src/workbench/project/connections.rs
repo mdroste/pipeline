@@ -198,6 +198,6 @@ pub fn check_transport_action(
     Ok(())
 }
 
-pub(super) fn private_copy_parent(store: &Store, ws: &str) -> PathBuf {
+pub(crate) fn private_copy_parent(store: &Store, ws: &str) -> PathBuf {
     store.root_path().join("project-copies").join(ws)
 }

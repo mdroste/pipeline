@@ -125,12 +125,30 @@ fn validate_profile_request(
         .map_err(|error| WorkbenchError::storage("Failed to resolve execution workspace", error))?;
     let cwd = fs::canonicalize(&request.cwd)
         .map_err(|error| WorkbenchError::storage("Failed to resolve execution directory", error))?;
-    if !cwd.is_dir() || !cwd.starts_with(&root) {
+    if !cwd.is_dir() || !workspace_owns_cwd(store, &request.workspace_id, &root, &cwd) {
         return Err(WorkbenchError::invalid(
             "Execution cwd must be inside the registered Workspace folder",
         ));
     }
     Ok((cwd, environment, environment_json, name))
+}
+
+/// A command may run in the project's folder or in one of its private task
+/// copies, which live in the research store rather than under the folder (a
+/// manuscript built in an edit conversation's copy, for example). Both paths
+/// are canonical.
+pub(super) fn workspace_owns_cwd(
+    store: &Store,
+    workspace_id: &str,
+    root: &Path,
+    cwd: &Path,
+) -> bool {
+    cwd.starts_with(root)
+        || fs::canonicalize(crate::workbench::project::connections::private_copy_parent(
+            store,
+            workspace_id,
+        ))
+        .is_ok_and(|copies| cwd.starts_with(copies))
 }
 
 fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExecutionProfile> {

@@ -6,6 +6,8 @@ use super::*;
 use std::cell::Cell;
 
 const ADDRESS: &str = "https://git.overleaf.com/64f0c0ffee";
+/// Overleaf needs Git's username `git`, so the saved address carries it.
+const SAVED: &str = "https://git@git.overleaf.com/64f0c0ffee";
 
 fn set_remote(root: &Path) {
     act(
@@ -37,7 +39,7 @@ fn change_remote_reaches_the_remote_the_branch_tracks() {
         (shown.name.as_str(), shown.host.as_str()),
         ("overleaf", "git.overleaf.com")
     );
-    assert_eq!(sh(&c.mine, &["remote", "get-url", "overleaf"]), ADDRESS);
+    assert_eq!(sh(&c.mine, &["remote", "get-url", "overleaf"]), SAVED);
     assert_eq!(sh(&c.mine, &["remote", "get-url", "origin"]), origin);
 }
 
@@ -47,12 +49,12 @@ fn change_remote_adds_origin_only_when_there_is_no_remote() {
     sh(&c.mine, &["remote", "rename", "origin", "overleaf"]);
     set_remote(&c.mine);
     assert_eq!(sh(&c.mine, &["remote"]), "overleaf");
-    assert_eq!(sh(&c.mine, &["remote", "get-url", "overleaf"]), ADDRESS);
+    assert_eq!(sh(&c.mine, &["remote", "get-url", "overleaf"]), SAVED);
 
     sh(&c.mine, &["remote", "remove", "overleaf"]);
     set_remote(&c.mine);
     assert_eq!(sh(&c.mine, &["remote"]), "origin");
-    assert_eq!(sh(&c.mine, &["remote", "get-url", "origin"]), ADDRESS);
+    assert_eq!(sh(&c.mine, &["remote", "get-url", "origin"]), SAVED);
 }
 
 /// An earlier build wrote this list, and stopped looking once it was there.

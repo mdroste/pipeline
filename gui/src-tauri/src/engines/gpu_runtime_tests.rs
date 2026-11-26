@@ -91,6 +91,9 @@ fn signed_inventory_cannot_be_replaced_with_locally_rehashed_files() {
     assert!(verified_runtime_with_key(root.path(), &key).is_err());
 }
 
+// The managed graphics runtime ships only for Windows: its archive holds
+// `llama-server.exe`, which the shared reader looks for under the host's name.
+#[cfg(windows)]
 #[test]
 fn packaged_runtime_round_trips_through_the_production_archive_reader() {
     let (source, key) = prepared();

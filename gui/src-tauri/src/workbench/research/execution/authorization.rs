@@ -86,7 +86,7 @@ pub fn preview_host_execution(
         .map_err(|e| WorkbenchError::storage("Failed to resolve execution root", e))?;
     let cwd = fs::canonicalize(&profile.cwd)
         .map_err(|e| WorkbenchError::storage("Failed to resolve execution directory", e))?;
-    if !cwd.starts_with(&root) {
+    if !super::profiles::workspace_owns_cwd(store, &profile.workspace_id, &root, &cwd) {
         return Err(WorkbenchError::invalid(
             "Execution directory no longer belongs to this Workspace",
         ));

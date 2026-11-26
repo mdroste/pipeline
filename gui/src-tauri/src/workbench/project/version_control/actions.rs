@@ -809,6 +809,14 @@ fn push(context: &Context<'_>) -> WorkbenchResult<Outcome> {
     let remote = context.remote_name()?;
     let branch = destination_branch(context, &remote, true)?;
     let destination = format!("HEAD:refs/heads/{branch}");
+    // A branch that already tracks this destination can pull what it is
+    // missing; only a first publish needs the advice for a remote with its own
+    // history.
+    let tracked = context
+        .status
+        .as_ref()
+        .and_then(|status| status.upstream.as_deref())
+        == Some(format!("{remote}/{branch}").as_str());
     context
         .git
         .act(
@@ -824,11 +832,15 @@ fn push(context: &Context<'_>) -> WorkbenchResult<Outcome> {
             Some(context.cancel),
         )
         .map_err(|error| {
-            WorkbenchError::invalid(errors::explain_publish(
-                &error.message,
-                context.remote(),
-                &branch,
-            ))
+            if tracked {
+                context.explained(error)
+            } else {
+                WorkbenchError::invalid(errors::explain_publish(
+                    &error.message,
+                    context.remote(),
+                    &branch,
+                ))
+            }
         })?;
     Ok(Outcome::default())
 }
