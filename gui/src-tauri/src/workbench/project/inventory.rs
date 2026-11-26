@@ -125,28 +125,85 @@ pub(crate) fn task_capture(root: &Path, path: &Path) -> WorkbenchResult<Vec<(Str
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
 }
+/// Folders where coding agents keep their Git worktrees. Each worktree is a
+/// full checkout of the project, so listing it would count every file again.
+const AGENT_WORKTREES: &[(&str, &str)] = &[(".claude", "worktrees")];
+
 pub(super) fn ignored(path: &str, custom: &[String]) -> bool {
+    let is = |part: &str, name: &str| part.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(name);
     path.split('/').any(|p| {
         files::reserved_component(p)
             || ["node_modules", "target", ".venv", "__pycache__", ".cache"]
                 .iter()
-                .any(|name| p.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(name))
-    }) || custom.iter().any(|p| {
-        path.strip_prefix(p.as_str())
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-    }) || [
-        ".aux",
-        ".toc",
-        ".out",
-        ".synctex.gz",
-        ".fls",
-        ".fdb_latexmk",
-    ]
-    .iter()
-    .any(|suffix| path.ends_with(suffix))
+                .any(|name| is(p, name))
+    }) || path
+        .split('/')
+        .zip(path.split('/').skip(1))
+        .any(|(parent, name)| {
+            AGENT_WORKTREES
+                .iter()
+                .any(|(tool, folder)| is(parent, tool) && is(name, folder))
+        })
+        || custom.iter().any(|p| {
+            path.strip_prefix(p.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+        || [
+            ".aux",
+            ".toc",
+            ".out",
+            ".synctex.gz",
+            ".fls",
+            ".fdb_latexmk",
+        ]
+        .iter()
+        .any(|suffix| path.ends_with(suffix))
 }
 pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<Inventory> {
-    scan(root, custom, false, None)
+    scan(root, custom, false, None).map(|(inventory, _)| inventory)
+}
+/// Whether this folder is a linked Git worktree: its `.git` is a file that
+/// names a folder in a repository's `worktrees` directory. A submodule's `.git`
+/// file names one under `modules` instead, and the submodule stays listed.
+/// Only the file's text is read; the folder it names is never opened.
+fn linked_worktree(folder: &Path) -> bool {
+    let marker = folder.join(".git");
+    if !fs::symlink_metadata(&marker).is_ok_and(|meta| meta.is_file() && meta.len() <= 4096) {
+        return false;
+    }
+    let Ok(text) = fs::read_to_string(&marker) else {
+        return false;
+    };
+    let Some(target) = text.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let parts: Vec<&str> = target
+        .trim()
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    match parts.as_slice() {
+        [rest @ .., folder, _] => {
+            folder.eq_ignore_ascii_case("worktrees")
+                && !rest
+                    .last()
+                    .is_some_and(|part| part.eq_ignore_ascii_case("modules"))
+        }
+        _ => false,
+    }
+}
+/// Reads past this many bytes in one scan are left unhashed. Tests lower it.
+fn capture_budget() -> u64 {
+    #[cfg(test)]
+    if let Some(budget) = CAPTURE_BUDGET.get() {
+        return budget;
+    }
+    MAX_CAPTURE
+}
+#[cfg(test)]
+thread_local! {
+    pub(super) static CAPTURE_BUDGET: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
 }
 fn modified_ms(meta: &fs::Metadata) -> Option<u64> {
     let since = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH);
@@ -159,14 +216,17 @@ thread_local! {
     pub(super) static AFTER_LISTING: std::cell::RefCell<Option<Box<dyn Fn()>>> =
         const { std::cell::RefCell::new(None) };
 }
-/// `record_times` keeps each file's modified time. A file in `known` with the
+/// `project` marks a scan of the project folder itself. It keeps each file's
+/// modified time and leaves out linked Git worktrees nested in the folder,
+/// which it returns. Other scans list every folder: in a task copy, a folder
+/// left out would read as its files being deleted. A file in `known` with the
 /// same size and time keeps its hash without being read.
 fn scan(
     root: &Path,
     custom: &[String],
-    record_times: bool,
+    project: bool,
     known: Option<&Inventory>,
-) -> WorkbenchResult<Inventory> {
+) -> WorkbenchResult<(Inventory, HashSet<String>)> {
     let known_files: HashMap<&str, &FileEntry> = known
         .into_iter()
         .flat_map(|inventory| &inventory.files)
@@ -182,7 +242,10 @@ fn scan(
     };
     let started = Instant::now();
     let mut pending = vec![String::new()];
+    let mut worktrees = HashSet::new();
+    let budget = capture_budget();
     let mut total = 0;
+    let mut over_budget = 0;
     let mut visited = 0;
     let mut unreadable = 0;
     // One entry that can't be read leaves the rest of the scan good: files come
@@ -257,7 +320,9 @@ fn scan(
                 continue;
             };
             if meta.is_dir() {
-                if pending.len() < MAX_FILES {
+                if project && linked_worktree(&entry.path()) {
+                    worktrees.insert(path);
+                } else if pending.len() < MAX_FILES {
                     pending.push(path);
                 } else {
                     limited = true;
@@ -267,7 +332,7 @@ fn scan(
             let executable = files::executable(&meta);
             let mut status = "current".to_string();
             let mut digest = None;
-            let modified = modified_ms(&meta).filter(|_| record_times);
+            let modified = modified_ms(&meta).filter(|_| project);
             let unchanged = known_files.get(path.as_str()).filter(|file| {
                 let recorded = known.and_then(|inventory| inventory.modified_ms.get(&file.path));
                 file.hash.is_some() && file.size == meta.len() && recorded == modified.as_ref()
@@ -275,8 +340,13 @@ fn scan(
             if !meta.is_file() || meta.file_type().is_symlink() {
                 status = "unsupported".into();
                 result.complete = false;
-            } else if meta.len() > MAX_FILE || total + meta.len() > MAX_CAPTURE {
+            } else if meta.len() > MAX_FILE {
                 status = "unhashed_large_file".into();
+                result.complete = false;
+            } else if total + meta.len() > budget {
+                // The file may be small: earlier files used up what one scan reads.
+                status = "unhashed_capture_limit".into();
+                over_budget += 1;
                 result.complete = false;
             } else if let Some(file) = unchanged.filter(|_| modified.is_some()) {
                 total += meta.len();
@@ -309,13 +379,19 @@ fn scan(
         result.complete = false;
         result.warnings.push(LIMIT_WARNING.into());
     }
+    if over_budget > 0 {
+        result.warnings.push(format!(
+            "Pipeline reads at most {} MB of files in one pass, so {over_budget} file(s) were listed but not read. Leave out large data folders in Project settings and refresh.",
+            MAX_CAPTURE / (1024 * 1024)
+        ));
+    }
     if unreadable > 0 {
         result.warnings.push(format!(
             "{unreadable} item(s) could not be read; refresh to try again"
         ));
     }
     result.files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(result)
+    Ok((result, worktrees))
 }
 /// Reads every file, as an explicit Refresh should.
 pub(super) fn refresh(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectRecord> {
@@ -423,7 +499,10 @@ impl InventoryScan {
             ));
         }
         let known = previous.as_ref().filter(|_| trust_times);
-        let mut inventory = scan(root, &settings.ignored_paths, true, known)?;
+        let (mut inventory, worktrees) = scan(root, &settings.ignored_paths, true, known)?;
+        // An earlier build listed nested worktrees; their files are not missing.
+        let left_out =
+            |path: &str| ignored(path, &settings.ignored_paths) || inside_any(path, &worktrees);
         if let Some(previous) = &previous {
             let previous_hashes: HashMap<&str, &Option<String>> = previous
                 .files
@@ -449,7 +528,7 @@ impl InventoryScan {
                 for old in previous
                     .files
                     .iter()
-                    .filter(|f| f.status != "missing" && !ignored(&f.path, &settings.ignored_paths))
+                    .filter(|f| f.status != "missing" && !left_out(&f.path))
                     .take(MAX_FILES)
                 {
                     if let Some(current) = scanned.remove(&old.path) {
@@ -486,9 +565,7 @@ impl InventoryScan {
             for file in previous.files.iter() {
                 // A file that was already missing was reported once; keeping it for
                 // good would grow this record to its size limit.
-                if file.status == "missing"
-                    || present.contains(&file.path)
-                    || ignored(&file.path, &settings.ignored_paths)
+                if file.status == "missing" || present.contains(&file.path) || left_out(&file.path)
                 {
                     continue;
                 }

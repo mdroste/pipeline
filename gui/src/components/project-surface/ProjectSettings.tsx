@@ -32,6 +32,14 @@ import {
 const isTargetDate = (text: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(text) && Number(text.slice(0, 4)) >= 1000;
 
+// Why the inventory holds no hash for a file; an unknown status shows as is.
+const fileStatusLabels: Record<string, string> = {
+  unavailable: "could not be read",
+  unsupported: "not a regular file",
+  unhashed_large_file: "larger than 32 MB, not read",
+  unhashed_capture_limit: "not read, the 256 MB limit for one pass was reached",
+};
+
 export type ProjectSettingsSection =
   | "publication"
   | "documents"
@@ -452,7 +460,7 @@ export default function ProjectSettings({
                     )}
                     {unreadable.slice(0, 10).map((f) => (
                       <p key={f.path} className="text-xs text-warning">
-                        {f.path}: {f.status}
+                        {f.path}: {fileStatusLabels[f.status] ?? f.status}
                       </p>
                     ))}
                     {inventory?.warnings.map((w) => (
@@ -483,8 +491,8 @@ export default function ProjectSettings({
                       placeholder="One path per line, relative to the folder"
                     />
                     <p className={`my-2 ${muted}`}>
-                      Build, cache, and version-control folders are always left
-                      out.
+                      Build, cache, and version-control folders, and Git
+                      worktrees nested in this folder, are always left out.
                     </p>
                     <button
                       className={button}
