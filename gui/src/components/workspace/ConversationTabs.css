@@ -1,0 +1,57 @@
+/* Conversation tabs share the file tab styles; these fit them to the chat
+   header, which has its own height and padding. */
+.workspace-chat-header-tabs {
+  gap: var(--ui-space-1);
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: var(--ui-space-2);
+}
+.workspace-conversation-tabs {
+  margin-left: 0;
+  align-self: stretch;
+  font-size: var(--ui-text-label);
+}
+.workspace-conversation-tabs .file-tab-name {
+  cursor: default;
+}
+.workspace-conversation-tabs-empty {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: var(--ui-space-2);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-chat-brief {
+  overflow: hidden;
+  padding: var(--ui-space-1) var(--ui-space-4);
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-conversation-tabs .file-tab-name:disabled {
+  opacity: 0.5;
+}
+/* The selected conversation is replying. */
+.workspace-tab-working {
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 50%;
+  background: var(--ui-page-accent);
+  animation: workspace-tab-working 1.2s ease-in-out infinite;
+}
+@keyframes workspace-tab-working {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab-working {
+    animation: none;
+  }
+}

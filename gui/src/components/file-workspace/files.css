@@ -339,6 +339,46 @@
   background: var(--ui-page-accent);
   content: "";
 }
+/* The name that follows a file dragged out of the list. */
+.file-drag-label {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  max-width: 16rem;
+  overflow: hidden;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow-2);
+  color: var(--ui-text);
+  font-size: var(--ui-text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* Dragging a tab: it follows the pointer and the others slide aside. */
+.file-tabs[data-reordering] .file-tab {
+  transition: transform 0.15s ease;
+}
+.file-tabs[data-reordering] .file-tab[data-dragging] {
+  z-index: 1;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-raised);
+  box-shadow: var(--ui-shadow-1);
+  color: var(--ui-text);
+  cursor: grabbing;
+  transition: none;
+}
+.file-tabs[data-reordering] .file-tab[data-dragging]::after {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-tabs[data-reordering] .file-tab {
+    transition: none;
+  }
+}
 .file-tab-name {
   display: flex;
   align-items: center;
@@ -813,6 +853,10 @@
 }
 .file-tab-panel[hidden] {
   display: none;
+}
+.file-tabs[data-reordering] .file-tab[data-docking] {
+  opacity: 0.45;
+  box-shadow: none;
 }
 .file-tab-panel > .file-pane,
 .split-view-content > .file-pane {

@@ -1171,3 +1171,42 @@ describe("while the chat fills the page", () => {
     await waitFor(() => expect(project).toBeVisible());
   });
 });
+
+it("shows open conversations as tabs and switches between them", async () => {
+  localStorage.setItem(
+    "pipeline.workspace.openConversations.unfiled",
+    JSON.stringify([{ id: "earlier", title: "Earlier chat" }]),
+  );
+  await mount();
+  const strip = screen.getByRole("tablist", { name: "Open conversations" });
+  await waitFor(() =>
+    expect(
+      within(strip)
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual(["Earlier chat", "Policy discussion"]),
+  );
+  expect(
+    within(strip).getByRole("tab", { name: "Policy discussion" }),
+  ).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(within(strip).getByRole("tab", { name: "Earlier chat" }));
+  await waitFor(() =>
+    expect(mocks.conversationSnapshot).toHaveBeenCalledWith("earlier"),
+  );
+});
+
+it("closes the last conversation tab to an empty conversation", async () => {
+  await mount();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Close Policy discussion" }),
+  );
+  await screen.findByRole("heading", { name: "New conversation" });
+  expect(
+    screen.queryByRole("tablist", { name: "Open conversations" }),
+  ).toBeNull();
+  expect(
+    JSON.parse(
+      localStorage.getItem("pipeline.workspace.openConversations.unfiled")!,
+    ),
+  ).toEqual([]);
+});

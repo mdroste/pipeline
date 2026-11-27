@@ -37,6 +37,11 @@ import WorkspaceDialogs from "./workspace/WorkspaceDialogs";
 import type { ReviewHandoff } from "../lib/workbench/releaseTypes";
 import ReportIssueLink from "./ReportIssueLink";
 import type { FileLocation } from "../lib/fileLinks";
+import type { WorkbenchSession } from "../lib/workbench/sessionTypes";
+import useConversationTabs, {
+  neighbourTab,
+} from "../hooks/workspace/useConversationTabs";
+import ConversationTabs from "./workspace/ConversationTabs";
 
 const WorkspaceProjectSurface = lazy(() => import("./WorkspaceProjectSurface"));
 const ConversationArtifacts = lazy(() => import("./ConversationArtifacts"));
@@ -97,6 +102,7 @@ export default function WorkspacePage({
       selectProject,
       selectSession,
       createSession,
+      closeSession,
       projectCreated,
       openResearchConversation,
       updateProjectWorkspace,
@@ -147,8 +153,8 @@ export default function WorkspacePage({
       archiveSession,
       renameSession,
       generateTitle,
-      deleteSession,
-      moveSession,
+      deleteSession: deleteSessionRecord,
+      moveSession: moveSessionRecord,
     },
     feedback: { error, setError },
     transcript: {
@@ -284,6 +290,33 @@ export default function WorkspacePage({
   );
   const reportError = (cause: unknown) =>
     setError(workbenchErrorMessage(cause));
+  const conversationTabs = useConversationTabs(
+    workspaceId,
+    sessionId,
+    paneSessions,
+  );
+  // A conversation deleted or moved to another project leaves this project's
+  // tabs; one moved here from elsewhere gets its tab when it is selected.
+  const deleteSession = async (session: WorkbenchSession) => {
+    const deleted = await deleteSessionRecord(session);
+    if (deleted) conversationTabs.forget(session.id, session.workspaceId);
+  };
+  const moveSession = async (
+    session: WorkbenchSession,
+    target: string | null,
+  ) => {
+    const moved = await moveSessionRecord(session, target);
+    if (moved && target !== session.workspaceId)
+      conversationTabs.forget(session.id, session.workspaceId);
+    return moved;
+  };
+  const closeTab = (id: string) => {
+    const next =
+      id === sessionId ? neighbourTab(conversationTabs.tabs, id) : undefined;
+    conversationTabs.close(id);
+    if (next) void selectSession(next).catch(reportError);
+    else if (next === null) void closeSession().catch(reportError);
+  };
   return (
     <div className="workspace-chat-shell flex h-full min-h-0 min-w-0 bg-white dark:bg-neutral-950">
       {rail?.slot &&
@@ -521,28 +554,36 @@ export default function WorkspacePage({
             }
           }}
         >
-          <header className="workspace-chat-header workspace-chat-header-minimal">
-            <div className="workspace-chat-heading">
-              <h1 className="truncate text-sm font-semibold">
-                {snapshot?.session.title ?? DEFAULT_TITLE}
-              </h1>
+          <header className="workspace-chat-header workspace-chat-header-minimal workspace-chat-header-tabs">
+            {/* The tabs name the conversation on screen. */}
+            <div className="sr-only">
+              <h1>{snapshot?.session.title ?? DEFAULT_TITLE}</h1>
               {(active || submitting) && (
                 <p role="status">{providerName(runtime)} is working…</p>
               )}
-              {/* The brief heads the conversation only when the chat stands
-                  alone; beside the overview it would repeat what is on screen. */}
-              {workspaceId && projectBrief && (
-                <p
-                  className="hidden max-w-[720px] truncate [[data-layout=assistant]_&]:block"
-                  title={projectBrief}
-                >
-                  {projectBrief}
-                </p>
-              )}
             </div>
+            {conversationTabs.tabs.length > 0 ? (
+              <ConversationTabs
+                tabs={conversationTabs.tabs}
+                active={sessionId}
+                working={Boolean(active) || submitting}
+                disabled={contextBusy || harnessEditor}
+                onSelect={(id) => {
+                  if (id !== sessionId)
+                    void selectSession(id).catch(reportError);
+                }}
+                onClose={closeTab}
+                onMove={conversationTabs.move}
+              />
+            ) : (
+              <span className="workspace-conversation-tabs-empty">
+                {snapshot?.session.title ?? DEFAULT_TITLE}
+              </span>
+            )}
             {workspaceId && (
               <IconButton
                 label="New conversation"
+                size="sm"
                 tooltipSide="bottom"
                 disabled={contextBusy || harnessEditor}
                 onClick={() =>
@@ -645,6 +686,16 @@ export default function WorkspacePage({
               )}
             </WorkspaceMenu>
           </header>
+          {/* The brief heads the conversation only when the chat stands
+              alone; beside the overview it would repeat what is on screen. */}
+          {workspaceId && projectBrief && (
+            <p
+              className="workspace-chat-brief hidden [[data-layout=assistant]_&]:block"
+              title={projectBrief}
+            >
+              {projectBrief}
+            </p>
+          )}
           <WorkspaceConversationView
             assistantName={providerName(runtime)}
             header={null}

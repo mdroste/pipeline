@@ -1,8 +1,10 @@
-// Project and assistant panes for one project. The split view needs 848 px of
-// working width. Below that, one pane shows at a time and both stay mounted, so
-// drafts survive; widening restores the saved choice. View and assistant width
-// are per-project device preferences and grant no access. When artifacts open
-// alongside the chat, the project pane stays mounted for the return to split.
+// Project and conversation panes for one project. The conversation docks to
+// the left, right or bottom and may take any room the project can spare. When
+// the desk is too small for both, one pane shows at a time and both stay
+// mounted, so drafts survive; growing restores the saved choice. View, dock
+// side and sizes are per-project device preferences and grant no access. When
+// artifacts open alongside the chat, the project pane stays mounted for the
+// return to split.
 
 import {
   useEffect,
@@ -22,7 +24,13 @@ import ResizeHandle from "./ResizeHandle";
 import WorkspaceArtifactsPane from "./WorkspaceArtifactsPane";
 import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
-import { MenuItem } from "../ui/Menu";
+import { MenuItem, MenuLabel, MenuSeparator } from "../ui/Menu";
+import {
+  assistantDock,
+  DeskDockContext,
+  type AssistantDock,
+  type DeskDock,
+} from "./deskDock";
 import { Icon } from "../ui/icons";
 import { isMac } from "../lib/platform";
 import "./WorkspaceDesk.css";
@@ -45,8 +53,42 @@ function subscribeVisibility(listener: () => void) {
 }
 const windowVisible = () => document.visibilityState !== "hidden";
 
-/** The conversation pane beside the project, in pixels. */
-const ASSISTANT_WIDTH = { default: 440, min: 360, max: 560 };
+/** The conversation pane's default and smallest size, in pixels. */
+const ASSISTANT = { width: 440, height: 320, minWidth: 320, minHeight: 200 };
+/** The project keeps at least this much room; the conversation may take the rest. */
+const PROJECT_MIN = { width: 400, height: 180 };
+/** Sizes are bounded by the desk, not by a fixed maximum. */
+const UNBOUNDED = 10_000;
+
+function loadDock(key: string): AssistantDock {
+  try {
+    return assistantDock(localStorage.getItem(key)) ?? "right";
+  } catch {
+    return "right";
+  }
+}
+
+/**
+ * The side a pane dragged to (x, y) would land on: the nearest of the left,
+ * right and bottom edges, or none from the middle of the desk.
+ */
+export function dockZone(
+  box: { left: number; top: number; width: number; height: number },
+  x: number,
+  y: number,
+): AssistantDock | null {
+  if (box.width <= 0 || box.height <= 0) return null;
+  const fx = (x - box.left) / box.width;
+  const fy = (y - box.top) / box.height;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+  const distances: [AssistantDock, number][] = [
+    ["left", fx],
+    ["right", 1 - fx],
+    ["bottom", 1 - fy],
+  ];
+  const [side, distance] = distances.reduce((a, b) => (b[1] < a[1] ? b : a));
+  return distance <= 0.35 ? side : null;
+}
 
 export default function WorkspaceDesk({
   project,
@@ -109,10 +151,43 @@ export default function WorkspaceDesk({
   const automatic = useRef(false);
   const [assistantWidth, setAssistantWidth] = usePersistentPanelWidth(
     `pipeline.workspace.assistantWidth.${workspaceId ?? "unfiled"}`,
-    ASSISTANT_WIDTH.default,
-    ASSISTANT_WIDTH.min,
-    ASSISTANT_WIDTH.max,
+    ASSISTANT.width,
+    ASSISTANT.minWidth,
+    UNBOUNDED,
   );
+  const [assistantHeight, setAssistantHeight] = usePersistentPanelWidth(
+    `pipeline.workspace.assistantHeight.${workspaceId ?? "unfiled"}`,
+    ASSISTANT.height,
+    ASSISTANT.minHeight,
+    UNBOUNDED,
+  );
+  const dockKey = `pipeline.workspace.assistantDock.${workspaceId ?? "unfiled"}`;
+  const [dock, setDockState] = useState<AssistantDock>(() => loadDock(dockKey));
+  const setDock = (next: AssistantDock) => {
+    setDockState(next);
+    try {
+      localStorage.setItem(dockKey, next);
+    } catch {
+      /* Optional preference. */
+    }
+  };
+  const bottom = dock === "bottom";
+  // The panes' height decides whether a bottom dock fits; the desk's width
+  // decides for the sides.
+  const panes = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const element = panes.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const value = entries[0]?.contentRect.height;
+      if (value && value > 0) setHeight(value);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const [dockHint, setDockHint] = useState<AssistantDock | null>(null);
+  const dockHintRef = useRef<AssistantDock | null>(null);
   const [lastPane, setLastPane] = useState<"project" | "assistant">("project");
   // Request counters belong to the page. A newly selected project must not
   // replay another project's old requests over its saved layout preference.
@@ -127,8 +202,14 @@ export default function WorkspaceDesk({
   const projectButton = useRef<HTMLButtonElement>(null);
   const assistantButton = useRef<HTMLButtonElement>(null);
   const id = useId();
-  const fits = width !== null && width >= 848;
-  const visibleAssistantWidth = Math.min(assistantWidth, (width ?? 848) - 480);
+  const fits = bottom
+    ? height === null || height >= ASSISTANT.minHeight + PROJECT_MIN.height
+    : width !== null && width >= ASSISTANT.minWidth + PROJECT_MIN.width;
+  const visibleAssistantSize = bottom
+    ? height === null
+      ? assistantHeight
+      : Math.min(assistantHeight, height - PROJECT_MIN.height)
+    : Math.min(assistantWidth, (width ?? UNBOUNDED) - PROJECT_MIN.width);
   const effective =
     !project || assistantOnly || (artifacts && preferred === "split")
       ? "assistant"
@@ -205,8 +286,39 @@ export default function WorkspaceDesk({
   };
   const reset = () => {
     split();
-    setAssistantWidth(ASSISTANT_WIDTH.default);
+    setDock("right");
+    setAssistantWidth(ASSISTANT.width);
+    setAssistantHeight(ASSISTANT.height);
   };
+  /** Moves the conversation to a side, beside the project when there is room. */
+  const dockTo = (side: AssistantDock) => {
+    setDock(side);
+    const room = panes.current?.getBoundingClientRect();
+    const sideFits =
+      side === "bottom"
+        ? !room?.height ||
+          room.height >= ASSISTANT.minHeight + PROJECT_MIN.height
+        : width !== null && width >= ASSISTANT.minWidth + PROJECT_MIN.width;
+    if (sideFits) split();
+  };
+  const deskDock: DeskDock | null =
+    project && !assistantOnly
+      ? {
+          dock,
+          move: (x, y) => {
+            const box = panes.current?.getBoundingClientRect();
+            const next = box ? dockZone(box, x, y) : null;
+            dockHintRef.current = next;
+            setDockHint((old) => (old === next ? old : next));
+          },
+          end: (drop) => {
+            const target = dockHintRef.current;
+            dockHintRef.current = null;
+            setDockHint(null);
+            if (drop && target) dockTo(target);
+          },
+        }
+      : null;
   useEffect(() => {
     if (resetRequest !== requests.current.resetRequest) reset();
     requests.current.resetRequest = resetRequest;
@@ -304,6 +416,22 @@ export default function WorkspaceDesk({
                   Project + conversation
                 </MenuItem>
               )}
+              <MenuSeparator />
+              <MenuLabel>Conversation position</MenuLabel>
+              {(["left", "right", "bottom"] as const).map((side) => (
+                <MenuItem
+                  key={side}
+                  checked={dock === side}
+                  onSelect={() => dockTo(side)}
+                >
+                  {side === "left"
+                    ? "Left"
+                    : side === "right"
+                      ? "Right"
+                      : "Bottom"}
+                </MenuItem>
+              ))}
+              <MenuSeparator />
               <MenuItem onSelect={reset}>Reset layout</MenuItem>
             </WorkspaceMenu>
             {active && onStop && effective === "project" && (
@@ -328,7 +456,12 @@ export default function WorkspaceDesk({
       </div>
       {feedback}
       {effective === "project" && assistantFeedback}
-      <div className="workspace-desk-panes" data-layout={effective}>
+      <div
+        ref={panes}
+        className="workspace-desk-panes"
+        data-layout={effective}
+        data-dock={dock}
+      >
         {project && (
           <div
             ref={projectRef}
@@ -351,28 +484,36 @@ export default function WorkspaceDesk({
           onFocusCapture={() => setLastPane("assistant")}
           className="workspace-desk-assistant"
           style={
-            effective === "split" ? { width: visibleAssistantWidth } : undefined
+            effective === "split"
+              ? { [bottom ? "height" : "width"]: visibleAssistantSize }
+              : undefined
           }
         >
           <WorkspacePaneVisibility.Provider
             value={visible && !hidden && effective !== "project"}
           >
-            {children}
+            <DeskDockContext.Provider value={deskDock}>
+              {children}
+            </DeskDockContext.Provider>
           </WorkspacePaneVisibility.Provider>
           {effective === "split" && (
             <ResizeHandle
-              edge="left"
-              label="Resize assistant"
-              min={ASSISTANT_WIDTH.min}
-              max={ASSISTANT_WIDTH.max}
-              minRemaining={480}
-              currentWidth={visibleAssistantWidth}
-              defaultWidth={ASSISTANT_WIDTH.default}
-              onResize={setAssistantWidth}
+              key={dock}
+              edge={dock === "left" ? "right" : bottom ? "top" : "left"}
+              label="Resize conversation"
+              min={bottom ? ASSISTANT.minHeight : ASSISTANT.minWidth}
+              max={UNBOUNDED}
+              minRemaining={bottom ? PROJECT_MIN.height : PROJECT_MIN.width}
+              currentWidth={visibleAssistantSize}
+              defaultWidth={bottom ? ASSISTANT.height : ASSISTANT.width}
+              onResize={bottom ? setAssistantHeight : setAssistantWidth}
               controlsId={`${id}-assistant`}
             />
           )}
         </div>
+        {dockHint && dockHint !== dock && (
+          <div className="workspace-dock-hint" data-zone={dockHint} />
+        )}
         {effective !== "project" && artifacts && (
           <WorkspaceArtifactsPane
             id={artifacts.id}

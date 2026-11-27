@@ -66,7 +66,11 @@ Archived records, older document versions, conversation messages, binary
 files, and ignored folders are excluded. **Actions** opens pages or review
 setup; it does not start a review. The layout menu switches
 between **Project only**, **Conversation only**, and
-**Project + conversation**. Project areas work without a model connection.
+**Project + conversation**, and places the conversation on the **Left**,
+**Right**, or **Bottom**. You can also drag a conversation tab onto the
+project to move the conversation to that side, and drag the edge between them
+to resize it. Each project remembers its layout, and **Reset layout** puts the
+conversation back on the right. Project areas work without a model connection.
 Conversations and reviews need one. See [Models](connections.md).
 
 ## Work in a conversation
@@ -82,6 +86,12 @@ The transcript stays with the conversation. Choose **Conversations** in a projec
 or **Show older conversations**. A chat’s actions menu offers rename, move,
 archive, restore, and delete. Choose **Browse conversations** above a conversation to
 return to the list. Standalone conversations use a separate list marked **No project**.
+
+Each conversation you open gets a tab above its messages. Choose a tab to
+switch conversations, drag tabs to reorder them, or close a tab to put the
+conversation away. Closing a tab deletes nothing; reopen the conversation from
+the conversation menu or the conversation list. A reply keeps running when you
+switch to another tab. Each project remembers its open tabs.
 
 The conversation’s **Outline** searches the messages loaded so far. In a long
 chat, choose **Search older messages** to include the preceding page.

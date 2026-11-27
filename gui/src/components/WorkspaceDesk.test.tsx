@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import WorkspaceDesk from "./WorkspaceDesk";
+import WorkspaceDesk, { dockZone } from "./WorkspaceDesk";
+import { useDeskDock } from "./deskDock";
 
 let resize: (width: number) => void;
 beforeEach(() => {
@@ -124,9 +125,10 @@ it("clamps the split to actual space and restores each project's saved width and
     </WorkspaceDesk>,
   );
   resize(900);
+  // The project keeps 400 px; the conversation takes the rest it asked for.
   expect(
     screen.getByText("Chat content").closest(".workspace-desk-assistant"),
-  ).toHaveStyle({ width: "420px" });
+  ).toHaveStyle({ width: "500px" });
   resize(1200);
   expect(
     screen.getByText("Chat content").closest(".workspace-desk-assistant"),
@@ -234,4 +236,116 @@ it("shows the conversation's messages at the top only while its pane is hidden",
   fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
   resize(700);
   expect(screen.getByText("A response is still running.")).toBeVisible();
+});
+
+it("docks the conversation left, right or at the bottom from the layout menu", () => {
+  render(
+    <WorkspaceDesk workspaceId="alpha" project={<p>Project</p>}>
+      <p>Chat content</p>
+    </WorkspaceDesk>,
+  );
+  resize(1200);
+  const panes = () =>
+    screen.getByText("Chat content").closest(".workspace-desk-panes");
+  const pane = () =>
+    screen.getByText("Chat content").closest(".workspace-desk-assistant");
+  expect(panes()).toHaveAttribute("data-dock", "right");
+  const choose = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name: "Project layout" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name }));
+  };
+  choose("Left");
+  expect(panes()).toHaveAttribute("data-dock", "left");
+  expect(localStorage.getItem("pipeline.workspace.assistantDock.alpha")).toBe(
+    "left",
+  );
+  expect(pane()).toHaveStyle({ width: "440px" });
+  choose("Bottom");
+  expect(panes()).toHaveAttribute("data-dock", "bottom");
+  // At the bottom the pane keeps its own height; its width is the desk's.
+  expect(pane()).toHaveStyle({ height: "320px" });
+  expect(
+    screen.getByRole("separator", { name: "Resize conversation" }),
+  ).toHaveAttribute("aria-orientation", "horizontal");
+  fireEvent.click(screen.getByRole("button", { name: "Project layout" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reset layout" }));
+  expect(panes()).toHaveAttribute("data-dock", "right");
+});
+
+it("lets the conversation take any width the project can spare", () => {
+  localStorage.setItem("pipeline.workspace.assistantWidth.alpha", "2000");
+  render(
+    <WorkspaceDesk workspaceId="alpha" project={<p>Project</p>}>
+      <p>Chat content</p>
+    </WorkspaceDesk>,
+  );
+  resize(1600);
+  expect(
+    screen.getByText("Chat content").closest(".workspace-desk-assistant"),
+  ).toHaveStyle({ width: "1200px" });
+  expect(localStorage.getItem("pipeline.workspace.assistantWidth.alpha")).toBe(
+    "2000",
+  );
+});
+
+function DragTab() {
+  const desk = useDeskDock();
+  if (!desk) return <p>No dock</p>;
+  return (
+    <>
+      <button onClick={() => desk.move(40, 300)}>Over the left edge</button>
+      <button onClick={() => desk.move(500, 590)}>Over the bottom edge</button>
+      <button onClick={() => desk.move(500, 200)}>Over the middle</button>
+      <button onClick={() => desk.end(true)}>Drop</button>
+      <button onClick={() => desk.end(false)}>Cancel</button>
+    </>
+  );
+}
+
+it("moves the conversation where a dragged tab is dropped, previewing the side", () => {
+  const view = render(
+    <WorkspaceDesk workspaceId="alpha" project={<p>Project</p>}>
+      <DragTab />
+    </WorkspaceDesk>,
+  );
+  resize(1200);
+  const panes = document.querySelector<HTMLElement>(".workspace-desk-panes")!;
+  panes.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 1000, height: 600 }) as DOMRect;
+  const press = (name: string) =>
+    fireEvent.click(screen.getByRole("button", { name }));
+  const hint = () => document.querySelector(".workspace-dock-hint");
+
+  press("Over the left edge");
+  expect(hint()).toHaveAttribute("data-zone", "left");
+  press("Cancel");
+  expect(hint()).toBeNull();
+  expect(panes).toHaveAttribute("data-dock", "right");
+
+  press("Over the bottom edge");
+  expect(hint()).toHaveAttribute("data-zone", "bottom");
+  press("Drop");
+  expect(panes).toHaveAttribute("data-dock", "bottom");
+
+  // The middle of the desk is not a side; dropping there changes nothing.
+  press("Over the middle");
+  expect(hint()).toBeNull();
+  press("Drop");
+  expect(panes).toHaveAttribute("data-dock", "bottom");
+
+  view.rerender(
+    <WorkspaceDesk workspaceId="alpha" project={null}>
+      <DragTab />
+    </WorkspaceDesk>,
+  );
+  expect(screen.getByText("No dock")).toBeInTheDocument();
+});
+
+it("finds the nearest side within reach of an edge", () => {
+  const box = { left: 100, top: 50, width: 1000, height: 500 };
+  expect(dockZone(box, 150, 300)).toBe("left");
+  expect(dockZone(box, 1050, 100)).toBe("right");
+  expect(dockZone(box, 600, 520)).toBe("bottom");
+  expect(dockZone(box, 600, 200)).toBeNull();
+  expect(dockZone(box, 50, 300)).toBeNull();
 });

@@ -366,6 +366,17 @@ export function useWorkspacePageController({
     [harnessEditor, retryFailedLoad, saveCurrentDraft, sessionId, workspaceId],
   );
 
+  /** Leaves no conversation selected, as when its last tab closes. */
+  const closeSession = async () => {
+    if (contextBusyRef.current || harnessEditor) return;
+    const generation = ++navigationGeneration.current;
+    await saveCurrentDraft();
+    if (generation !== navigationGeneration.current) return;
+    setSnapshot(null);
+    setDraft("");
+    setSessionId(null);
+  };
+
   const createSession = async () => {
     if (contextBusyRef.current || harnessEditor) return;
     const generation = ++navigationGeneration.current;
@@ -760,6 +771,7 @@ export function useWorkspacePageController({
       selectProject,
       selectSession,
       createSession,
+      closeSession,
       openProject,
       projectCreated,
       openResearchConversation,

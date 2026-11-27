@@ -101,6 +101,7 @@ export function useWorkspaceSessionMutations({
     await refreshSessionRecord(session.id);
   };
 
+  /** Resolves true once the conversation is deleted, false if not confirmed. */
   const deleteSession = async (session: WorkbenchSession) => {
     if (
       !(await confirmDialog(
@@ -112,7 +113,7 @@ export function useWorkspaceSessionMutations({
         },
       ))
     )
-      return;
+      return false;
     let cleanupError: unknown;
     try {
       await conversationClient.deleteSession({
@@ -134,6 +135,7 @@ export function useWorkspaceSessionMutations({
     }
     await reloadAfter(session);
     if (cleanupError) throw cleanupError;
+    return true;
   };
 
   const moveSession = async (
