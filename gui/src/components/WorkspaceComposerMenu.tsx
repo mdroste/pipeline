@@ -69,11 +69,12 @@ export default function WorkspaceComposerMenu({
         aria-haspopup="menu"
         aria-expanded={view !== null}
         disabled={disabled && !busy}
+        size="sm"
         onClick={() => {
           if (!busy) setView(view ? null : "menu");
         }}
       >
-        <Icon name="plus" />
+        <Icon name="plus" className="h-4 w-4" />
       </IconButton>
       <Menu
         open={view === "menu"}

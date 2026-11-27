@@ -130,26 +130,30 @@ Use **Save As** in that app to keep changes.
 
 ### Choose a model
 
-Open the **Model and thinking** chip below the message box. Choose
-**ChatGPT**, **Claude Code**, **Claude Code (API)**, **OpenAI API**, **Anthropic API**, **Gemini API**,
+Below the message box, the first selector shows the provider and model. Open
+it to choose **ChatGPT**, **Claude Code**, **Claude Code (API)**, **OpenAI API**, **Anthropic API**, **Gemini API**,
 or **Local / custom**, then a model. **Automatic** uses the connection’s
 default. API and local connections also accept a name under **Model ID**.
-**Thinking** shows the levels available for the selected model.
+The thinking selector beside it shows the levels available for the selected
+model.
 
 The conversation remembers your choice. Switching providers keeps recent
-history available to the next provider. For ChatGPT, the picker also shows
-the signed-in account and remaining usage. See [Models](connections.md)
+history available to the next provider. For ChatGPT, the model selector also
+shows the signed-in account and remaining usage. See [Models](connections.md)
 for sign-in, keys, local servers, and command setup.
 
-For **ChatGPT** and either **Claude Code** connection, open **Tool approvals** in the same
-picker. **Ask** lets ChatGPT request approval when it needs additional access
+For **ChatGPT** and either **Claude Code** connection, the third selector sets
+tool approvals. **Ask** lets ChatGPT request approval when it needs additional access
 and asks you before Claude Code runs a shell command. **Sandbox only** runs
 commands the sandbox allows without prompting. **Auto** uses the provider's
 automatic approval review. The conversation saves your choice for future messages.
 
 When a command offers **Always allow**, that choice also approves matching
-requests in the same conversation. Use **Clear saved approvals** in the picker
-to remove those choices.
+requests in the same conversation. Use **Clear saved approvals** in the tool
+approvals selector to remove those choices.
+
+To keep the provider, model, thinking, and tool approvals in one menu, turn on
+**Settings → Conversations → Combine model settings in one menu**.
 
 ### Add sources
 

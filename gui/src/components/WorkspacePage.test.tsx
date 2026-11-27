@@ -903,7 +903,7 @@ it("recovers an immediate mode-exit draft even if its database save fails", asyn
 it("sends with the saved model after the bottom model selector fails to save", async () => {
   mocks.accountState.mockResolvedValue({ status: "chatgpt" });
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
   const option = await screen.findByRole("option", { name: /Test model/ });
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Keep this question" },
@@ -928,7 +928,7 @@ it("reverts a model that failed to save, so choosing it again retries", async ()
   mocks.accountState.mockResolvedValue({ status: "chatgpt" });
   await mount();
   const choose = async () => {
-    const menu = screen.getByRole("button", { name: /^Model and thinking/ });
+    const menu = screen.getByRole("button", { name: /^Model:/ });
     if (menu.getAttribute("aria-expanded") !== "true") fireEvent.click(menu);
     fireEvent.click(await screen.findByRole("option", { name: /Test model/ }));
   };
@@ -1018,7 +1018,7 @@ it("waits for model selection to save before sending with the selected model", a
   });
   mocks.sendTurn.mockResolvedValue({ threadId: "thread", turnId: "turn" });
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
   fireEvent.click(await screen.findByRole("option", { name: /Test model/ }));
   fireEvent.change(screen.getByLabelText("Message"), {
     target: { value: "Use the selected model" },

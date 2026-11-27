@@ -73,6 +73,13 @@
 .workspace-model-option[aria-disabled="true"] {
   opacity: 0.5;
 }
+.workspace-choice-description {
+  display: block;
+  margin-top: 2px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 400;
+}
 .workspace-model-tag {
   flex-shrink: 0;
   color: var(--ui-muted);

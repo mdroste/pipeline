@@ -152,7 +152,7 @@ it("clamps the split to actual space and restores each project's saved width and
   fireEvent.click(screen.getByRole("menuitem", { name: "Reset layout" }));
   expect(screen.getByText("Beta")).toBeVisible();
   expect(localStorage.getItem("pipeline.workspace.assistantWidth.beta")).toBe(
-    "380",
+    "440",
   );
 });
 

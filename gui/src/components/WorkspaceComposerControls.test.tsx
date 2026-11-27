@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import WorkspaceComposerControls, {
   claudeUsageLine,
   usageLine,
@@ -40,6 +40,7 @@ it.each(["codex", "claude"] as const)(
     const change = vi.fn();
     const view = render(
       <WorkspaceComposerControls
+        layout="combined"
         models={models}
         model=""
         effort=""
@@ -58,6 +59,7 @@ it.each(["codex", "claude"] as const)(
     expect(change).toHaveBeenCalledWith("auto");
     view.rerender(
       <WorkspaceComposerControls
+        layout="combined"
         models={models}
         model=""
         effort=""
@@ -78,6 +80,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
   const change = vi.fn();
   const view = render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model=""
       effort=""
@@ -102,6 +105,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
   expect(change).toHaveBeenLastCalledWith("example", "");
   view.rerender(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model="example"
       effort=""
@@ -132,6 +136,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
 it("describes the chosen level and moves between models with the keyboard", () => {
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model="example"
       effort="medium"
@@ -152,6 +157,7 @@ it("shows saved unavailable settings without silently selecting replacements", (
   const change = vi.fn();
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model="removed-model"
       effort="ultra"
@@ -178,6 +184,7 @@ it("explains why choices are locked while the assistant works", () => {
   const change = vi.fn();
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model="example"
       effort=""
@@ -223,6 +230,7 @@ it("shows the account and remaining usage once the picker opens", async () => {
   });
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model=""
       effort=""
@@ -245,6 +253,7 @@ it("offers Claude subscription mode and hides ChatGPT account information", asyn
   const load = vi.fn();
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={[]}
       model=""
       effort=""
@@ -278,6 +287,7 @@ it("shows Claude usage once Claude Code has reported it", async () => {
   });
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={[]}
       model=""
       effort=""
@@ -297,6 +307,7 @@ it("shows Claude usage once Claude Code has reported it", async () => {
 it("explains when Claude has not reported usage yet", async () => {
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={[]}
       model=""
       effort=""
@@ -391,6 +402,7 @@ it("shows each Claude window with its own observation time", async () => {
   };
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={[]}
       model=""
       effort=""
@@ -414,6 +426,7 @@ it("offers API and custom connections with an editable model ID", () => {
   const runtimeChange = vi.fn();
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={[]}
       model="custom-model"
       effort=""
@@ -454,6 +467,7 @@ it("filters long catalogs and keeps keyboard selection and dismissal usable", ()
   }));
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={catalog}
       model="model-0"
       effort="high"
@@ -490,6 +504,7 @@ it("filters long catalogs and keeps keyboard selection and dismissal usable", ()
 it("closes only the thinking menu on Escape and restores its focus", () => {
   render(
     <WorkspaceComposerControls
+      layout="combined"
       models={models}
       model="example"
       effort="medium"
@@ -507,4 +522,235 @@ it("closes only the thinking menu on Escape and restores its focus", () => {
     screen.getByRole("dialog", { name: "Model and thinking" }),
   ).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Thinking" })).toHaveFocus();
+});
+
+describe("separate selectors", () => {
+  it("offers model, thinking and approvals as their own selectors by default", () => {
+    const change = vi.fn();
+    const approval = vi.fn();
+    const view = render(
+      <WorkspaceComposerControls
+        models={models}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={change}
+        approvalMode="ask"
+        onApprovalModeChange={approval}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^Model and thinking/ }),
+    ).toBeNull();
+    const model = screen.getByRole("button", { name: "Model: ChatGPT · Auto" });
+    fireEvent.click(model);
+    const dialog = screen.getByRole("dialog", { name: "Model" });
+    expect(within(dialog).queryByText("Tool approvals")).toBeNull();
+    expect(
+      within(dialog).queryByRole("combobox", { name: "Thinking" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("option", { name: /Example/ }));
+    expect(change).toHaveBeenLastCalledWith("example", "");
+    // A choice closes the menu and hands focus back to its selector.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(model).toHaveFocus();
+
+    view.rerender(
+      <WorkspaceComposerControls
+        models={models}
+        model="example"
+        effort=""
+        disabled={false}
+        onChange={change}
+        approvalMode="ask"
+        onApprovalModeChange={approval}
+      />,
+    );
+    const thinking = screen.getByRole("button", { name: "Medium thinking" });
+    fireEvent.click(thinking);
+    const levels = screen.getByRole("listbox", { name: "Thinking" });
+    expect(
+      within(levels)
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("data-label")),
+    ).toEqual(["Default · Medium", "Medium", "High"]);
+    expect(within(levels).getByText("Balanced speed and depth")).toBeVisible();
+    expect(
+      within(screen.getByRole("dialog", { name: "Thinking" })).getByText(
+        "Example",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(within(levels).getByRole("option", { name: /^High/ }));
+    expect(change).toHaveBeenLastCalledWith("example", "high");
+    expect(thinking).toHaveFocus();
+
+    const approvals = screen.getByRole("button", {
+      name: "Tool approvals: Ask first",
+    });
+    fireEvent.click(approvals);
+    const modes = screen.getByRole("listbox", { name: "Tool approvals" });
+    expect(
+      within(modes).getByText(
+        "Runs allowed commands in the sandbox without approval prompts.",
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      within(modes).getByRole("option", { name: /Sandbox only/ }),
+    );
+    expect(approval).toHaveBeenCalledWith("sandbox");
+    expect(approvals).toHaveFocus();
+  });
+
+  it("explains why thinking cannot be set while the model is automatic", () => {
+    const change = vi.fn();
+    render(
+      <WorkspaceComposerControls
+        models={models}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={change}
+      />,
+    );
+    const thinking = screen.getByRole("button", { name: "Default thinking" });
+    expect(thinking).toHaveAttribute(
+      "title",
+      "Uses your connection's default. Choose a model to set a level.",
+    );
+    fireEvent.click(thinking);
+    expect(
+      within(screen.getByRole("listbox", { name: "Thinking" })).getAllByRole(
+        "option",
+      ),
+    ).toHaveLength(1);
+    expect(screen.getByRole("dialog", { name: "Thinking" })).toHaveTextContent(
+      "Choose a model to set a level.",
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Default" }));
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it("flags a saved level the model no longer offers and lets Default clear it", () => {
+    const change = vi.fn();
+    render(
+      <WorkspaceComposerControls
+        models={models}
+        model="example"
+        effort="ultra"
+        disabled={false}
+        onChange={change}
+      />,
+    );
+    const thinking = screen.getByRole("button", { name: "Ultra thinking" });
+    expect(thinking).toHaveAttribute("data-warning", "true");
+    fireEvent.click(thinking);
+    expect(
+      screen.getByRole("option", { name: "Ultra · unavailable" }),
+    ).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("option", { name: "Default · Medium" }));
+    expect(change).toHaveBeenCalledWith("example", "");
+  });
+
+  it("locks every selector's choices while the assistant works", () => {
+    const change = vi.fn();
+    const approval = vi.fn();
+    render(
+      <WorkspaceComposerControls
+        models={models}
+        model="example"
+        effort=""
+        disabled
+        onChange={change}
+        runtime="claude"
+        approvalMode="sandbox"
+        onApprovalModeChange={approval}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+    fireEvent.click(screen.getByRole("option", { name: /Automatic/ }));
+    expect(screen.getByRole("dialog", { name: "Model" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /thinking$/ }));
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "You can change them when the conversation is idle.",
+    );
+    fireEvent.click(screen.getByRole("option", { name: /^High/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Tool approvals: Sandbox only" }),
+    );
+    expect(screen.getByRole("option", { name: /^Ask/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("option", { name: /^Ask/ }));
+    expect(change).not.toHaveBeenCalled();
+    expect(approval).not.toHaveBeenCalled();
+  });
+
+  it("clears saved approvals from the approvals selector and hides it for API connections", async () => {
+    const clear = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <WorkspaceComposerControls
+        models={[]}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={vi.fn()}
+        runtime="claude"
+        approvalMode="ask"
+        onApprovalModeChange={vi.fn()}
+        onClearApprovals={clear}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Tool approvals: Ask first" }),
+    );
+    expect(
+      screen.getByText("Asks before running a sandboxed shell command."),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear saved approvals" }),
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Saved approvals cleared.",
+    );
+    expect(clear).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <WorkspaceComposerControls
+        models={[]}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={vi.fn()}
+        runtime="anthropic-api"
+        approvalMode="ask"
+        onApprovalModeChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^Tool approvals/ }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Model: Anthropic API · Auto" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reads usage only when the model selector opens", async () => {
+    const usage = vi.fn().mockResolvedValue(null);
+    render(
+      <WorkspaceComposerControls
+        models={[]}
+        model=""
+        effort=""
+        disabled={false}
+        onChange={vi.fn()}
+        runtime="claude"
+        loadClaudeUsage={usage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /thinking$/ }));
+    expect(usage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Model:/ }));
+    await screen.findByText(/It will appear here after Claude's next reply/);
+    expect(usage).toHaveBeenCalledTimes(1);
+  });
 });

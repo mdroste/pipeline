@@ -11,7 +11,7 @@ your previous sidebar preference.
 | --- | --- |
 | General | Theme, text size, spacing, editor font and wrapping, startup page, and guided setup |
 | Models | Your default model, review-stage models, backup provider, ChatGPT sign-in, Claude, API keys, and local model servers. See [Models](connections.md) |
-| Conversations | Send shortcut and automatic conversation titles |
+| Conversations | Send shortcut, model settings in one menu or separate selectors, and automatic conversation titles |
 | Reviews | Parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
 | Data & Storage | Research data folder, disk use, retention, cleanup, backups, and Trash |
 | Notifications | Completion, failure, and attention notices, desktop notifications, and sound |
@@ -28,8 +28,8 @@ Review defaults apply to reviews you start afterward. Use **New review →
 Advanced** to opt into saved stage and workflow model choices. A running review
 keeps the settings it started with.
 
-Choose each conversation’s provider, model, and thinking level in its
-**Model and thinking** picker. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
+Choose each conversation’s provider, model, and thinking level with the
+selectors below its message box. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
 file access, including command setup. See
 [Conversation access](connections.md#conversation-access).
 
@@ -49,8 +49,8 @@ account or the OpenAI API. **Set up connection** opens the provider's setup.
   to enable stage choices from **Settings → Models → Review models** and saved
   workflow pins.
 - A new conversation copies it when it starts. Changing the default leaves
-  existing conversations as they are, and you can change any conversation in
-  its **Model and thinking** picker.
+  existing conversations as they are, and you can change any conversation with
+  the selectors below its message box.
 - Automations keep the provider and model of the conversation they came from.
 
 Until you choose a default, reviews use Claude and new conversations start on

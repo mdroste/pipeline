@@ -70,6 +70,7 @@
 }
 
 .workspace-composer-actions {
+  container: composer-actions / inline-size;
   display: flex;
   align-items: center;
   gap: var(--ui-space-2);
@@ -88,8 +89,8 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: var(--ui-control-height);
-  height: var(--ui-control-height);
+  width: 1.75rem;
+  height: 1.75rem;
   border-radius: 50%;
   background: var(--ui-inverse);
   color: var(--ui-on-inverse);
@@ -113,7 +114,7 @@
   padding: 0 var(--ui-space-2);
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
-  font-size: var(--ui-text-label);
+  font-size: var(--ui-text-meta);
   font-weight: 500;
   transition:
     background-color 0.15s,
@@ -131,6 +132,31 @@
 }
 .workspace-model-chip[data-warning="true"] {
   color: var(--ui-warning);
+}
+/* Separate selectors drop their qualifiers before they would truncate, then
+   their chevrons. Only the model selector truncates; the short ones keep
+   their words. */
+.workspace-chip-compact {
+  display: none;
+}
+.workspace-composer-chip--fixed {
+  flex-shrink: 0;
+}
+@container composer-actions (max-width: 36rem) {
+  .workspace-chip-full {
+    display: none;
+  }
+  .workspace-chip-compact {
+    display: inline;
+  }
+}
+@container composer-actions (max-width: 23.5rem) {
+  .workspace-composer-chip {
+    padding: 0 var(--ui-space-1);
+  }
+  .workspace-composer-chip > .workspace-chip-chevron {
+    display: none;
+  }
 }
 
 /* Attached sources: one row of chips above the field. */

@@ -12,6 +12,8 @@ export interface AppPreferences {
   editorWrap: boolean;
   density: "comfortable" | "compact";
   sendShortcut: "enter" | "mod-enter";
+  /** Separate composer selectors, or the earlier single settings menu. */
+  composerControls: "separate" | "combined";
   startup: "restore" | "home";
   notifyCompletion: boolean;
   notifyFailure: boolean;
@@ -31,6 +33,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   editorWrap: false,
   density: "comfortable",
   sendShortcut: "enter",
+  composerControls: "separate",
   startup: "home",
   notifyCompletion: true,
   notifyFailure: true,
@@ -70,6 +73,7 @@ export function parsePreferences(raw: string | null): AppPreferences {
   if (value.density === "compact") next.density = "compact";
   next.typeface = typefaceOption(value.typeface).value;
   if (value.sendShortcut === "mod-enter") next.sendShortcut = "mod-enter";
+  if (value.composerControls === "combined") next.composerControls = "combined";
   if (value.startup === "restore") next.startup = "restore";
   return next;
 }

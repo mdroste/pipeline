@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import type { ConversationSnapshot } from "../../lib/workbench/sessionTypes";
 import type { ChatApprovalMode } from "../../lib/workbench/runtimeTypes";
 import { runtimeClient } from "../../lib/workbench/runtimeClient";
+import { useAppPreferences } from "../../lib/appPreferences";
 import WorkspaceComposerControls, {
   loadAccountSummary,
   loadClaudeUsage,
@@ -50,8 +51,10 @@ export default function WorkspaceComposerToolbar({
   setEffort,
   saveSelection,
 }: Props) {
+  const { composerControls } = useAppPreferences();
   return (
     <WorkspaceComposerControls
+      layout={composerControls}
       models={models}
       model={model}
       effort={effort}

@@ -321,8 +321,19 @@ export function ConversationBehavior() {
           <option value="enter">Enter</option>
           <option value="mod-enter">{isMac ? "Command" : "Ctrl"}+Enter</option>
         </select>
-        <SaveFeedback {...feedback} />
+        {feedback.key === "sendShortcut" && <SaveFeedback {...feedback} />}
       </SettingRow>
+      <div id="composer-controls" className="settings-anchor">
+        <Toggle
+          label="Combine model settings in one menu"
+          description="Shows provider, model, thinking and tool approvals in a single menu in the message box instead of separate selectors."
+          checked={p.composerControls === "combined"}
+          onChange={(value) =>
+            update("composerControls", value ? "combined" : "separate")
+          }
+        />
+        {feedback.key === "composerControls" && <SaveFeedback {...feedback} />}
+      </div>
     </>
   );
 }

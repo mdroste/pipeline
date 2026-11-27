@@ -76,7 +76,7 @@ Open **Settings → Models** to connect a model provider:
 | OpenAI, Anthropic, or Google API | Enter an API key |
 | Local or custom model | Enter an OpenAI-compatible server URL and model |
 
-Choose a model in the conversation’s **Model and thinking** picker. Subscription
+Choose a model with the selector below the conversation’s message box. Subscription
 use counts against your plan. Tool and command support depends on the connection
 and operating system; see [Models](docs/connections.md) for setup and
 [Support](.github/SUPPORT.md) for system requirements.

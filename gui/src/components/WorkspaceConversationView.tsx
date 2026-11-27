@@ -509,7 +509,7 @@ export default function WorkspaceConversationView({
                 >
                   <Icon
                     name={active ? "stop" : "arrow-up"}
-                    className="h-[18px] w-[18px]"
+                    className="h-3.5 w-3.5"
                   />
                 </button>
               </Tooltip>

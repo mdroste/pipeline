@@ -45,6 +45,9 @@ function subscribeVisibility(listener: () => void) {
 }
 const windowVisible = () => document.visibilityState !== "hidden";
 
+/** The conversation pane beside the project, in pixels. */
+const ASSISTANT_WIDTH = { default: 440, min: 360, max: 560 };
+
 export default function WorkspaceDesk({
   project,
   artifacts,
@@ -106,9 +109,9 @@ export default function WorkspaceDesk({
   const automatic = useRef(false);
   const [assistantWidth, setAssistantWidth] = usePersistentPanelWidth(
     `pipeline.workspace.assistantWidth.${workspaceId ?? "unfiled"}`,
-    380,
-    360,
-    560,
+    ASSISTANT_WIDTH.default,
+    ASSISTANT_WIDTH.min,
+    ASSISTANT_WIDTH.max,
   );
   const [lastPane, setLastPane] = useState<"project" | "assistant">("project");
   // Request counters belong to the page. A newly selected project must not
@@ -202,7 +205,7 @@ export default function WorkspaceDesk({
   };
   const reset = () => {
     split();
-    setAssistantWidth(380);
+    setAssistantWidth(ASSISTANT_WIDTH.default);
   };
   useEffect(() => {
     if (resetRequest !== requests.current.resetRequest) reset();
@@ -360,11 +363,11 @@ export default function WorkspaceDesk({
             <ResizeHandle
               edge="left"
               label="Resize assistant"
-              min={360}
-              max={560}
+              min={ASSISTANT_WIDTH.min}
+              max={ASSISTANT_WIDTH.max}
               minRemaining={480}
               currentWidth={visibleAssistantWidth}
-              defaultWidth={380}
+              defaultWidth={ASSISTANT_WIDTH.default}
               onResize={setAssistantWidth}
               controlsId={`${id}-assistant`}
             />

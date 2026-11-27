@@ -143,6 +143,13 @@ export function settingsSearchEntries(
   );
   add(
     "conversations",
+    "composer-controls",
+    "Combine model settings in one menu",
+    "Message box, composer, provider, model, thinking, effort, tool approvals, separate selectors",
+    p.composerControls === "combined",
+  );
+  add(
+    "conversations",
     "conversation-titles",
     "Conversation titles",
     "Automatically name conversations; title model and thinking level",
