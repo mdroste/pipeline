@@ -9,7 +9,7 @@ use super::inspection::{
 };
 use super::omissions::clear_omitted_references;
 use super::{
-    conversation_files, copy_entry, hash_reader, now, project_copies, safe_archive_name,
+    about_you, conversation_files, copy_entry, hash_reader, now, project_copies, safe_archive_name,
     validate_absolute_file,
 };
 use crate::workbench::store::{
@@ -288,6 +288,7 @@ pub fn import_archive(
         temporary.path(),
         &mut expected_names,
     )?;
+    about_you::validate(&manifest.about_you, temporary.path(), &mut expected_names)?;
     for session_id in session_ids {
         expected_names.insert(format!("transcripts/{session_id}.md"));
         expected_names.insert(format!("transcripts/{session_id}.json"));
@@ -587,6 +588,7 @@ pub fn import_archive(
     let imported = open_archived_database(&database_path)?;
     let mut installed =
         conversation_files::install(store, &manifest.conversation_files, temporary.path())?;
+    let mut installed_about_you = about_you::install(store, &manifest.about_you, temporary.path())?;
     let mut destination = store.connection()?;
     let backup = Backup::new(&imported, &mut destination)
         .map_err(|error| WorkbenchError::storage("Failed to start archive restore", error))?;
@@ -596,6 +598,12 @@ pub fn import_archive(
     drop(backup);
     installed.commit();
     installed_copies.commit();
+    installed_about_you.commit();
+    let mut portability_note = manifest.portability_note;
+    if let Some(about_you) = installed_about_you.note.take() {
+        portability_note.push_str("\n\n");
+        portability_note.push_str(&about_you);
+    }
     let workspace_count = destination
         .query_row("SELECT COUNT(*) FROM workspaces", [], |row| {
             row.get::<_, i64>(0)
@@ -615,7 +623,7 @@ pub fn import_archive(
         blob_count: manifest.blobs.len(),
         bytes: archive_size,
         native_bindings_retired: retired,
-        portability_note: manifest.portability_note,
+        portability_note,
         omitted_files,
     })
 }

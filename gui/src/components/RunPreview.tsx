@@ -36,6 +36,8 @@ export interface RunPreviewPlan {
 interface Props {
   authorNote?: string | null;
   onEditAuthorNote?: () => void;
+  /** The editors receive the author's style examples from About you. */
+  matchWriting?: boolean;
   plan: RunPreviewPlan;
   config: PipelineConfig;
   inputPath: string;
@@ -135,6 +137,7 @@ function fixedAccessRow(
 export default function RunPreview({
   authorNote,
   onEditAuthorNote,
+  matchWriting = false,
   plan,
   config,
   inputPath,
@@ -323,6 +326,15 @@ export default function RunPreview({
           )}
 
           <dl className="mt-6 space-y-4">
+            {matchWriting && (
+              <SummaryRow label="Your writing">
+                Editors match your writing
+                <p className={SUMMARY_NOTE}>
+                  They receive your style notes and passages from the papers you
+                  marked in About you, not your background.
+                </p>
+              </SummaryRow>
+            )}
             <SummaryRow label="Steps">
               {autoAssembled
                 ? `${stepsLabel(steps.length)} + ${adaptiveCountLabel} specialists chosen for each document`

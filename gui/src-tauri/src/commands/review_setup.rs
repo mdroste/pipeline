@@ -2,8 +2,9 @@
 
 use super::run_context::{
     bind_author_note, bind_foreground_launch, bind_model_overrides, bind_runtime_snapshot,
-    check_snapshot_dependencies, load_run_snapshot, resolved_input_interpretation,
-    validate_named_input_paths, validate_primary_input_selection, RunModelOverrides,
+    bind_style_examples, check_snapshot_dependencies, load_run_snapshot,
+    resolved_input_interpretation, validate_named_input_paths, validate_primary_input_selection,
+    RunModelOverrides,
 };
 use crate::pipeline::executor;
 use crate::pipeline_config;
@@ -36,6 +37,9 @@ pub struct RunSetupResponse {
     pub input_mode: String,
     pub variables: Vec<crate::pipeline_config::VarSpec>,
     pub input_slots: Vec<crate::pipeline_config::InputSlot>,
+    /// Whether New review offers Match my writing: the workflow has editors
+    /// that use style examples, and About you has some to send.
+    pub match_writing_available: bool,
 }
 
 /// Return the inexpensive profile metadata needed to render New Run. This
@@ -45,6 +49,9 @@ pub struct RunSetupResponse {
 #[tauri::command]
 pub async fn get_run_setup() -> Result<RunSetupResponse, String> {
     let snapshot = load_run_snapshot()?;
+    let match_writing_available = bind_style_examples(snapshot.clone(), true)?
+        .style_examples
+        .is_some();
     Ok(RunSetupResponse {
         profile_id: snapshot.settings.active_profile.clone(),
         profile_config_snapshot_id: snapshot.config_fingerprint,
@@ -54,6 +61,7 @@ pub async fn get_run_setup() -> Result<RunSetupResponse, String> {
         },
         variables: snapshot.config.variables,
         input_slots: snapshot.config.extraction.extra_inputs,
+        match_writing_available,
     })
 }
 
@@ -99,6 +107,9 @@ pub struct ExecutionPlanResponse {
     pub host_checks: Vec<crate::pipeline::analyzers::registry::HostCheck>,
     /// Files in the selected folders that won't fit in the Review's copy.
     pub input_notices: Vec<String>,
+    /// Whether Match my writing can apply: the workflow has editors that use
+    /// style examples and About you has style notes or examples to send.
+    pub match_writing_available: bool,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -114,6 +125,7 @@ pub async fn get_execution_plan(
     input_interpretation: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
+    match_writing: Option<bool>,
 ) -> Result<ExecutionPlanResponse, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -173,6 +185,11 @@ pub async fn get_execution_plan(
     let input_slots = snapshot.config.extraction.extra_inputs.clone();
     let snapshot = bind_runtime_snapshot(snapshot, &variables, &extra_inputs)?;
     let snapshot = bind_author_note(snapshot, author_note.as_deref())?;
+    let snapshot = bind_style_examples(snapshot, match_writing.unwrap_or(false))?;
+    let match_writing_available = snapshot.style_examples.is_some()
+        || bind_style_examples(snapshot.clone(), true)?
+            .style_examples
+            .is_some();
     let snapshot = bind_foreground_launch(
         snapshot,
         paper_path.as_deref().unwrap_or(""),
@@ -181,6 +198,10 @@ pub async fn get_execution_plan(
     )?;
     let mut planning_config = snapshot.config.clone();
     pipeline_config::apply_agent_defaults(&mut planning_config, &snapshot.settings);
+    crate::pipeline::style_examples::apply(
+        &mut planning_config,
+        snapshot.style_examples.as_deref(),
+    );
     // Show a design the run would refuse here, before anything is billed.
     if !crate::auto_review::uses_auto_review_contract(&planning_config) {
         crate::pipeline_config::validate_runtime_config(&planning_config)?;
@@ -259,6 +280,7 @@ pub async fn get_execution_plan(
         ),
         host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
         input_notices,
+        match_writing_available,
     })
 }
 

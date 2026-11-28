@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { AllowanceField, ReviewEstimate } from "../tasks/Budget";
 /** Form fields stay owned by the builder; changing sections never resets a draft. */
 import type {
@@ -162,7 +163,7 @@ export function ToolFields({
         {choices ? (
           <>
             <p className="task-muted mission-builder-path">
-              Project folder: {choices.root}
+              Project folder: {displayPath(choices.root)}
             </p>
             <label className="mission-check">
               <input

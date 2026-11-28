@@ -131,12 +131,14 @@ fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         _ => report_text(dir)?,
     };
-    let bundle = read_bounded(
-        &dir.join("context/document_bundle.json"),
-        MAX_BUNDLE_BYTES,
-        "document record",
+    // A finished run may keep its document record compressed.
+    let bundle = crate::runs::read_run_file_bytes(
+        dir,
+        "context/document_bundle.json",
+        MAX_BUNDLE_BYTES as usize,
     )
     .ok()
+    .flatten()
     .and_then(|bytes| serde_json::from_slice::<BundleHead>(&bytes).ok())
     .unwrap_or_default();
     let source = if bundle.extraction.source_path.is_empty() {

@@ -5,6 +5,15 @@
 import type { FileLocation } from "./fileLinks";
 import type { OpenResearchObject } from "./deskClient";
 
+/** A file dragged out of a project's file list. `x` and `y` are client pixels. */
+export interface ProjectFileDrag {
+  paths: string[];
+  /** "drop" and "cancel" end the drag. */
+  phase: "move" | "drop" | "cancel";
+  x: number;
+  y: number;
+}
+
 export interface AppEventMap {
   "project-notes-changed": { workspaceId: string };
   "project-pins-changed": Record<string, never>;
@@ -25,6 +34,8 @@ export interface AppEventMap {
     objects: OpenResearchObject[];
     whenReady?: boolean;
   };
+  /** A project file is being dragged toward the conversation beside it. */
+  "project-file-drag": ProjectFileDrag & { workspaceId: string };
 }
 
 type Listener<K extends keyof AppEventMap> = (payload: AppEventMap[K]) => void;

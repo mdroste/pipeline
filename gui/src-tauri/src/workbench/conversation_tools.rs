@@ -79,7 +79,60 @@ pub(crate) fn owns(name: &str) -> bool {
             | "web_fetch"
             | "web_download"
             | "shell"
+            | "writing_samples"
+            | "writing_sample_read"
     )
+}
+
+/// Reading the researcher's own earlier papers from About you. The harness
+/// offers these only with Your writing, when there are examples to read.
+pub(crate) fn writing_catalog() -> Vec<Value> {
+    vec![
+        json!({"name":"writing_samples","description":"List the researcher's own earlier papers that they marked as style examples: id, title, year, kind, and length in words. They show how the researcher writes; they are not sources for this work.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
+        json!({"name":"writing_sample_read","description":"Read part of one of the researcher's earlier papers listed by writing_samples. start and length are byte offsets into its text; up to 64 KiB is returned. Use it for voice, structure, and conventions only: never cite it, quote it as evidence, or take facts or results from it.","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"start":{"type":"integer","minimum":0},"length":{"type":"integer","minimum":1,"maximum":65536}},"required":["id"],"additionalProperties":false}}),
+    ]
+}
+
+/// Runs a writing tool. Only examples can be listed or read: a paper the
+/// researcher has not marked stays on their computer.
+pub(crate) fn writing_tool(store: &Store, tool: &str, args: &Value) -> WorkbenchResult<Value> {
+    let folder = crate::researcher::folder_beside(store.root_path())
+        .ok_or_else(|| WorkbenchError::invalid("Your writing is unavailable here"))?;
+    let examples = crate::researcher::writing(&folder).examples;
+    match tool {
+        "writing_samples" => Ok(json!({
+            "samples": examples.iter().map(|sample| json!({
+                "id": sample.id, "title": sample.title, "year": sample.year,
+                "kind": sample.kind, "words": sample.words,
+            })).collect::<Vec<_>>(),
+            "use": "Style reference only. These are not sources for this work.",
+        })),
+        "writing_sample_read" => {
+            let id = args["id"].as_str().ok_or_else(|| {
+                WorkbenchError::invalid("A paper id from writing_samples is required")
+            })?;
+            let sample = examples
+                .iter()
+                .find(|sample| sample.id == id)
+                .ok_or_else(|| {
+                    WorkbenchError::invalid(
+                        "That paper is not one of the researcher's style examples",
+                    )
+                })?;
+            let start = args["start"].as_u64().unwrap_or(0) as usize;
+            let length = args["length"]
+                .as_u64()
+                .unwrap_or(32 * 1024)
+                .min(crate::researcher::MAX_READ_BYTES as u64) as usize;
+            let read = crate::researcher::read_sample(&folder, id, start, length)
+                .map_err(WorkbenchError::invalid)?;
+            Ok(json!({
+                "id": read.id, "title": sample.title, "start": read.start, "end": read.end,
+                "total": read.total, "text": read.text,
+            }))
+        }
+        _ => Err(WorkbenchError::invalid("Unknown writing tool")),
+    }
 }
 
 pub(crate) fn catalog(effective: &EffectiveHarness) -> Vec<Value> {
@@ -313,9 +366,20 @@ async fn execute(context: Context, input: Value) -> WorkbenchResult<Value> {
             true,
             super::shell::call(&context.session, args).await?,
         )),
+        "writing_samples" | "writing_sample_read" => {
+            let name = tool.to_owned();
+            let value = run_store(move |store| {
+                active(&store, &context)?;
+                writing_tool(&store, &name, &args)
+            })
+            .await?;
+            Ok(response(true, value))
+        }
         _ => Err(WorkbenchError::invalid("Unknown conversation tool")),
     }
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod writing_tests;

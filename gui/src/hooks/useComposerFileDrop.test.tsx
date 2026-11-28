@@ -7,11 +7,15 @@ import type { FileDropEvent } from "../lib/fileDrop";
 
 const mocks = vi.hoisted(() => ({
   importPaper: vi.fn(),
+  captureSourceContext: vi.fn(),
   notify: vi.fn(),
   emit: null as ((event: FileDropEvent) => void) | null,
 }));
 vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("../components/DialogService", () => ({ notify: mocks.notify }));
+vi.mock("../lib/researchContext", () => ({
+  captureSourceContext: mocks.captureSourceContext,
+}));
 vi.mock("../lib/fileDrop", () => ({
   onFileDrop: async (handler: (event: FileDropEvent) => void) => {
     mocks.emit = handler;
@@ -31,6 +35,7 @@ function Harness({
   const state = useComposerFileDrop({
     targetRef: target,
     workspaceId,
+    projectId: "project",
     sessionId: "conversation",
     blocked,
     onBusy,
@@ -61,6 +66,12 @@ beforeEach(() => {
       extraction: { status: title === "scan.pdf" ? "failed" : "complete" },
     },
   }));
+  mocks.captureSourceContext.mockImplementation(async (_, { path }) => [
+    {
+      role: "source",
+      object: { kind: "source_selection", id: `ctx-${path}`, revision: "r1" },
+    },
+  ]);
 });
 afterEach(() => stop());
 
@@ -146,4 +157,77 @@ it("declines drops without a project or while a response is running", async () =
   );
   expect(mocks.importPaper).not.toHaveBeenCalled();
   expect(onBusy).not.toHaveBeenCalled();
+});
+
+const drag = (
+  phase: "move" | "drop" | "cancel",
+  workspaceId = "project",
+  paths = ["code/04_summary_stats.do"],
+) =>
+  act(async () =>
+    appEvents.emit("project-file-drag", {
+      workspaceId,
+      paths,
+      phase,
+      x: 5,
+      y: 5,
+    }),
+  );
+
+it("attaches a file dragged from the project's file list", async () => {
+  render(<Harness />);
+  over("pane");
+  await drag("move");
+  expect(screen.getByTestId("pane")).toHaveAttribute("data-state", "over");
+  await drag("drop");
+  await waitFor(() => expect(onBusy).toHaveBeenLastCalledWith(false));
+  expect(mocks.captureSourceContext).toHaveBeenCalledWith("project", {
+    path: "code/04_summary_stats.do",
+    expectedHash: null,
+    checkpointId: null,
+    selection: null,
+  });
+  expect(mocks.importPaper).not.toHaveBeenCalled();
+  expect(added).toEqual([
+    {
+      workspaceId: "project",
+      whenReady: true,
+      objects: [
+        {
+          kind: "source_selection",
+          id: "ctx-code/04_summary_stats.do",
+          revision: "r1",
+        },
+      ],
+    },
+  ]);
+  expect(screen.getByTestId("pane")).toHaveAttribute("data-state", "idle");
+});
+
+it("ignores project file drags that miss the conversation or come from another project", async () => {
+  render(<Harness />);
+  over("elsewhere");
+  await drag("move");
+  expect(screen.getByTestId("pane")).toHaveAttribute("data-state", "idle");
+  await drag("drop");
+  over("pane");
+  await drag("move", "other-project");
+  expect(screen.getByTestId("pane")).toHaveAttribute("data-state", "idle");
+  await drag("drop", "other-project");
+  await drag("move");
+  await drag("cancel");
+  expect(screen.getByTestId("pane")).toHaveAttribute("data-state", "idle");
+  expect(mocks.captureSourceContext).not.toHaveBeenCalled();
+  expect(added).toEqual([]);
+});
+
+it("declines a dragged project file while a response is running", async () => {
+  render(<Harness blocked />);
+  over("pane");
+  await drag("drop");
+  expect(mocks.notify).toHaveBeenLastCalledWith(
+    expect.stringMatching(/Wait for the current response/),
+    "info",
+  );
+  expect(mocks.captureSourceContext).not.toHaveBeenCalled();
 });

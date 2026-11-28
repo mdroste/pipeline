@@ -14,7 +14,6 @@ import type {
 export type ModuleKind = HarnessModule["kind"];
 
 export const MODULE_KIND_ORDER: ModuleKind[] = [
-  "instruction_pack",
   "context_provider",
   "tool",
   "inspector",
@@ -22,7 +21,6 @@ export const MODULE_KIND_ORDER: ModuleKind[] = [
 ];
 
 export const MODULE_KIND_LABELS: Record<ModuleKind, string> = {
-  instruction_pack: "Research instructions",
   context_provider: "Context",
   tool: "Tools",
   inspector: "Research panels",
@@ -30,7 +28,6 @@ export const MODULE_KIND_LABELS: Record<ModuleKind, string> = {
 };
 
 export const MODULE_KIND_HINTS: Record<ModuleKind, string> = {
-  instruction_pack: "Instructions sent with each message.",
   context_provider: "Source material included with each message.",
   tool: "Tools the assistant can use. Each use is recorded.",
   inspector:
@@ -52,7 +49,10 @@ export function groupModules(modules: HarnessModule[]): Array<{
   })).filter((group) => group.modules.length > 0);
 }
 
-/** Capability bundles cover every module that is not an instruction pack. */
+/**
+ * Capability bundles cover every module a profile chooses. Automatic modules,
+ * such as reading the project's papers, are on in every project conversation.
+ */
 export interface ModuleBundle {
   id: string;
   label: string;
@@ -67,34 +67,28 @@ const BUNDLE_DEFINITIONS: Array<
     id: "minimal",
     label: "Instructions only",
     description:
-      "Use the profile’s instructions without adding project sources or research tools.",
+      "Use the profile’s instructions. The assistant can still read the project’s papers when asked.",
     modules: [],
   },
   {
     id: "read",
-    label: "Read the paper",
-    description: "Lets the assistant read and search the paper.",
-    modules: ["paper_context", "paper_tools"],
+    label: "Include the manuscript",
+    description: "Sends the project’s manuscript and notes with every message.",
+    modules: ["paper_context"],
   },
   {
     id: "ledger",
-    label: "Read papers & record findings",
+    label: "Manuscript & findings",
     description:
-      "Lets the assistant suggest notes, claims, and evidence for review.",
-    modules: [
-      "paper_context",
-      "paper_tools",
-      "research_ledger",
-      "evidence_inspector",
-    ],
+      "Also lets the assistant suggest notes, claims, and evidence for review.",
+    modules: ["paper_context", "research_ledger", "evidence_inspector"],
   },
   {
     id: "execution",
-    label: "Read papers, record findings & run analyses",
-    description: "Adds tested local commands and a panel to view results.",
+    label: "Manuscript, findings & analyses",
+    description: "Also adds tested local commands and a panel to view results.",
     modules: [
       "paper_context",
-      "paper_tools",
       "research_ledger",
       "evidence_inspector",
       "research_execution",
@@ -111,10 +105,8 @@ export function moduleBundles(catalog: HarnessModule[]): ModuleBundle[] {
   }));
 }
 
-function isPack(id: string, catalog: HarnessModule[]) {
-  return (
-    catalog.find((module) => module.id === id)?.kind === "instruction_pack"
-  );
+function isAutomatic(id: string, catalog: HarnessModule[]) {
+  return catalog.find((module) => module.id === id)?.automatic === true;
 }
 
 /** Return `selected` in catalog order. Unknown ids are dropped. */
@@ -128,14 +120,12 @@ export function orderModules(
     .map((module) => module.id);
 }
 
-/** Replace the non-pack modules with the bundle while keeping instruction packs. */
+/** Replace the profile's chosen modules with the bundle's. */
 export function applyBundle(
-  selected: string[],
   bundle: ModuleBundle,
   catalog: HarnessModule[],
 ): string[] {
-  const packs = selected.filter((id) => isPack(id, catalog));
-  return orderModules([...packs, ...bundle.modules], catalog);
+  return orderModules(bundle.modules, catalog);
 }
 
 export function activeBundle(
@@ -143,7 +133,9 @@ export function activeBundle(
   bundles: ModuleBundle[],
   catalog: HarnessModule[],
 ): string | null {
-  const capabilities = selected.filter((id) => !isPack(id, catalog)).sort();
+  const capabilities = selected
+    .filter((id) => !isAutomatic(id, catalog))
+    .sort();
   const match = bundles.find((bundle) => {
     const wanted = [...bundle.modules].sort();
     return (
@@ -183,23 +175,22 @@ export function describeModules(
   catalog: HarnessModule[],
   instructions: string,
 ): string {
-  const modules = orderModules(selected, catalog).map((id) =>
-    catalog.find((module) => module.id === id)!,
-  );
+  // Automatic modules are on in every project conversation, so a profile
+  // does not add them.
+  const modules = orderModules(selected, catalog)
+    .map((id) => catalog.find((module) => module.id === id)!)
+    .filter((module) => !module.automatic);
   if (modules.length === 0) {
     return instructions.trim()
-      ? "Use the profile’s instructions without adding project sources or research tools."
-      : "No research instructions or automatic context; an ordinary conversation.";
+      ? "Uses the profile’s instructions with no added sources or research tools."
+      : "No added instructions, sources, or research tools.";
   }
-  const packs = modules.filter((module) => module.kind === "instruction_pack");
   const context = modules.filter(
     (module) => module.kind === "context_provider",
   );
   const tools = modules.filter((module) => module.kind === "tool");
   const inspectors = modules.filter((module) => module.kind === "inspector");
   const parts: string[] = [];
-  if (packs.length)
-    parts.push(plural(packs.length, "research instruction set"));
   if (context.length)
     parts.push(
       context.map((module) => moduleName(module).toLowerCase()).join(" and "),
@@ -274,12 +265,12 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "mode",
     label: "Access mode",
     description:
-      "Inspect reads project files. Edit allows file changes using the method selected below.",
+      "Read only lets assistants read project files. Allow edits lets them change files using the method selected below.",
     builtIn: "inspect",
     kind: "select",
     options: [
-      { value: "inspect", label: "Inspect" },
-      { value: "edit", label: "Edit" },
+      { value: "inspect", label: "Read only" },
+      { value: "edit", label: "Allow edits" },
     ],
   },
   {
@@ -327,7 +318,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "webSearch",
     label: "Web search",
     description:
-      "Search the web, read public pages, and download files when Edit is enabled. Independent of command internet access.",
+      "Search the web, read public pages, and download files when edits are allowed. Independent of command internet access.",
     builtIn: false,
     kind: "boolean",
   },
@@ -399,16 +390,17 @@ export function compactAccessSummary(effective: EffectiveHarness): string {
     effective.capabilities?.privateFolder
       ? "Private working folder"
       : effective.mode === "edit"
-        ? "Edit"
-        : "Inspect",
+        ? "Allow edits"
+        : "Read only",
     effective.commandNetwork ? "command network" : "no command network",
     formatAccessValue(budget, effective.contextBudgetBytes),
   ].join(" · ");
 }
 
 export function compactModuleSummary(effective: EffectiveHarness): string {
+  // Count the profile's own modules; automatic ones are on in every project.
   const total = effective.preset.modules.length;
-  const active = effective.enabledModules.length;
+  const active = total - effective.unavailableModules.length;
   const modules =
     total === 0
       ? "no modules"

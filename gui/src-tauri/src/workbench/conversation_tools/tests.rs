@@ -195,7 +195,7 @@ fn project_turn(overrides: Value) -> (tempfile::TempDir, Store, String, String, 
             draft: None,
             overrides: Some(overrides),
             archived: None,
-            preset_id: Some("research_assistant".into()),
+            preset_id: Some("research".into()),
             paper_id: None,
             clear_paper: None,
         })

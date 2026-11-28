@@ -15,7 +15,7 @@ mod tool_budget_tests;
 use crate::agent_runtime::api::wire;
 pub(crate) use crate::connections::{ApiConnection as Connection, ApiProvider as Provider};
 pub(crate) use config::selected;
-pub(crate) use drive::title;
+pub(crate) use drive::{side_call, title};
 use std::sync::atomic::{AtomicU64, Ordering};
 static EPOCH: AtomicU64 = AtomicU64::new(1 << 42);
 pub(crate) fn next_epoch() -> u64 {

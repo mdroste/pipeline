@@ -107,7 +107,13 @@ describe("SettingsPage navigation", () => {
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
-    expect(within(navigation).getAllByRole("button")).toHaveLength(7);
+    expect(within(navigation).getAllByRole("button")).toHaveLength(8);
+    expect(
+      within(navigation)
+        .getAllByRole("button")
+        .slice(0, 2)
+        .map((item) => item.textContent),
+    ).toEqual(["General", "About you"]);
     expect(
       within(navigation).getByRole("button", { name: "Models" }),
     ).toBeVisible();

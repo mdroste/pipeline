@@ -532,8 +532,8 @@ pub(super) fn apply_follow_up(
     Ok(value)
 }
 
-fn stage_image(root: &Path, relative: &str, dir: &Path, page: u32) -> Option<std::path::PathBuf> {
-    let relative = Path::new(relative);
+fn stage_image(root: &Path, rel: &str, dir: &Path, page: u32) -> Option<std::path::PathBuf> {
+    let relative = Path::new(rel);
     if relative
         .components()
         .any(|part| !matches!(part, std::path::Component::Normal(_)))
@@ -542,23 +542,29 @@ fn stage_image(root: &Path, relative: &str, dir: &Path, page: u32) -> Option<std
     }
     let root = root.canonicalize().ok()?;
     let source = root.join(relative);
-    if !std::fs::symlink_metadata(&source).ok()?.is_file() {
-        return None;
-    }
-    let source = source.canonicalize().ok()?;
-    if !source.starts_with(&root) {
-        return None;
-    }
     let mut bytes = Vec::new();
-    crate::safety::open_regular_file(&source)
-        .ok()?
-        .take(MAX_PAGE_IMAGE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    if std::fs::symlink_metadata(&source).is_ok() {
+        if !std::fs::symlink_metadata(&source).ok()?.is_file() {
+            return None;
+        }
+        let source = source.canonicalize().ok()?;
+        if !source.starts_with(&root) {
+            return None;
+        }
+        crate::safety::open_regular_file(&source)
+            .ok()?
+            .take(MAX_PAGE_IMAGE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+    } else {
+        // A finished run removes page images that its PDF renders again.
+        bytes =
+            crate::runs::read_run_file_bytes(&root, rel, MAX_PAGE_IMAGE_BYTES as usize).ok()??;
+    }
     if bytes.is_empty() || bytes.len() as u64 > MAX_PAGE_IMAGE_BYTES {
         return None;
     }
-    let extension = source.extension()?.to_str()?;
+    let extension = relative.extension()?.to_str()?;
     let destination = dir.join(format!("page-{page}.{extension}"));
     std::fs::File::create(&destination)
         .ok()?

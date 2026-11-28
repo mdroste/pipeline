@@ -184,17 +184,17 @@ These settings apply to every conversation provider. In a conversation, open
 ones to its left.
 
 The **Access mode** menu in **Assistant settings** sets the same choice for this
-conversation: **Read only** is **Inspect**, and **Allow edits** is **Edit**.
+conversation. **Assistants** in **Project settings** sets it for the project.
 
 | Setting | What it permits |
 | --- | --- |
-| **Access mode → Inspect** | Read project files and explain findings. |
-| **Access mode → Edit** | Create and edit project files using the method selected under **File changes**. |
+| **Access mode → Read only** | Read project files and explain findings. |
+| **Access mode → Allow edits** | Create and edit project files using the method selected under **File changes**. |
 | **File changes → Review copy** | Prepare a separate copy automatically when you send a message. Review changes before copying them into your project. |
 | **File changes → Direct edits** | Edit the project directly with changes you can undo, and use configured research commands. General commands can only read project files. |
 | **Internet access for commands** | Let commands reach the internet, for example to download data or install packages. |
 | **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. In ChatGPT and Claude Code conversations, blank means public internet. API and local or custom server conversations need at least one site: while **Internet access for commands** is on and this is blank, commands don't run. |
-| **Web search** | Search the web and read public pages. With Edit access and a project, download files into new project paths. |
+| **Web search** | Search the web and read public pages. With **Allow edits** and a project, download files into new project paths. |
 
 The assistant checks that a file has not changed since it read it before
 saving an edit. Creating a file never replaces an existing one. Changes in
@@ -330,7 +330,7 @@ Commands follow **Internet access for commands** and **Allowed command sites**.
 API and local models need named sites when command internet access is enabled.
 Direct connections outside those sites are blocked.
 
-With **Access mode → Edit** and **File changes → Review copy**, commands can change
+With **Access mode → Allow edits** and **File changes → Review copy**, commands can change
 files in the automatically prepared copy. **Direct edits** uses Pipeline's
 file tools for changes to the main project and lets you undo those changes.
 

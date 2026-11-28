@@ -17,8 +17,11 @@ pub(super) use preflight::{
     check_snapshot_dependencies, require_snapshot_dependencies, resolved_input_interpretation,
     validate_named_input_paths, validate_primary_input_selection,
 };
+#[cfg(test)]
+pub(super) use snapshot::bind_style_examples_from;
 pub(super) use snapshot::{
-    bind_author_note, bind_foreground_launch, load_run_snapshot, load_run_snapshot_for_profile,
-    load_run_snapshot_for_workflow, settings_for_snapshot_fingerprint, stable_content_fingerprint,
-    stable_snapshot_fingerprint, RunSnapshot,
+    bind_author_note, bind_foreground_launch, bind_style_examples, load_run_snapshot,
+    load_run_snapshot_for_profile, load_run_snapshot_for_workflow,
+    settings_for_snapshot_fingerprint, stable_content_fingerprint, stable_snapshot_fingerprint,
+    RunSnapshot,
 };

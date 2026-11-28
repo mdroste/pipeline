@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 // The paper's build approval uses the same exact-command authorization as Jobs,
 // with the manuscript's action and settings kept separate from run diagnostics.
 import { useEffect, useState } from "react";
@@ -49,7 +50,9 @@ export default function ManuscriptBuildReview({
             finishes.
           </p>
           <pre className="manuscript-command">{preview.command.join(" ")}</pre>
-          <p className="text-xs text-ink-muted break-all">In {preview.cwd}</p>
+          <p className="text-xs text-ink-muted break-all">
+            In {displayPath(preview.cwd)}
+          </p>
           <p className="text-xs text-ink-muted">
             This command runs with your computer’s access to files and the
             network.

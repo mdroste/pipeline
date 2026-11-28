@@ -1,8 +1,5 @@
-import {
-  providerName,
-  type ConversationProvider,
-} from "../../lib/workspaceProviders";
-import { presetDescription } from "./harnessCopy";
+import type { ConversationProvider } from "../../lib/workspaceProviders";
+import { presetDescription, systemPromptNote } from "./harnessCopy";
 // Detail panel for one harness preset: editable header with a generated
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
 // and Modules tabs. Built-ins render read-only; clones own their copy.
@@ -122,9 +119,7 @@ function HarnessPresetPanel({
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? (
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {runtime !== "codex" && preset.id === "plain"
-                ? `${providerName(runtime)} default`
-                : preset.name}
+              {preset.name}
             </h2>
           ) : (
             <input
@@ -173,9 +168,7 @@ function HarnessPresetPanel({
         )}
         {readOnly ? (
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {runtime !== "codex" && preset.id === "plain"
-              ? `${providerName(runtime)} with Pipeline instructions and scoped project tools.`
-              : presetDescription(preset)}
+            {presetDescription(preset)}
           </p>
         ) : (
           <input
@@ -187,6 +180,12 @@ function HarnessPresetPanel({
             className={`${inputClass} text-xs`}
           />
         )}
+        <p
+          data-testid="system-prompt-note"
+          className="text-xs text-gray-600 dark:text-gray-300"
+        >
+          {systemPromptNote(draft, runtime)}
+        </p>
         <div className="flex flex-wrap items-center gap-2">
           {!inUse && (
             <button

@@ -2,13 +2,14 @@
 
 export interface HarnessModule {
   id: string;
-  kind:
-    "instruction_pack" | "context_provider" | "tool" | "inspector" | "recipe";
+  kind: "context_provider" | "tool" | "inspector" | "recipe";
   version: number;
   name: string;
   description: string;
   requiresWorkspace: boolean;
   capability: string;
+  /** On in every conversation where it can run, whatever the profile lists. */
+  automatic?: boolean;
 }
 
 export type BasePromptUpdate =

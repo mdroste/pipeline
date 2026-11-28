@@ -3,7 +3,8 @@
 // paths. Each change goes through the adapter's owner, and the tree holds no
 // file contents. Its one search box finds files by name and opens the first
 // match on Enter. Actions on a row live in that row's menu, opened by its
-// three-dot button, a right-click, or the context-menu key.
+// three-dot button, a right-click, or the context-menu key. With `onFileDrag`,
+// a file row can also be dragged out, for a conversation to pick it up.
 import {
   useCallback,
   useEffect,
@@ -31,6 +32,8 @@ import {
 } from "../../lib/fileTree";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { isMac } from "../../lib/platform";
+import { followPointerDrag } from "../../lib/pointerDrag";
+import type { ProjectFileDrag } from "../../lib/appEvents";
 import { confirmDialog, notify, promptDialog } from "../DialogService";
 import type { FileLocation } from "../../lib/fileLinks";
 import { IconButton, Menu, MenuItem, MenuSeparator } from "../../ui";
@@ -69,6 +72,7 @@ export default function FileBrowser({
   onTrashed,
   onAddToDocuments,
   onAskFile,
+  onFileDrag,
   searchRef,
 }: {
   adapter: FileAdapter;
@@ -81,9 +85,35 @@ export default function FileBrowser({
   onTrashed?: (path: string) => void;
   onAddToDocuments?: (path: string) => Promise<void>;
   onAskFile?: (path: string) => void;
+  onFileDrag?: (drag: ProjectFileDrag) => void;
   searchRef?: RefObject<HTMLInputElement | null>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  /** Drags a file out of the list, with its name following the pointer. */
+  const dragFile = (path: string, event: React.PointerEvent<HTMLElement>) => {
+    if (!onFileDrag || event.button !== 0 || !event.isPrimary) return;
+    if ((event.target as Element).closest(".file-browser-row-menu")) return;
+    const tag = document.createElement("div");
+    tag.className = "file-drag-label";
+    tag.textContent = baseName(path);
+    const report = (phase: ProjectFileDrag["phase"], x = 0, y = 0) =>
+      onFileDrag({ paths: [path], phase, x, y });
+    followPointerDrag(event, {
+      start: () => {
+        document.body.append(tag);
+        return true;
+      },
+      move: (e) => {
+        tag.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`;
+        report("move", e.clientX, e.clientY);
+      },
+      end: (drop, e) => {
+        tag.remove();
+        if (drop && e) report("drop", e.clientX, e.clientY);
+        else report("cancel");
+      },
+    });
+  };
   const [listings, setListings] = useState<Record<string, FileListing>>({});
   const latest = useRef(listings);
   latest.current = listings;
@@ -597,6 +627,7 @@ export default function FileBrowser({
                   aria-label={path}
                   title={path}
                   onClick={() => chooseMatch(path)}
+                  onPointerDown={(event) => dragFile(path, event)}
                 >
                   <FileIcon name={path} />
                   <span className="file-browser-name">{baseName(path)}</span>
@@ -652,6 +683,11 @@ export default function FileBrowser({
                 }
                 style={{ paddingLeft: 4 + depth * 14 }}
                 onClick={() => activate(entry)}
+                onPointerDown={
+                  entry.kind === "file"
+                    ? (event) => dragFile(entry.path, event)
+                    : undefined
+                }
                 onContextMenu={(event) => {
                   if (!hasRowMenu(entry)) return;
                   event.preventDefault();

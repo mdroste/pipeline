@@ -337,16 +337,32 @@ async fn execute(
 }
 
 pub(crate) async fn title(connection: &Connection, prompt: &str) -> Result<String, String> {
+    side_call(
+        connection,
+        "Return only a short, descriptive conversation title.",
+        prompt,
+        Duration::from_secs(60),
+    )
+    .await
+}
+
+/// One tool-free request outside any conversation, such as a title or a draft
+/// of the researcher's style notes. Returns the reply's text.
+pub(crate) async fn side_call(
+    connection: &Connection,
+    instructions: &str,
+    prompt: &str,
+    limit: Duration,
+) -> Result<String, String> {
     let client = wire::client_for(connection)?;
-    let instructions = "Return only a short, descriptive conversation title.";
     let messages = wire::initial(connection.provider, instructions, prompt);
     let mut body = wire::body(connection, instructions, &messages, &[]);
     let response = tokio::time::timeout(
-        Duration::from_secs(60),
+        limit,
         model_call(&client, connection, &mut body, &mut 0, None),
     )
     .await
-    .map_err(|_| "Title request timed out")??;
+    .map_err(|_| "The model did not reply in time")??;
     let reply = wire::parse(connection.provider, response)?;
     has_tool_calls(&reply)?;
     Ok(reply.text)

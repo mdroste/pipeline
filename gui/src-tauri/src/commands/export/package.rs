@@ -224,6 +224,7 @@ pub(in crate::commands) fn write_custom_payload(
     manifest: &crate::runs::RunManifest,
     selection: &ExportSelection,
 ) -> Result<(), String> {
+    let run_dir = source;
     let source = crate::safety::ReadRoot::open(source).map_err(|error| error.to_string())?;
     if selection.report {
         write_full_report(&source, destination)?;
@@ -239,8 +240,25 @@ pub(in crate::commands) fn write_custom_payload(
         )?;
     }
     let mut remaining = super::files::MAX_RUN_EXPORT_BYTES;
+    // Page images a finished run no longer keeps, rendered once from its PDF.
+    let rebuilt = if selection.source_documents {
+        crate::runs::RebuiltPages::render(run_dir)?
+    } else {
+        None
+    };
+    let rebuilt_page = |relative: &str| rebuilt.as_ref().and_then(|pages| pages.path(relative));
     for artifact in &manifest.artifacts {
         if custom_artifact_selected(artifact, selection) {
+            if let Some(image) = rebuilt_page(&artifact.rel_path) {
+                write_rebuilt_page(
+                    image,
+                    destination,
+                    &artifact.rel_path,
+                    Some(artifact),
+                    &mut remaining,
+                )?;
+                continue;
+            }
             copy_export_file(
                 &source,
                 destination,
@@ -254,10 +272,55 @@ pub(in crate::commands) fn write_custom_payload(
         if let Some(pages) = &manifest.page_artifacts {
             for page in 1..=pages.count {
                 let relative = pages.rel_path(page)?;
-                copy_export_file(&source, destination, &relative, None, &mut remaining)?;
+                match rebuilt_page(&relative) {
+                    Some(image) => {
+                        write_rebuilt_page(image, destination, &relative, None, &mut remaining)?
+                    }
+                    None => {
+                        copy_export_file(&source, destination, &relative, None, &mut remaining)?
+                    }
+                }
             }
         }
     }
+    Ok(())
+}
+
+/// Export a page image rendered again from the run's PDF, checked against
+/// the manifest entry when the run listed one.
+fn write_rebuilt_page(
+    image: &std::path::Path,
+    destination: &std::path::Path,
+    relative: &str,
+    expected: Option<&crate::runs::ArtifactEntry>,
+    remaining: &mut u64,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Write as _;
+    let bytes =
+        std::fs::read(image).map_err(|error| format!("Could not export '{relative}': {error}"))?;
+    let size = bytes.len() as u64;
+    if size > *remaining {
+        return Err("Artifact size changed or exceeds the export limit".into());
+    }
+    if let Some(entry) = expected {
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        if entry.bytes != size || (entry.sha256 != hash[..16] && entry.sha256 != hash) {
+            return Err(format!("Artifact changed since capture: {relative}"));
+        }
+    }
+    let target = destination.join(relative);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create '{}': {error}", parent.display()))?;
+    }
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&target)
+        .and_then(|mut file| file.write_all(&bytes))
+        .map_err(|error| format!("Could not create '{}': {error}", target.display()))?;
+    *remaining -= size;
     Ok(())
 }
 

@@ -969,7 +969,7 @@ fn private_folder_turns_are_told_to_work_there() {
         + 1];
     assert!(prompt.contains("starts in this conversation's private working folder"));
     assert!(prompt.contains(&root.display().to_string()));
-    assert!(!prompt.contains("File edits require Edit access"));
+    assert!(!prompt.contains("File edits need Allow edits access"));
     let sandbox = shell::sandbox(&root, &effective.capabilities, false);
     assert_eq!(
         sandbox["filesystem"]["allowWrite"][0],

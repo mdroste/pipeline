@@ -11,6 +11,8 @@ pub struct HarnessModule {
     pub description: &'static str,
     pub requires_workspace: bool,
     pub capability: &'static str,
+    /// On whenever it is available, whatever the profile lists.
+    pub automatic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

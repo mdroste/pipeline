@@ -2,16 +2,11 @@ import type {
   HarnessModule,
   HarnessPreset,
 } from "../../lib/workbench/harnessTypes";
+import type { ConversationProvider } from "../../lib/workspaceProviders";
 
 // Display aliases only: the backend metadata is part of saved harness
 // fingerprints and must remain unchanged when interface wording changes.
 const displayCopy: Readonly<Record<string, string>> = {
-  "General-purpose academic research structure.":
-    "Help develop research questions, assess evidence, and organize findings.",
-  "Revise against an immutable manuscript revision.":
-    "Revise a saved version of the manuscript.",
-  "Codex with Pipeline Workspace instructions and no added profile prompt or research tools.":
-    "Use Codex with Pipeline’s standard instructions and no additional research tools.",
   "Task chains": "Automations",
   "Research ledger": "Notes, claims & evidence",
   "Research execution": "Local analysis",
@@ -43,4 +38,49 @@ export function moduleName(module: HarnessModule): string {
 
 export function moduleDescription(module: HarnessModule): string {
   return harnessDiagnostic(module.description);
+}
+
+/**
+ * Who writes the connection's built-in base prompt. The ChatGPT connection
+ * runs Codex and both Claude Code connections run Claude Code. API and local
+ * connections have none, so Pipeline starts them from one line (workbench/api).
+ */
+export function basePromptOwner(
+  runtime: ConversationProvider,
+): "Codex" | "Claude Code" | null {
+  if (runtime === "codex") return "Codex";
+  if (runtime === "claude" || runtime === "claude-code-api")
+    return "Claude Code";
+  return null;
+}
+
+type PromptFields = Pick<HarnessPreset, "instructions" | "baseInstructions">;
+
+/** What a profile does to the connection's base prompt, in one sentence. */
+export function systemPromptNote(
+  preset: PromptFields,
+  runtime: ConversationProvider,
+): string {
+  const owner = basePromptOwner(runtime);
+  if (preset.baseInstructions != null) {
+    return owner
+      ? `Replaces ${owner}’s built-in base prompt with this profile’s prompt. Pipeline’s instructions are still added.`
+      : "Uses this profile’s prompt as the base prompt, followed by Pipeline’s instructions.";
+  }
+  const added = preset.instructions.trim()
+    ? " and this profile’s instructions"
+    : "";
+  return owner
+    ? `Keeps ${owner}’s built-in base prompt and adds Pipeline’s instructions${added}.`
+    : `Starts from Pipeline’s one-line base prompt and adds Pipeline’s instructions${added}.`;
+}
+
+/** Short form of {@link systemPromptNote} for compact summaries. */
+export function systemPromptSource(
+  preset: PromptFields,
+  runtime: ConversationProvider,
+): string {
+  if (preset.baseInstructions != null) return "This profile’s prompt";
+  const owner = basePromptOwner(runtime);
+  return owner ? `${owner} built-in` : "Pipeline one-line default";
 }

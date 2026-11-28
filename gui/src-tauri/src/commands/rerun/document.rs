@@ -56,10 +56,7 @@ pub(super) fn restore_document_context(
             .artifacts
             .iter()
             .any(|entry| entry.rel_path == raw_path)
-            || parent_dir
-                .join(raw_path)
-                .try_exists()
-                .map_err(|e| e.to_string())?
+            || crate::runs::run_file_exists(&parent_dir, raw_path)
         {
             let json = read_captured_text(parent, raw_path)?;
             let base: crate::document_bundle::DocumentBundle = serde_json::from_str(&json)
@@ -74,11 +71,8 @@ pub(super) fn restore_document_context(
         } else {
             // Preserve the original extractor's nodes even when the parser is
             // no longer installed. Older bundles lack the extraction-only file.
-            if parent_dir
-                .join("context/document_bundle.json")
-                .try_exists()
-                .map_err(|e| e.to_string())?
-            {
+            // A finished parent may keep the bundle compressed.
+            if crate::runs::run_file_exists(&parent_dir, "context/document_bundle.json") {
                 let json = read_captured_text(parent, "context/document_bundle.json")?;
                 let mut legacy: crate::document_bundle::DocumentBundle =
                     serde_json::from_str(&json)

@@ -375,3 +375,45 @@ it("says when a folder lists only part of what it holds", async () => {
   expect(await screen.findByText("First 5,000 items")).toBeInTheDocument();
   expect(screen.queryByText(/Use the filter/)).toBeNull();
 });
+
+it("drags a file row out with its name following the pointer", async () => {
+  class TestPointerEvent extends MouseEvent {
+    pointerId = 1;
+    isPrimary = true;
+  }
+  vi.stubGlobal("PointerEvent", TestPointerEvent);
+  const onOpen = vi.fn();
+  const onFileDrag = vi.fn();
+  render(
+    <FileBrowser
+      adapter={adapter()}
+      paths={[]}
+      onOpen={onOpen}
+      onFileDrag={onFileDrag}
+    />,
+  );
+  const row = await screen.findByRole("treeitem", { name: /a\.txt/ });
+  fireEvent.pointerDown(row, { clientX: 10, clientY: 10 });
+  fireEvent.pointerMove(document, { clientX: 400, clientY: 200 });
+  expect(document.querySelector(".file-drag-label")).toHaveTextContent(
+    "a.txt",
+  );
+  fireEvent.pointerUp(document, { clientX: 400, clientY: 200 });
+  fireEvent.click(row);
+  expect(onFileDrag.mock.calls.map(([drag]) => drag)).toEqual([
+    { paths: ["a.txt"], phase: "move", x: 400, y: 200 },
+    { paths: ["a.txt"], phase: "drop", x: 400, y: 200 },
+  ]);
+  expect(document.querySelector(".file-drag-label")).toBeNull();
+  expect(onOpen).not.toHaveBeenCalled();
+  // Folders stay put.
+  await act(async () => new Promise((resolve) => setTimeout(resolve)));
+  fireEvent.pointerDown(screen.getByRole("treeitem", { name: /code/ }), {
+    clientX: 10,
+    clientY: 10,
+  });
+  fireEvent.pointerMove(document, { clientX: 400, clientY: 200 });
+  fireEvent.pointerUp(document, { clientX: 400, clientY: 200 });
+  expect(onFileDrag).toHaveBeenCalledTimes(2);
+  vi.unstubAllGlobals();
+});

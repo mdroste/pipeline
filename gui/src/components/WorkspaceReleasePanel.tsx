@@ -1,3 +1,4 @@
+import { displayPath } from "../lib/displayPath";
 import { documentType } from "../lib/documentTypes";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -129,7 +130,9 @@ export default function WorkspaceReleasePanel({
     if (typeof path !== "string") return;
     const inspection = await releaseClient.inspectResearchArchive(path);
     const roots = inspection.workspaceRoots.length
-      ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
+      ? inspection.workspaceRoots
+          .map((root) => `• ${displayPath(root)}`)
+          .join("\n")
       : "• None";
     const leftOut = inspection.omittedFileCount
       ? `This backup was made without ${plural(inspection.omittedFileCount, "file")} that had gone missing. The items that used them come back as unavailable.\n\n`

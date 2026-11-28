@@ -44,7 +44,8 @@ pub(crate) use folder_snapshot::{
 pub(crate) use latex::{latex_without_comments, stage_selected_source, TEX_GRAPHICS_PATTERN};
 pub(crate) use pdf::{extract_pdftotext, is_informational_extraction_note};
 pub use rendering::{
-    render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,
+    render_pdf_page_preview, render_pdf_pages, render_retained_pdf_page, render_retained_pdf_pages,
+    RenderedPdfPagePreview, RenderedPdfPages,
 };
 pub(crate) use staged::reference as captured_reference;
 #[allow(unused_imports)]

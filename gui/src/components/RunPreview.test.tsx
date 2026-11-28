@@ -160,6 +160,29 @@ describe("RunPreview", () => {
     expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
   });
 
+  it("says when the editors will match the author's writing", () => {
+    const plan = {
+      profileId: "declaude",
+      inputMode: "document",
+      inputInterpretation: "document",
+      providers: ["claude"],
+      orientationAgent: "claude",
+      stages: [],
+    };
+    const props = {
+      config,
+      inputPath: "/papers/draft.pdf",
+      onCancel: () => {},
+      onRun: () => {},
+    };
+    const { rerender } = render(<RunPreview {...props} plan={plan} />);
+    expect(screen.queryByText("Your writing")).not.toBeInTheDocument();
+    rerender(<RunPreview {...props} plan={plan} matchWriting />);
+    const row = screen.getByText("Your writing").parentElement as HTMLElement;
+    expect(row).toHaveTextContent("Editors match your writing");
+    expect(row).toHaveTextContent("not your background");
+  });
+
   it("says what a selected folder will leave out", () => {
     const notice =
       "package holds 3.6 GB in 23 files. 13 files (3.4 GB) will be left out.";

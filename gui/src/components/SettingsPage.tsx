@@ -35,6 +35,7 @@ import {
   ConversationBehavior,
 } from "./settings/PreferenceSettings";
 import ConversationTitleSettings from "./settings/ConversationTitleSettings";
+import AboutYouSettings from "./settings/AboutYouSettings";
 import NotificationSettings from "./settings/NotificationSettings";
 import AdvancedSettings from "./settings/AdvancedSettings";
 import ConnectionStatus from "./settings/ConnectionStatus";
@@ -418,6 +419,7 @@ export default function SettingsPage({
                     </SettingsCard>
                   </>
                 )}
+                {section === "about" && <AboutYouSettings />}
                 {section === "conversations" && (
                   <>
                     <SettingsCard id="conversation-behavior">

@@ -19,6 +19,11 @@ interface Props {
   authorNote: string;
   onAuthorNoteChange: (note: string) => void;
   authorNoteFocusKey?: number;
+  /** Offered when the workflow's editors use style examples and About you
+   *  has some to send. */
+  matchWritingAvailable?: boolean;
+  matchWriting?: boolean;
+  onMatchWritingChange?: (value: boolean) => void;
   configVersion: number;
   configError: string | null;
   configLoading: boolean;
@@ -55,6 +60,9 @@ export default function RunSetupPanel({
   authorNote,
   onAuthorNoteChange,
   authorNoteFocusKey,
+  matchWritingAvailable = false,
+  matchWriting = false,
+  onMatchWritingChange,
   configVersion,
   configError,
   configLoading,
@@ -173,6 +181,30 @@ export default function RunSetupPanel({
               focusKey={authorNoteFocusKey}
               disabled={configLoading || preparingRun}
             />
+            {matchWritingAvailable && onMatchWritingChange && (
+              <label className="mt-3 flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={matchWriting}
+                  disabled={configLoading || preparingRun}
+                  aria-describedby="match-writing-help"
+                  onChange={(event) =>
+                    onMatchWritingChange(event.target.checked)
+                  }
+                />
+                <span>
+                  Match my writing
+                  <span
+                    id="match-writing-help"
+                    className="block text-ui-meta text-ink-muted"
+                  >
+                    Editors suggest replacement text in your voice, from your
+                    style notes and the papers you marked in About you.
+                  </span>
+                </span>
+              </label>
+            )}
           </section>
         </div>
         <div className="review-setup-column">

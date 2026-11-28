@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { useEffect, useRef, useState } from "react";
 import { deskClient, operation, type ContextItem } from "../../lib/deskClient";
 import {
@@ -261,9 +262,14 @@ export default function Followups({
                   <p>The research settings have changed.</p>
                 )}
                 {review.previousRoot !== review.request.binding.runtimeRoot && (
-                  <p>Previous working folder: {review.previousRoot}</p>
+                  <p>
+                    Previous working folder: {displayPath(review.previousRoot)}
+                  </p>
                 )}
-                <p>Working folder: {review.request.binding.runtimeRoot}</p>
+                <p>
+                  Working folder:{" "}
+                  {displayPath(review.request.binding.runtimeRoot)}
+                </p>
                 <p>
                   Research preset: {review.settings.preset} · Permissions:{" "}
                   {review.settings.permissions} · Internet access for commands:{" "}

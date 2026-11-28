@@ -1,15 +1,21 @@
 //! Workspace configuration inheritance and editable harness presets.
 
-use super::catalog::builtin_presets;
+use super::catalog::{builtin_presets, current_modules, current_preset_id};
 use super::{
     append_change, harness_modules, json_object, new_id, now, open_connection, validate_id,
     validate_text, BasePromptUpdate, ClonePresetRequest, HarnessCatalog, HarnessPreset,
     InstructionSection, SaveWorkspaceConfigRequest, UpdatePresetRequest, WorkspaceConfig,
-    HARNESS_SCHEMA_VERSION, MAX_INSTRUCTIONS_BYTES, TOOL_CATALOG_VERSION, WORKSPACE_PREAMBLE,
+    FIELD_CONVENTIONS_KEY, HARNESS_SCHEMA_VERSION, MAX_FIELD_CONVENTIONS_BYTES,
+    MAX_INSTRUCTIONS_BYTES, TOOL_CATALOG_VERSION, WORKSPACE_PREAMBLE,
 };
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, OptionalExtension as _, TransactionBehavior};
 use serde_json::{json, Map, Value};
+
+/// Whether conversations receive the researcher's background note from
+/// About you (`crate::researcher`). On unless a project or a conversation
+/// turns it off; it inherits like the access settings.
+pub(super) const ABOUT_YOU_KEY: &str = "aboutYou";
 
 fn config_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceConfig> {
     let body: String = row.get(3)?;
@@ -57,6 +63,27 @@ pub fn save_config(
         body.as_object().unwrap(),
         false,
     )?;
+    if !matches!(
+        body.get(ABOUT_YOU_KEY),
+        None | Some(Value::Null | Value::Bool(_))
+    ) {
+        return Err(WorkbenchError::invalid("Using About you must be on or off"));
+    }
+    match body.get(FIELD_CONVENTIONS_KEY) {
+        None | Some(Value::Null) => {}
+        Some(_) if request.workspace_id.is_none() => {
+            return Err(WorkbenchError::invalid(
+                "Field and conventions are set in each project's settings",
+            ))
+        }
+        Some(Value::String(text))
+            if text.len() <= MAX_FIELD_CONVENTIONS_BYTES && !text.contains('\0') => {}
+        Some(_) => {
+            return Err(WorkbenchError::invalid(
+                "Field and conventions must be text of at most 4 KiB",
+            ))
+        }
+    }
     let mut connection = open_connection(store)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -107,9 +134,9 @@ fn custom_presets(
                 name: row.get(2)?,
                 description: row.get(3)?,
                 instructions: row.get(4)?,
-                modules: serde_json::from_str(&modules).unwrap_or_default(),
+                modules: current_modules(serde_json::from_str(&modules).unwrap_or_default()),
                 built_in: false,
-                source_preset_id: row.get(6)?,
+                source_preset_id: row.get::<_, Option<String>>(6)?.map(current_preset_id),
                 revision: row.get(7)?,
                 base_instructions: row.get(8)?,
             })
@@ -143,6 +170,7 @@ pub(super) fn find_preset(
     workspace_id: Option<&str>,
     id: &str,
 ) -> WorkbenchResult<HarnessPreset> {
+    let id = current_preset_id(id.to_string());
     harness_catalog(store, workspace_id)?
         .presets
         .into_iter()
@@ -167,7 +195,18 @@ pub fn clone_preset(store: &Store, request: ClonePresetRequest) -> WorkbenchResu
     let name = validate_text("Preset name", &request.name, 300)?;
     let id = new_id("preset")?;
     let timestamp = now();
-    let modules = serde_json::to_string(&source.modules)
+    // The built-in Writing profile uses Your writing without listing it, so a
+    // copy lists it to keep working the same way.
+    let mut source_modules = source.modules.clone();
+    if source.built_in
+        && source.id == "writing"
+        && !source_modules
+            .iter()
+            .any(|m| m == super::catalog::OWN_WRITING)
+    {
+        source_modules.push(super::catalog::OWN_WRITING.to_string());
+    }
+    let modules = serde_json::to_string(&source_modules)
         .map_err(|error| WorkbenchError::storage("Failed to encode preset modules", error))?;
     let mut connection = open_connection(store)?;
     let transaction = connection
@@ -273,7 +312,9 @@ pub(super) fn merge_config(
         for (key, value) in object {
             // Retired browser preferences remain readable in old settings and
             // archives, but never affect access, inheritance or fingerprints.
-            if key != "browser" && !value.is_null() {
+            // The project's field and conventions are instructions that only
+            // the project sets, so harness resolution reads them directly.
+            if key != "browser" && key != FIELD_CONVENTIONS_KEY && !value.is_null() {
                 target.insert(key.clone(), value.clone());
                 sources.insert(key.clone(), Value::String(source_name.to_string()));
             }

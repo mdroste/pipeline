@@ -1,5 +1,10 @@
-import { harnessDiagnostic } from "../harness-editor/harnessCopy";
+import {
+  harnessDiagnostic,
+  systemPromptNote,
+} from "../harness-editor/harnessCopy";
+import { conversationProvider } from "../../lib/workspaceProviders";
 import WorkspaceAssistantPresetForm from "../WorkspaceAssistantPresetForm";
+import YourWritingStatus from "./YourWritingStatus";
 import {
   compactAccessSummary,
   compactModuleSummary,
@@ -65,6 +70,16 @@ export default function SetupTab({
       >
         {describePreset(effective.preset, catalog.modules)}
       </p>
+      <p
+        data-testid="system-prompt-note"
+        className="text-xs text-gray-600 dark:text-neutral-300"
+      >
+        {systemPromptNote(
+          effective.preset,
+          conversationProvider(snapshot.session.overrides.runtime),
+        )}
+      </p>
+      <YourWritingStatus effective={effective} />
       <label className="block">
         <span className="text-xs font-medium">Access mode</span>
         <select

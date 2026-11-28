@@ -137,7 +137,7 @@ export default function HomePage({
                   aria-hidden="true"
                 />
                 <span className="relative flex h-full flex-col">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-current/15 bg-white/75 shadow-sm backdrop-blur dark:bg-neutral-950/60">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[color:color-mix(in_srgb,currentColor_15%,transparent)] bg-white/75 shadow-sm backdrop-blur dark:bg-neutral-950/60">
                     <Icon name={action.icon} />
                   </span>
                   <span className="mt-5 block text-base font-semibold tracking-[-0.01em] text-gray-950 dark:text-neutral-50">

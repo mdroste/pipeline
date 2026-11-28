@@ -4,6 +4,7 @@ import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { workspaceClient } from "./workbench/workspaceClient";
 import { researchClient } from "./workbench/researchClient";
 import { projectClient } from "./projectClient";
+import { harnessClient } from "./workbench/harnessClient";
 import { router } from "./router";
 import { readActivitySince as recordVisit } from "./project-overview/visits";
 import type { ProjectSignals } from "./project-overview/types";
@@ -19,6 +20,10 @@ export interface ProjectEnvironmentValue {
     "importPaper" | "createNote" | "updateNote"
   >;
   projectClient: Pick<typeof projectClient, "home" | "mutate" | "taskPage">;
+  harnessClient: Pick<
+    typeof harnessClient,
+    "getWorkspaceConfig" | "saveWorkspaceConfig"
+  >;
   choose: typeof open;
   navigate: typeof router.navigate;
   openExternal: typeof openExternal;
@@ -31,6 +36,7 @@ export const defaultProjectEnvironment: ProjectEnvironmentValue = {
   workspaceClient,
   researchClient,
   projectClient,
+  harnessClient,
   choose: open,
   // Router methods read `this`; consumers destructure this field and call it bare.
   navigate: (route) => router.navigate(route),

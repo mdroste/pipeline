@@ -418,9 +418,11 @@ pub async fn open_run_artifact(
         if !manifest.artifacts.iter().any(|a| a.rel_path == rel_path) {
             return Err("File is not in the retained artifact manifest".to_string());
         }
-        let path = crate::runs::read_artifact(&run_id, &rel_path)?.abs_path;
-        check_artifact(&rel_path, std::path::Path::new(&path))?;
-        Ok(path)
+        let path = crate::runs::openable_artifact_path(&run_id, &rel_path)?;
+        check_artifact(&rel_path, &path)?;
+        Ok(crate::file_viewer::normalize_external_path(
+            &path.to_string_lossy(),
+        ))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -436,8 +438,10 @@ pub async fn reveal_run_artifact(run_id: String, rel_path: String) -> Result<(),
         if !manifest.artifacts.iter().any(|a| a.rel_path == rel_path) {
             return Err("File is not in the retained artifact manifest".into());
         }
-        let file = crate::runs::read_artifact(&run_id, &rel_path)?;
-        crate::file_viewer::reveal(std::path::Path::new(&file.abs_path))
+        let path = crate::runs::stored_artifact_path(&run_id, &rel_path)?;
+        crate::file_viewer::reveal(std::path::Path::new(
+            &crate::file_viewer::normalize_external_path(&path.to_string_lossy()),
+        ))
     })
     .await
     .map_err(|e| e.to_string())?

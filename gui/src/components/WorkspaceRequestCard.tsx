@@ -1,3 +1,4 @@
+import { displayPath } from "../lib/displayPath";
 import { useId, useState } from "react";
 import type {
   ApprovalDetails as Approval,
@@ -187,7 +188,7 @@ function ApprovalDetails({
             Also asks to allow writes anywhere in this folder for the rest of
             the session
           </span>
-          <pre className={pre}>{grantRoot}</pre>
+          <pre className={pre}>{displayPath(grantRoot)}</pre>
         </div>
       )}
     </div>

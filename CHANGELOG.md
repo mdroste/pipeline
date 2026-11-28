@@ -3,6 +3,35 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.6.0 — 2026-11-27
+
+- Add **Settings → About you**: a background note that assistants receive in
+  every project, and **Your writing**, past papers and style notes the Writing
+  profile follows. **Draft from my papers** drafts style notes from your
+  marked examples. Turn it off for a project under **Project settings →
+  Assistants**.
+- Replace the built-in agent profiles with **Default**, **Research**,
+  **Writing**, and **Data & code**. Conversations that used a retired profile
+  keep working. Write field conventions once per project under **Field and
+  conventions**.
+- Set **Read only** or **Allow edits** for a whole project, including when
+  you create it.
+- Add **Match my writing** to Declaude reviews, so suggested replacement text
+  follows your style.
+- Dock the conversation left, right, or below the project, with open
+  conversations as tabs. The message box shows the model, thinking level, and
+  tool approvals as separate selectors; a setting brings back the single menu.
+- Split the Files editor into two panes, and run a project script from its
+  tab with its saved run profile.
+- Make saved reports smaller: large files are compressed, page images that
+  the PDF recreates are dropped, and identical files are stored once. Reports
+  in Trash are deleted after 30 days, and History shows how much space Trash
+  uses.
+- Research backups now include About you and use format version 4, which
+  earlier versions can't restore.
+- Show Windows paths without their `\\?\` prefix, and match dark-theme colors
+  across the app.
+
 ## 1.5.6 — 2026-11-26
 
 - Show file text in the Files editor again. The installed app's security

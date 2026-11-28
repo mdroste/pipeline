@@ -865,7 +865,7 @@ fn accepted_manuscript_and_prior_note_revisions_survive_new_work() {
             draft: None,
             overrides: None,
             archived: None,
-            preset_id: Some("paper_revision".into()),
+            preset_id: Some("writing".into()),
             paper_id: None,
             clear_paper: None,
         })

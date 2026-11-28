@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { taskClient } from "../../lib/taskClient";
@@ -171,7 +172,7 @@ export default function PaperInput({
         <div role="status">
           <strong>{file.name}</strong>
           <p className="task-muted">
-            {file.root} · {file.path}
+            {displayPath(file.root)} · {file.path}
           </p>
           <p>Revisions will be saved as Markdown.</p>
         </div>

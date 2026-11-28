@@ -39,7 +39,7 @@ let snapshot: ConversationSnapshot = {
     title: "Aggregation assumptions and the role of network propagation",
     workspaceId: workspace.id,
     paperId: null,
-    presetId: "research_assistant",
+    presetId: "research",
     overrides: {},
     draft: "",
     revision: 1,
@@ -78,9 +78,9 @@ const modules = [
   },
 ];
 const preset = {
-  id: "research_assistant",
+  id: "research",
   workspaceId: null,
-  name: "Research assistant",
+  name: "Research",
   description: "Work with project papers and notes.",
   instructions: "Preserve substantive claims and equations.",
   modules: ["paper_context", "paper_tools"],

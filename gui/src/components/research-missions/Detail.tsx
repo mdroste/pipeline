@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { Icon } from "../../ui/icons";
 import IconButton from "../../ui/IconButton";
 import { ResearchStatus } from "../tasks/shared";
@@ -225,7 +226,7 @@ export default function MissionDetail({
           <h3>Plan and permissions</h3>
           <dl>
             <dt>Folder</dt>
-            <dd>{m.scope.runtimeRoot}</dd>
+            <dd>{displayPath(m.scope.runtimeRoot)}</dd>
             <dt>Role conversations</dt>
             <dd>
               Separate assistants plan, investigate, and critically review the

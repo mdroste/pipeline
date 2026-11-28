@@ -40,6 +40,7 @@ pub(crate) const DOCUMENT_TEXT_PATH: &str = "context/document.md";
 const LEGACY_EXTRACTED_TEXT_PATH: &str = "context/extracted_text.md";
 
 mod artifacts;
+mod compaction;
 mod history;
 pub(crate) mod history_reads;
 mod identity;
@@ -49,15 +50,17 @@ pub(crate) mod receipts;
 mod records;
 mod recovery;
 mod retention;
+mod stored;
 mod trash;
 mod unlisted;
 mod visuals;
 mod writer;
 
 pub use artifacts::{
-    open_artifact_stream, read_artifact, read_page_artifact, read_pdf_artifact_bytes,
-    read_pdf_artifact_page,
+    open_artifact_stream, openable_artifact_path, read_artifact, read_page_artifact,
+    read_pdf_artifact_bytes, read_pdf_artifact_page, stored_artifact_path,
 };
+pub use compaction::{compact_finished_runs, schedule_compaction};
 pub(crate) use history::load_latest_report_for_lineage;
 pub use history::{created_before, list_runs, load_latest_report_for_input, update_run_meta};
 pub use identity::{
@@ -79,8 +82,14 @@ pub use retention::{
     purge_runs_with_expected_preview, purge_runs_with_limits, read_annotations, write_annotations,
     RetentionHold,
 };
+pub(crate) use stored::{
+    exists as run_file_exists, expand_copy as expand_compressed_copy, locate as locate_run_file,
+    read_run_file_bytes, restore_pages_in_copy, RebuiltPages, StoredFile, GZIP_SUFFIX,
+    RECORD_PATH as COMPACTION_RECORD_PATH,
+};
 pub use trash::{
-    delete_run, list_trashed_runs, permanently_delete_trashed_run, restore_trashed_run, TrashedRun,
+    delete_run, empty_expired_trash, list_trashed_runs, permanently_delete_trashed_run,
+    restore_trashed_run, TrashedRun, TRASH_RETENTION_DAYS,
 };
 pub use writer::RunWriter;
 
@@ -106,8 +115,13 @@ use recovery::{
 #[cfg(test)]
 pub(crate) use retention::trash_unheld;
 #[cfg(test)]
-use retention::{apply_retention_holds, retention_plan_from_state, validate_annotation_content};
+use retention::{
+    apply_retention_holds, retention_plan_from_state, run_folders_usage,
+    validate_annotation_content,
+};
 #[cfg(test)]
-use trash::restore_trashed_run_at;
+use trash::{
+    empty_expired_trash_at, list_trashed_runs_in, record_trashed_at, restore_trashed_run_at,
+};
 #[cfg(test)]
 mod tests;

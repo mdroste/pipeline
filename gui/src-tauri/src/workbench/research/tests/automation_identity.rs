@@ -124,7 +124,7 @@ fn the_largest_source_limit_shortens_sources_instead_of_breaking_the_conversatio
         )
         .unwrap();
     }
-    select_preset(&fixture, "empirical_audit", "edit");
+    select_preset(&fixture, "research", "edit");
     let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
     assert!(effective.context_truncated);
     assert!(effective.developer_instructions.len() > 200 * 1024);

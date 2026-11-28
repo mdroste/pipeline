@@ -31,6 +31,7 @@ export type IconName =
   | "result"
   | "import"
   | "stop"
+  | "play"
   | "arrow-up"
   | "warning"
   | "sidebar"
@@ -412,6 +413,16 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M12 15V4m-4 4 4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"
+          />
+        </svg>
+      );
+    case "play":
+      return (
+        <svg {...common}>
+          <path
+            d="M8 5.6v12.8a1 1 0 0 0 1.52.85l10.24-6.4a1 1 0 0 0 0-1.7L9.52 4.75A1 1 0 0 0 8 5.6Z"
+            fill="currentColor"
+            stroke="none"
           />
         </svg>
       );

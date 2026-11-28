@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { documentType } from "../../lib/documentTypes";
 import { currentManuscript } from "../../lib/project-overview/manuscript";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import EarlierRecords from "./EarlierRecords";
 import ProjectConnections from "./ProjectConnections";
 import ProjectSnapshots from "./ProjectSnapshots";
 import ProjectChecks from "./ProjectChecks";
+import ProjectAssistantAccess from "./ProjectAssistantAccess";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { projectKinds, projectStages } from "../../lib/workspaceNavigation";
 import {
@@ -42,6 +44,7 @@ const fileStatusLabels: Record<string, string> = {
 
 export type ProjectSettingsSection =
   | "publication"
+  | "assistants"
   | "documents"
   | "folder"
   | "exclusions"
@@ -185,6 +188,12 @@ export default function ProjectSettings({
               saveSettings={saveSettings}
               reportError={reportError}
               repository={repository}
+            />
+          )}
+          {show("assistants") && (
+            <ProjectAssistantAccess
+              workspaceId={workspaceId}
+              reportError={reportError}
             />
           )}
           {show("documents") && (
@@ -414,7 +423,7 @@ export default function ProjectSettings({
               <div hidden={section === "exclusions"}>
                 {workspace?.root ? (
                   <p className="break-all font-mono text-xs">
-                    {workspace.root}
+                    {displayPath(workspace.root)}
                   </p>
                 ) : (
                   <p className={muted}>

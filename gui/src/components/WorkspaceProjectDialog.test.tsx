@@ -15,11 +15,14 @@ const mocks = vi.hoisted(() => ({
   registerWorkspaceRoot: vi.fn(),
   importPaper: vi.fn(),
   open: vi.fn(),
+  getWorkspaceConfig: vi.fn(),
+  saveWorkspaceConfig: vi.fn(),
 }));
 vi.mock("../lib/projectRoots", () => ({
   findProjectRoots: mocks.findProjectRoots,
 }));
 vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: mocks }));
 vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
 const record = {
@@ -43,8 +46,71 @@ beforeEach(() => {
     record: { ...record, root: "/papers/trade", revision: 2 },
   });
   mocks.importPaper.mockResolvedValue({ paper: { id: "p" }, revision: null });
+  mocks.getWorkspaceConfig.mockImplementation(async (workspaceId) => ({
+    scopeKey: workspaceId ?? "global",
+    workspaceId,
+    schemaVersion: 1,
+    body: workspaceId ? { webSearch: true } : {},
+    revision: workspaceId ? 3 : 0,
+    updatedAt: "now",
+  }));
+  mocks.saveWorkspaceConfig.mockImplementation(async (request) => request);
 });
 afterEach(cleanup);
+
+it("saves the chosen assistant access to the new project and warns about backups before edits", async () => {
+  const onCreated = vi.fn().mockResolvedValue(undefined);
+  render(
+    <WorkspaceProjectDialog
+      initialFolder="/papers/trade"
+      onClose={vi.fn()}
+      onCreated={onCreated}
+    />,
+  );
+  expect(screen.getByRole("radio", { name: /Read only/ })).toBeChecked();
+  expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: /Allow edits/ }));
+  expect(screen.getByRole("note")).toHaveTextContent(
+    "Make sure this folder is backed up, for example with Git or Dropbox",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  expect(mocks.saveWorkspaceConfig).toHaveBeenCalledWith(
+    expect.objectContaining({
+      workspaceId: "ws",
+      expectedRevision: 3,
+      body: { webSearch: true, mode: "edit" },
+    }),
+  );
+});
+
+it("starts from the global default access and saves it to the project", async () => {
+  mocks.getWorkspaceConfig.mockImplementation(async (workspaceId) => ({
+    scopeKey: workspaceId ?? "global",
+    workspaceId,
+    schemaVersion: 1,
+    body: workspaceId ? {} : { mode: "edit" },
+    revision: 0,
+    updatedAt: "now",
+  }));
+  const onCreated = vi.fn().mockResolvedValue(undefined);
+  render(
+    <WorkspaceProjectDialog
+      initialFolder="/papers/trade"
+      onClose={vi.fn()}
+      onCreated={onCreated}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /Allow edits/ })).toBeChecked(),
+  );
+  fireEvent.click(screen.getByRole("radio", { name: /Read only/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+  await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+  expect(mocks.saveWorkspaceConfig).toHaveBeenCalledWith(
+    expect.objectContaining({ workspaceId: "ws", body: { mode: "inspect" } }),
+  );
+});
 
 it("opens an existing repository's detected source without importing or executing it", async () => {
   const onCreated = vi.fn().mockResolvedValue(undefined);
@@ -142,6 +208,7 @@ it("does not create a second project when a later step fails and is retried", as
   fireEvent.click(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
   expect(mocks.createWorkspace).toHaveBeenCalledTimes(1);
+  expect(mocks.saveWorkspaceConfig).toHaveBeenCalledTimes(1);
   expect(mocks.importPaper).toHaveBeenCalledTimes(2);
 });
 it("requires a name and closes on Escape", () => {

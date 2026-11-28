@@ -20,6 +20,7 @@ pub(super) fn validate_manifest(manifest: &ArchiveManifest) -> WorkbenchResult<(
         || !(1..=ARCHIVE_FORMAT_VERSION).contains(&manifest.format_version)
         || (manifest.format_version == 1 && !manifest.conversation_files.is_empty())
         || (manifest.format_version < 3 && !manifest.project_copies.is_empty())
+        || (manifest.format_version < 4 && !manifest.about_you.is_empty())
         || manifest.store_schema_version == 0
         || manifest.store_schema_version > CURRENT_SCHEMA_VERSION
     {

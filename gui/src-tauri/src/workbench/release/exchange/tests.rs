@@ -677,7 +677,7 @@ fn a_senders_decisions_arrive_as_proposals_with_a_visible_marker() {
             draft: None,
             overrides: None,
             archived: None,
-            preset_id: Some("research_assistant".into()),
+            preset_id: Some("research".into()),
             paper_id: None,
             clear_paper: None,
         })

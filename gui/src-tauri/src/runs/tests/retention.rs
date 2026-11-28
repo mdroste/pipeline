@@ -198,3 +198,111 @@ fn manual_trash_honors_a_queued_rerun_before_touching_the_run_store() {
         .unwrap_err()
         .contains("still needs this run"));
 }
+
+fn trashed_run(trash: &Path, run_id: &str) {
+    fs::create_dir_all(trash.join(run_id)).unwrap();
+    fs::write(trash.join(run_id).join("manifest.json"), "{}").unwrap();
+}
+
+#[test]
+fn trash_deletes_runs_held_past_retention_and_dates_older_runs_from_first_sight() {
+    let temp = tempfile::tempdir().unwrap();
+    let trash = temp.path().join("trash/runs");
+    for run_id in ["expired_run", "recent_run", "untimed_run"] {
+        trashed_run(&trash, run_id);
+    }
+    let now = chrono::Utc::now();
+    let keep_for = chrono::Duration::days(30);
+    record_trashed_at(&trash, "expired_run", now - chrono::Duration::days(31)).unwrap();
+    record_trashed_at(&trash, "recent_run", now - chrono::Duration::days(29)).unwrap();
+    // Left behind by a restore that could not remove it.
+    record_trashed_at(&trash, "restored_run", now - chrono::Duration::days(1)).unwrap();
+
+    let (removed, failures) = empty_expired_trash_at(&trash, now, keep_for).unwrap();
+
+    assert_eq!((removed, failures.len()), (1, 0));
+    assert!(!trash.join("expired_run").exists());
+    assert!(!trash.join("expired_run.trashed-at").exists());
+    assert!(trash.join("recent_run").is_dir());
+    assert!(!trash.join("restored_run.trashed-at").exists());
+    // A run trashed before times were recorded starts its 30 days now,
+    // however old its folder is.
+    assert!(trash.join("untimed_run").is_dir());
+    assert!(trash.join("untimed_run.trashed-at").is_file());
+
+    let (removed, failures) = empty_expired_trash_at(&trash, now + keep_for, keep_for).unwrap();
+    assert_eq!((removed, failures.len()), (2, 0));
+    assert_eq!(fs::read_dir(&trash).unwrap().count(), 0);
+}
+
+#[test]
+fn trash_lists_the_recorded_deletion_time_and_restore_clears_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let trash = temp.path().join("trash/runs");
+    fs::create_dir_all(&runs).unwrap();
+    trashed_run(&trash, "abc123_run");
+    let moved = chrono::DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    record_trashed_at(&trash, "abc123_run", moved).unwrap();
+
+    let listed = list_trashed_runs_in(&trash, chrono::Utc::now()).unwrap();
+    assert_eq!(listed.len(), 1);
+    let listed_at = chrono::DateTime::parse_from_rfc3339(&listed[0].deleted_at)
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(listed_at, moved);
+
+    restore_trashed_run_at(&runs, &trash, "abc123_run").unwrap();
+    assert!(runs.join("abc123_run/manifest.json").is_file());
+    assert!(!trash.join("abc123_run.trashed-at").exists());
+}
+
+#[test]
+fn run_folder_usage_counts_run_folders_but_not_loose_records() {
+    let temp = tempfile::tempdir().unwrap();
+    let trash = temp.path().join("trash/runs");
+    fs::create_dir_all(trash.join("abc123_run/artifacts")).unwrap();
+    fs::write(trash.join("abc123_run/report.md"), "12345").unwrap();
+    fs::write(trash.join("abc123_run/artifacts/page.jpg"), "1234567890").unwrap();
+    record_trashed_at(&trash, "abc123_run", chrono::Utc::now()).unwrap();
+
+    let mut counted = Default::default();
+    assert_eq!(
+        run_folders_usage(&trash, "Test scan", &mut counted).unwrap(),
+        (1, 15)
+    );
+    assert_eq!(
+        run_folders_usage(&temp.path().join("missing"), "Test scan", &mut counted).unwrap(),
+        (0, 0)
+    );
+}
+
+#[test]
+fn a_file_linked_from_history_into_trash_counts_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let trash = temp.path().join("trash/runs");
+    fs::create_dir_all(runs.join("abc123_kept/context")).unwrap();
+    fs::create_dir_all(trash.join("abc123_trashed/context")).unwrap();
+    let shared = vec![7u8; 100 * 1024];
+    fs::write(runs.join("abc123_kept/context/blocks.jsonl.gz"), &shared).unwrap();
+    fs::hard_link(
+        runs.join("abc123_kept/context/blocks.jsonl.gz"),
+        trash.join("abc123_trashed/context/blocks.jsonl.gz"),
+    )
+    .unwrap();
+    fs::write(trash.join("abc123_trashed/report.md"), "12345").unwrap();
+
+    let mut counted = Default::default();
+    assert_eq!(
+        run_folders_usage(&runs, "Test scan", &mut counted).unwrap(),
+        (1, shared.len() as u64)
+    );
+    // Trash adds only what History does not already hold.
+    assert_eq!(
+        run_folders_usage(&trash, "Test scan", &mut counted).unwrap(),
+        (1, 5)
+    );
+}

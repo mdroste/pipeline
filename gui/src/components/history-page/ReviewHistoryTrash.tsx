@@ -27,7 +27,8 @@ export default function ReviewHistoryTrash({
           Report Trash
         </h3>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Restore reports or delete them permanently.
+          Restore reports or delete them permanently. Pipeline deletes them
+          permanently after 30 days in Trash.
         </span>
         <button
           onClick={refresh}

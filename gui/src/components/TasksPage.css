@@ -410,7 +410,7 @@
   align-items: center;
   gap: 0.75rem;
   text-align: left;
-  border: 1px solid #87988044;
+  border: 1px solid var(--ui-border);
   border-radius: 0.625rem;
   padding: 0.625rem 0.875rem;
   font-size: 0.75rem;
@@ -481,7 +481,7 @@
   color: inherit;
 }
 .task-outline-sentence:hover {
-  background: var(--task-hover, rgba(127, 127, 127, 0.08));
+  background: var(--ui-sunken);
 }
 .task-outline-label {
   font-size: 0.75rem;
@@ -505,7 +505,7 @@
   font-size: 0.75rem;
 }
 .task-outline-tools button:hover:not(:disabled) {
-  background: var(--task-hover, rgba(127, 127, 127, 0.12));
+  background: var(--ui-sunken);
   color: inherit;
 }
 .task-outline-tools button:disabled {

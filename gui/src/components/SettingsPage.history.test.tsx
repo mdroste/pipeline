@@ -40,8 +40,13 @@ describe("SettingsPage history", () => {
         usageCalls += 1;
         return Promise.resolve(
           usageCalls === 1
-            ? { count: 8, bytes: 7_000_000_000 }
-            : { count: 5, bytes: 4_500_000_000 },
+            ? { count: 8, bytes: 7_000_000_000, trash_count: 0, trash_bytes: 0 }
+            : {
+                count: 5,
+                bytes: 4_500_000_000,
+                trash_count: 3,
+                trash_bytes: 2_500_000_000,
+              },
         );
       }
       if (cmd === "preview_purge_runs") {
@@ -88,6 +93,10 @@ describe("SettingsPage history", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Moved 3 completed reports to Trash.",
     );
+    // Trashed reports still use disk space, so the figure keeps showing them.
+    expect(
+      await screen.findByText("5 reports · 4.5 GB · 2.5 GB in Trash"),
+    ).toBeInTheDocument();
   });
 
   it("does not ask for destructive confirmation when the preview is empty", async () => {

@@ -94,7 +94,7 @@ pub(super) fn arguments(
     let project = if effective.capabilities.private_folder {
         "Change files in the working folder with Bash."
     } else {
-        "Project tools are exposed through the pipeline MCP server. File edits require Edit access and use project_edit."
+        "Project tools are exposed through the pipeline MCP server. File edits need Allow edits access and use project_edit."
     };
     args.extend(["--append-system-prompt".into(), format!("{}\n\n{project} {shell} Native filesystem and third-party tools are disabled; web access uses the enabled search and page-reading tools. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
     if let Some(model) = model.filter(|s| !s.is_empty()) {

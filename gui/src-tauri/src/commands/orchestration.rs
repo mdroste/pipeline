@@ -207,6 +207,7 @@ pub async fn execute(
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings,
         config: document.config,
         profile_name: pinned.profile_name,

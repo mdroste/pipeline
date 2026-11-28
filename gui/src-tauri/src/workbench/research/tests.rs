@@ -4,10 +4,14 @@ use super::config::find_preset;
 use super::*;
 use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest, UpdateSessionRequest};
 
+#[path = "tests/about_you.rs"]
+mod about_you;
 #[path = "tests/automation_identity.rs"]
 mod automation_identity;
 #[path = "tests/document_types.rs"]
 mod document_types;
+#[path = "tests/field_conventions.rs"]
+mod field_conventions;
 #[path = "tests/paper_imports.rs"]
 mod paper_imports;
 #[path = "tests/paper_listing.rs"]
@@ -104,7 +108,7 @@ fn harness_is_inherited_snapshotted_and_capability_gated() {
         false,
     )
     .unwrap();
-    select_preset(&fixture, "empirical_audit", "edit");
+    select_preset(&fixture, "data_code", "edit");
     let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
     assert_eq!(effective.context_budget_bytes, 16_384);
     assert!(effective.command_network);
@@ -215,7 +219,7 @@ fn paper_revisions_preserve_locators_and_stale_prior_evidence() {
 #[test]
 fn dynamic_tools_are_scoped_and_exactly_once() {
     let first_fixture = fixture();
-    select_preset(&first_fixture, "research_assistant", "inspect");
+    select_preset(&first_fixture, "research", "inspect");
     first_fixture
         .store
         .bind_session(&first_fixture.session_id, "runtime-one", "thread-one")
@@ -577,7 +581,7 @@ fn structured_result_rechecks_create_host_receipts() {
 #[test]
 fn derived_availability_and_sections_do_not_change_the_fingerprint() {
     let fixture = fixture();
-    select_preset(&fixture, "empirical_audit", "inspect");
+    select_preset(&fixture, "data_code", "inspect");
     let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
 
     let execution = effective
@@ -589,7 +593,7 @@ fn derived_availability_and_sections_do_not_change_the_fingerprint() {
     assert!(execution
         .reasons
         .iter()
-        .any(|reason| reason.contains("Edit access mode")));
+        .any(|reason| reason.contains("Needs Allow edits")));
     assert!(execution
         .reasons
         .iter()
@@ -631,7 +635,7 @@ fn derived_availability_and_sections_do_not_change_the_fingerprint() {
 fn agent_profiles_are_read_only_at_source_and_customizations_persist() {
     let fixture = fixture();
     let catalog = harness_catalog(&fixture.store, None).unwrap();
-    for id in ["plain", "writing", "code_review", "econ_research"] {
+    for id in ["plain", "research", "writing", "data_code"] {
         assert!(catalog.presets.iter().any(|p| p.id == id));
     }
     let default = find_preset(&fixture.store, None, "plain").unwrap();
@@ -743,7 +747,7 @@ fn agent_profiles_are_read_only_at_source_and_customizations_persist() {
 fn default_profile_rename_does_not_retire_existing_bindings() {
     let fixture = fixture();
     let mut effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
-    assert_eq!(effective.preset.name, "Codex default");
+    assert_eq!(effective.preset.name, "Default");
     let fingerprint = effective.fingerprint.clone();
     effective.fingerprint.clear();
     effective.module_availability.clear();
@@ -764,7 +768,7 @@ fn a_project_profile_can_be_copied_to_all_workspaces() {
         ClonePresetRequest {
             workspace_id: Some(fixture.workspace_id.clone()),
             source_workspace_id: None,
-            source_preset_id: "econ_research".into(),
+            source_preset_id: "research".into(),
             name: "Local economist".into(),
             operation_id: "local-econ".into(),
         },
@@ -792,6 +796,118 @@ fn a_project_profile_can_be_copied_to_all_workspaces() {
 }
 
 #[test]
+fn retired_profiles_and_modules_resolve_to_the_current_lineup() {
+    let fixture = fixture();
+    // A conversation saved on a retired built-in uses its successor.
+    select_preset(&fixture, "empirical_audit", "inspect");
+    let session = fixture
+        .store
+        .session_snapshot(&fixture.session_id)
+        .unwrap()
+        .session;
+    assert_eq!(session.preset_id.as_deref(), Some("research"));
+    let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
+    assert_eq!(effective.preset.id, "research");
+    assert!(effective.preset.base_instructions.is_none());
+    for (retired, current) in [
+        ("research_assistant", "research"),
+        ("econ_research", "research"),
+        ("theory_audit", "research"),
+        ("literature_review", "research"),
+        ("paper_revision", "writing"),
+        ("code_review", "data_code"),
+    ] {
+        assert_eq!(
+            find_preset(&fixture.store, None, retired).unwrap().id,
+            current
+        );
+    }
+    // A copy made before the change keeps its own text, drops the instruction
+    // packs, and restores from the successor.
+    fixture
+        .store
+        .connection()
+        .unwrap()
+        .execute(
+            "INSERT INTO presets (id,name,description,instructions,modules_json,source_preset_id,revision,created_at,updated_at) VALUES ('preset-old','Old audit','','Check the estimand.',?1,'empirical_audit',1,'t','t')",
+            params![json!(["research_structure", "empirical_audit", "paper_context"]).to_string()],
+        )
+        .unwrap();
+    let old = find_preset(&fixture.store, None, "preset-old").unwrap();
+    assert_eq!(old.modules, vec!["paper_context".to_string()]);
+    assert_eq!(old.source_preset_id.as_deref(), Some("research"));
+    select_preset(&fixture, "preset-old", "inspect");
+    let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
+    assert_eq!(effective.preset.id, "preset-old");
+    assert!(effective
+        .developer_instructions
+        .contains("Check the estimand."));
+}
+
+#[test]
+fn paper_tools_follow_the_project_and_an_attached_paper_brings_its_context() {
+    let fixture = fixture();
+    select_preset(&fixture, "plain", "inspect");
+    let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
+    assert!(effective
+        .enabled_modules
+        .contains(&"paper_tools".to_string()));
+    assert!(!effective
+        .enabled_modules
+        .contains(&"paper_context".to_string()));
+    assert!(effective.unavailable_modules.is_empty());
+    assert!(effective
+        .dynamic_tools
+        .iter()
+        .any(|tool| tool["name"] == "workbench_research_search_v1"));
+    assert!(effective
+        .developer_instructions
+        .contains("Never invent citations, quotations, data, estimates, or results of checks you did not run."));
+
+    let path = fixture.root.join("attached.txt");
+    fs::write(&path, "An attached argument about sufficient statistics").unwrap();
+    let paper = import_paper(
+        &fixture.store,
+        ImportPaperRequest {
+            workspace_id: fixture.workspace_id.clone(),
+            paper_id: None,
+            title: "Attached".into(),
+            role: "other".into(),
+            document_type: None,
+            path: path.to_string_lossy().into_owned(),
+            operation_id: "attached-paper".into(),
+        },
+    )
+    .unwrap();
+    let session = fixture
+        .store
+        .session_snapshot(&fixture.session_id)
+        .unwrap()
+        .session;
+    fixture
+        .store
+        .update_session(UpdateSessionRequest {
+            session_id: session.id,
+            expected_revision: session.revision,
+            operation_id: "attach-paper".into(),
+            title: None,
+            draft: None,
+            overrides: None,
+            archived: None,
+            preset_id: None,
+            paper_id: Some(paper.paper.id),
+            clear_paper: None,
+        })
+        .unwrap();
+    let effective = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
+    assert_eq!(effective.preset.id, "plain");
+    assert!(effective
+        .enabled_modules
+        .contains(&"paper_context".to_string()));
+    assert!(effective.context_preview.contains("sufficient statistics"));
+}
+
+#[test]
 fn base_prompt_overrides_survive_copies_legacy_updates_and_snapshots() {
     let fixture = fixture();
     let copy = clone_preset(
@@ -811,7 +927,8 @@ fn base_prompt_overrides_survive_copies_legacy_updates_and_snapshots() {
             .unwrap()
             .base_instructions
     );
-    assert!(copy.base_instructions.is_some());
+    // Built-in profiles keep the connection's base prompt.
+    assert!(copy.base_instructions.is_none());
     select_preset(&fixture, &copy.id, "inspect");
     let before = resolve_harness(&fixture.store, &fixture.session_id).unwrap();
     let request = |revision, change: Option<Value>| {
@@ -828,6 +945,18 @@ fn base_prompt_overrides_survive_copies_legacy_updates_and_snapshots() {
     )
     .unwrap();
     assert_eq!(updated.base_instructions.as_deref(), Some(text));
+    let second = clone_preset(
+        &fixture.store,
+        ClonePresetRequest {
+            workspace_id: None,
+            source_workspace_id: None,
+            source_preset_id: copy.id.clone(),
+            name: "Second writer".into(),
+            operation_id: "base-clone-again".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(second.base_instructions.as_deref(), Some(text));
     let prepared = prepare_turn(&fixture.store, &fixture.session_id).unwrap();
     assert_ne!(before.fingerprint, prepared.effective.fingerprint);
     assert_eq!(
@@ -1069,7 +1198,7 @@ fn retry_readopts_a_cursor_moved_by_a_steering_message() {
 #[test]
 fn excluded_sources_are_blocked_before_new_reads_and_receipt_replay() {
     let f = fixture();
-    select_preset(&f, "research_assistant", "inspect");
+    select_preset(&f, "research", "inspect");
     f.store
         .bind_session(&f.session_id, "runtime", "thread")
         .unwrap();

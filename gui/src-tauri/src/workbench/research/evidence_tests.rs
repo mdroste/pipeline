@@ -401,7 +401,7 @@ fn bound_conversation(f: &Fixture) {
             draft: None,
             overrides: Some(json!({"mode":"inspect"})),
             archived: None,
-            preset_id: Some("research_assistant".into()),
+            preset_id: Some("research".into()),
             paper_id: None,
             clear_paper: None,
         })

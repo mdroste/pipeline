@@ -52,6 +52,7 @@ export function SettingsNavigation({
         {(
           [
             "general",
+            "about",
             "providers",
             "conversations",
             "workflow",

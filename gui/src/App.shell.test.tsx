@@ -286,6 +286,7 @@ describe("App shell", () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
         authorNote: null,
+        matchWriting: false,
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: "config-test",
@@ -303,6 +304,7 @@ describe("App shell", () => {
       });
       expect(enqueue).toHaveBeenLastCalledWith({
         authorNote: null,
+        matchWriting: false,
         paperPath: "/tmp/test-paper.pdf",
         inputInterpretation: "document",
         diff: false,

@@ -136,6 +136,9 @@ function AppShell() {
     authorNote,
     setAuthorNote,
     authorNoteFocusKey,
+    matchWriting,
+    setMatchWriting,
+    matchWritingAvailable,
     parallelOverrides,
     selectionKey,
     setPaperPath,
@@ -364,6 +367,10 @@ function AppShell() {
       {runPreview && (
         <RunPreview
           authorNote={runPreview.snapshot.authorNote}
+          matchWriting={
+            runPreview.snapshot.matchWriting === true &&
+            runPreview.plan.matchWritingAvailable === true
+          }
           onEditAuthorNote={editPreviewAuthorNote}
           plan={runPreview.plan}
           config={runPreview.config}
@@ -718,6 +725,9 @@ function AppShell() {
                   authorNote={authorNote}
                   onAuthorNoteChange={setAuthorNote}
                   authorNoteFocusKey={authorNoteFocusKey}
+                  matchWritingAvailable={matchWritingAvailable}
+                  matchWriting={matchWriting}
+                  onMatchWritingChange={setMatchWriting}
                   configVersion={configVersion}
                   configError={runConfigError}
                   configLoading={runConfigLoading}

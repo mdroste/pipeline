@@ -14,6 +14,7 @@ Your research is stored in `~/.pipeline/` unless you choose another
 | --- | --- |
 | Reviews | Copies or extracted text of your documents, page images, figures, model responses, reports, annotations, logs, and usage |
 | Projects and conversations | Messages, drafts, imported papers, sources, notes, claims, evidence, and command results |
+| About you | Your background note, and copies of the past papers you add with their extracted text |
 | Automations | Definitions, schedules, progress, results, and history |
 | Device settings | Preferences, API keys, provider sign-ins, installed parsers, model files, and caches |
 
@@ -36,16 +37,26 @@ on the task and the tools you allow, it can send:
 
 - your messages and recent conversation history;
 - assistant instructions and the project notes or evidence you select;
+- your background from **Settings → About you**, unless you turn it off for
+  the project;
+- with the Writing profile, or a profile that uses **Your writing**, your
+  style notes, short passages from the papers you marked as style examples,
+  and parts of those papers the assistant chooses to read;
 - document excerpts, page images, and file contents read by an allowed tool;
 - tool requests and results, including output from local commands; and
 - your answers to approval requests and questions.
+
+Papers in **Your writing** that you don't mark as style examples stay on
+your computer.
 
 A paper you import into a project goes to a model only when you select it as
 context or an allowed tool reads it. Output from a local command can reach a
 provider later in the same way, even if the command itself ran offline.
 Switching providers sends recent history with your next message to the newly
 selected provider. Automatic API conversation titles use an additional call
-to the same model, with excerpts from the first exchange.
+to the same model, with excerpts from the first exchange. **Draft from my
+papers** in About you sends excerpts of the papers you marked as style
+examples to your default model, only when you choose it.
 
 ChatGPT conversations and ChatGPT reviews share one sign-in, stored in
 `~/.pipeline/providers/chatgpt/`. Claude Code keeps its own sign-in. Pipeline
@@ -56,6 +67,8 @@ credentials.
 
 Each review step sends its prompt, the document material assigned to it,
 earlier responses it depends on, and tool results to that step's provider.
+With **Match my writing**, Declaude's editing steps also send your style notes
+and passages from the papers you marked as style examples in About you.
 The run preview shows the provider and inputs for each step. A custom
 workflow can use several providers in one run.
 
@@ -118,9 +131,11 @@ commands can contact other services if you allow network access for them.
 ## Exports and sharing
 
 Exports are ordinary files saved where you choose. Anyone who gets a copy can
-read it. Backups, project packages, and replication capsules never include
-credentials or permission to run commands. Report and transcript exports
-contain what you select, which may include unpublished research.
+read it. A research backup includes About you: your background and the past
+papers you added. A project package never does. Backups, project packages,
+and replication capsules never include credentials or permission to run
+commands. Report and transcript exports contain what you select, which may
+include unpublished research.
 
 See [Back up and share](docs/projects.md#back-up-and-share) for what each
 format includes. Check the export preview before you share a file.

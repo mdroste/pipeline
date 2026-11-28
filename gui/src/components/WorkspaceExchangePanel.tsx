@@ -1,3 +1,4 @@
+import { displayPath } from "../lib/displayPath";
 import WorkspaceStorageRetention from "./WorkspaceStorageRetention";
 import { useCallback, useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -350,8 +351,9 @@ export default function WorkspaceExchangePanel({
             </p>
             {inspection.workspaceRoot && (
               <p className="text-gray-600 dark:text-gray-400">
-                Original project folder: {inspection.workspaceRoot}. Choose its
-                location on this computer when creating a new project.
+                Original project folder: {displayPath(inspection.workspaceRoot)}
+                . Choose its location on this computer when creating a new
+                project.
               </p>
             )}
             {inspection.limitations.map((l) => (

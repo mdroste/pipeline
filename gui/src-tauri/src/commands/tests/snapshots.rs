@@ -20,6 +20,7 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
         RunSnapshot {
             review_handoff_id: None,
             author_note: None,
+            style_examples: None,
             settings: crate::settings::Settings::default(),
             config,
             profile_name: "test".to_string(),
@@ -157,6 +158,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
     let snapshot = || RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config: empty_test_config(),
         profile_name: "test".to_string(),
@@ -262,6 +264,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Test".into(),
@@ -331,6 +334,7 @@ fn added_models_skip_pipeline_checks_and_editorial_stages_keep_one_editor() {
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Test".into(),
@@ -372,6 +376,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Test".into(),
@@ -497,6 +502,7 @@ fn author_note_snapshot_is_normalized_optional_and_value_sensitive() {
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config: empty_test_config(),
         profile_name: "test".into(),
@@ -524,4 +530,74 @@ fn author_note_snapshot_is_normalized_optional_and_value_sensitive() {
     );
     assert_eq!(first.author_note.as_deref(), Some("Model\nassumptions"));
     assert!(bind_author_note(snapshot, Some(&"x".repeat(4001))).is_err());
+}
+
+#[test]
+fn style_examples_bind_only_for_declaude_editors_and_join_the_fingerprint() {
+    let directory = tempfile::tempdir().unwrap();
+    let folder = directory.path().join("researcher");
+    crate::researcher::save_note(&folder, crate::researcher::Note::Style, "Short openings.")
+        .unwrap();
+    let snapshot = |ids: &[&str]| {
+        let mut config = empty_test_config();
+        config.steps = ids
+            .iter()
+            .map(|id| crate::pipeline_config::StepConfig {
+                id: (*id).into(),
+                enabled: true,
+                ..Default::default()
+            })
+            .collect();
+        RunSnapshot {
+            review_handoff_id: None,
+            author_note: None,
+            style_examples: None,
+            settings: crate::settings::Settings::default(),
+            config,
+            profile_name: "test".into(),
+            config_fingerprint: "config".into(),
+            fingerprint: "runtime".into(),
+            workflow_source: String::new(),
+            workflow_fingerprint: String::new(),
+            workflow_json: String::new(),
+            specialist_catalog_revision: String::new(),
+            agent_overrides: None,
+        }
+    };
+    let declaude = snapshot(&["declaude_referee_1", "declaude_editor"]);
+
+    // Not asked for: nothing is read and the plan is unchanged.
+    let off = bind_style_examples_from(declaude.clone(), None).unwrap();
+    assert!(off.style_examples.is_none());
+    assert_eq!(off.fingerprint, declaude.fingerprint);
+
+    let on = bind_style_examples_from(declaude.clone(), Some(&folder)).unwrap();
+    let block = on.style_examples.as_deref().unwrap();
+    assert!(block.contains("Short openings."));
+    assert_ne!(on.fingerprint, declaude.fingerprint);
+    // The workflow itself is not changed by binding; the run applies it.
+    assert_eq!(on.config_fingerprint, declaude.config_fingerprint);
+    assert!(on
+        .config
+        .steps
+        .iter()
+        .all(|step| step.system_prompt.is_empty()));
+
+    // Different notes give a different plan, so a change before launch is caught.
+    crate::researcher::save_note(&folder, crate::researcher::Note::Style, "Long openings.")
+        .unwrap();
+    let changed = bind_style_examples_from(declaude.clone(), Some(&folder)).unwrap();
+    assert_ne!(changed.fingerprint, on.fingerprint);
+
+    // A workflow without Declaude's editors takes none, even when asked.
+    let referee = snapshot(&["contribution", "technical"]);
+    let other = bind_style_examples_from(referee.clone(), Some(&folder)).unwrap();
+    assert!(other.style_examples.is_none());
+    assert_eq!(other.fingerprint, referee.fingerprint);
+
+    // Nothing in About you: nothing to send.
+    let empty = tempfile::tempdir().unwrap();
+    let none = bind_style_examples_from(declaude.clone(), Some(empty.path())).unwrap();
+    assert!(none.style_examples.is_none());
+    assert_eq!(none.fingerprint, declaude.fingerprint);
 }

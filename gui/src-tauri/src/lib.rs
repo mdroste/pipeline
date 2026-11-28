@@ -28,6 +28,7 @@ pub mod process;
 pub mod projects;
 pub mod prompts;
 mod public_web;
+pub mod researcher;
 pub mod run_scope;
 pub mod runs;
 pub mod safety;
@@ -130,6 +131,11 @@ pub fn run() {
             std::thread::spawn(move || {
                 let _ = runs::recover_resumable_runs();
                 orchestration::start_if_present(handle);
+                // Deleting expired runs can take as long as the disk does, so
+                // it waits until the coordinator is running. So does shrinking
+                // saved reports, which also covers runs saved before it existed.
+                let _ = runs::empty_expired_trash();
+                runs::schedule_compaction();
             });
             // The login shell can take seconds, so its PATH is ready before the
             // first provider check has to wait for it.
@@ -279,6 +285,7 @@ pub fn run() {
             workbench::commands::workbench_get_title_preferences,
             workbench::commands::workbench_save_title_preferences,
             workbench::commands::workbench_generate_session_title,
+            workbench::commands::workbench_draft_style_notes,
             workbench::commands::workbench_conversation_index,
             workbench::commands::workbench_list_sessions,
             workbench::commands::workbench_session_snapshot,
@@ -479,6 +486,12 @@ pub fn run() {
             commands::maintenance::open_pipeline_dir,
             commands::maintenance::get_storage_settings,
             commands::maintenance::set_storage_directory,
+            researcher::commands::researcher_profile,
+            researcher::commands::researcher_save_note,
+            researcher::commands::researcher_add_sample,
+            researcher::commands::researcher_update_sample,
+            researcher::commands::researcher_remove_sample,
+            researcher::commands::researcher_open_folder,
             // Managed local engines
             commands::maintenance::list_engines,
             commands::maintenance::cli_tools_status,

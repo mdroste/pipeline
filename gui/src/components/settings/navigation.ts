@@ -1,5 +1,6 @@
 export type Section =
   | "general"
+  | "about"
   | "providers"
   | "conversations"
   | "workflow"
@@ -23,6 +24,11 @@ export const SECTION_INFO: Record<
 > = {
   general: {
     title: "General",
+  },
+  about: {
+    title: "About you",
+    description:
+      "What assistants know about you in every project: your background and your past writing.",
   },
   providers: {
     title: "Models",

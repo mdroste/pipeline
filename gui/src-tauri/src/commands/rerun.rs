@@ -191,6 +191,8 @@ pub(super) async fn rerun_run_inner(
 
     preflight_run_storage(std::path::Path::new(&parent.input_path))?;
     let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);
+    // A re-run matches the writing its parent did, not About you as it is now.
+    let style_examples = crate::pipeline::style_examples::load(&parent_dir);
     let report_json = read_parent_report(&parent_dir, parent_recovery.err())?;
     let parent_report: PipelineReport = serde_json::from_str(&report_json)
         .map_err(|e| format!("Invalid parent report.json: {e}"))?;
@@ -397,6 +399,7 @@ pub(super) async fn rerun_run_inner(
     // can be reused. Dynamic specialist IDs are ordinary steps from here on.
     let mut execution_config = crate::auto_review::materialize_config(&config, &orientation_value)?;
     pipeline_config::apply_agent_defaults(&mut execution_config, &settings);
+    crate::pipeline::style_examples::apply(&mut execution_config, style_examples.as_deref());
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
@@ -430,6 +433,7 @@ pub(super) async fn rerun_run_inner(
     )?;
     if let Some(writer) = run_writer.as_mut() {
         crate::pipeline::author_note::save(writer, author_note.as_deref())?;
+        crate::pipeline::style_examples::save(writer, style_examples.as_deref())?;
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
         writer
             .add_text(

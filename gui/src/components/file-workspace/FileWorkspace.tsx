@@ -5,6 +5,8 @@
 // and Git or task metadata, unsafe schemes and uncaptured assets never resolve.
 // Saves go through the adapter with the expected content hash. FilePane picks
 // the viewer, useFileBuffers owns drafts, and FileBrowser owns the folder tree.
+// The editor can split into two panes, each with its own tabs (fileGroups.ts);
+// dragging a tab to the right or bottom of the editor makes the split.
 
 import useTabList from "../../hooks/useTabList";
 import SplitView from "../SplitView";
@@ -16,12 +18,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { EmptyState, IconButton } from "../../ui";
 import { Icon } from "../../ui/icons";
 import type { FileAdapter } from "../../lib/fileWorkspaceClient";
 import type { FileLocation } from "../../lib/fileLinks";
 import type { FileMode } from "../../lib/fileKinds";
+import type { ProjectFileDrag } from "../../lib/appEvents";
 import { movedPath } from "../../lib/fileTree";
 import { FileNavigationScope } from "./FileNavigation";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
@@ -29,9 +33,20 @@ import FileBrowser from "./FileBrowser";
 import FileIcon from "./FileIcon";
 import { isDirty, useFileBuffers } from "./useFileBuffers";
 import useFileChanges from "./useFileChanges";
+import useTabReorder, { type TabDock } from "./useTabReorder";
+import {
+  closePane,
+  closeTabs as closeGroupTabs,
+  moveTab,
+  remapLayout,
+  restoreLayout,
+  showIn,
+  splitOff,
+  type FileLayout,
+  type SplitDirection,
+} from "./fileGroups";
 import "./files.css";
 import ReportIssueLink from "../ReportIssueLink";
-import { scriptAdapter } from "../../lib/analysisSetup";
 const FilePane = lazy(() => import("./FilePane"));
 export interface FilePassage {
   path: string;
@@ -54,39 +69,37 @@ interface Props {
   initial?: FileLocation | null;
   onAsk?: (passage: FilePassage) => void;
   onAskFile?: (path: string) => void;
-  onRunFile?: (path: string) => void;
-  onFileRuns?: (path: string, hash?: string) => void;
+  /** Run controls for the file a pane shows, such as Play for a script. */
+  runControls?: (file: { path: string; dirty: boolean }) => ReactNode;
   onOpenInFiles?: (location: FileLocation) => void;
   onSaved?: () => void;
   onNavigate?: (location: FileLocation) => void;
   onAddToDocuments?: (path: string) => Promise<void>;
+  /** Lets files be dragged out of the file list. */
+  onFileDrag?: (drag: ProjectFileDrag) => void;
 }
-function restoredLayout(id: string): {
-  tabs: string[];
-  active: FileLocation | null;
-  split: string | null;
-  browser: boolean;
-} {
+function restoredLayout(id: string, allowSplit: boolean) {
+  let saved: unknown = null;
   try {
-    const v = JSON.parse(
+    saved = JSON.parse(
       localStorage.getItem(`pipeline.files.layout.${id}`) ?? "null",
     );
-    if (
-      v &&
-      Array.isArray(v.tabs) &&
-      v.tabs.every((p: unknown) => typeof p === "string") &&
-      (v.active === null || typeof v.active?.path === "string")
-    )
-      return {
-        tabs: [...new Set<string>(v.tabs)].slice(0, 30),
-        active: v.active,
-        split: typeof v.split === "string" ? v.split : null,
-        browser: v.browser !== false,
-      };
   } catch {
     /* Optional layout. */
   }
-  return { tabs: [], active: null, split: null, browser: true };
+  return {
+    files: restoreLayout(saved, allowSplit),
+    browser: (saved as { browser?: unknown } | null)?.browser !== false,
+  };
+}
+/** Where a tab dragged off its strip would land. */
+type DockTarget =
+  | { kind: "group"; group: number; index?: number }
+  | { kind: "split"; direction: SplitDirection };
+/** The area that lights up under a dragged tab. */
+interface DropHint {
+  group: number;
+  zone: "strip" | "all" | "right" | "bottom";
 }
 export default function FileWorkspace({
   adapter,
@@ -98,24 +111,31 @@ export default function FileWorkspace({
   initial,
   onAsk,
   onAskFile,
-  onRunFile,
-  onFileRuns,
+  runControls,
   onOpenInFiles,
   onSaved,
   onNavigate,
   onAddToDocuments,
+  onFileDrag,
 }: Props) {
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const navigationListener = useRef(onNavigate);
   navigationListener.current = onNavigate;
-  const [layout] = useState(() => restoredLayout(adapter.id));
-  const [tabs, setTabs] = useState(layout.tabs);
-  const [active, setActive] = useState<FileLocation | null>(
-    initial ?? layout.active,
+  const [layout] = useState(() => restoredLayout(adapter.id, allowSplit));
+  const [files, setFiles] = useState<FileLayout>(() =>
+    initial
+      ? {
+          ...layout.files,
+          groups: layout.files.groups.map((group, i) =>
+            i === layout.files.focus ? { ...group, active: initial } : group,
+          ),
+        }
+      : layout.files,
   );
-  const [split, setSplit] = useState<string | null>(
-    allowSplit ? layout.split : null,
-  );
+  const { groups, focus, direction } = files;
+  const split = groups.length > 1;
+  /** The file in the pane that files from the list or a link open into. */
+  const active = groups[focus]?.active ?? null;
   const [history, setHistory] = useState<FileLocation[]>([]);
   const [forward, setForward] = useState<FileLocation[]>([]);
   const [browserOpen, setBrowserOpen] = useState(
@@ -165,24 +185,12 @@ export default function FileWorkspace({
     };
   }, []);
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
-  const shown = useRef({ tabs, active, split });
-  shown.current = { tabs, active, split };
-  /** Take tabs away together. Returns the tab beside the first one removed. */
-  const dropTabs = useCallback((paths: string[]) => {
-    const gone = new Set(paths);
-    const { tabs } = shown.current;
-    const remaining = tabs.filter((p) => !gone.has(p));
-    const first = Math.max(
-      tabs.findIndex((p) => gone.has(p)),
-      0,
-    );
-    const next = remaining[Math.min(first, remaining.length - 1)];
-    setTabs((old) => old.filter((p) => !gone.has(p)));
-    setActive((old) =>
-      old && gone.has(old.path) ? (next ? { path: next } : null) : old,
-    );
-    setSplit((old) => (old && gone.has(old) ? null : old));
-    return next;
+  const shown = useRef(files);
+  shown.current = files;
+  /** Take tabs away together, from one pane or all. Returns the new layout. */
+  const dropTabs = useCallback((paths: string[], group?: number) => {
+    setFiles((old) => closeGroupTabs(old, paths, group));
+    return closeGroupTabs(shown.current, paths, group);
   }, []);
   /** A file that is gone loses its tab; its retained draft stays in storage. */
   const loadFailed = useCallback(
@@ -197,7 +205,7 @@ export default function FileWorkspace({
   );
   const navigationSequence = useRef(0);
   const open = useCallback(
-    async (location: FileLocation) => {
+    async (location: FileLocation, group?: number) => {
       const sequence = ++navigationSequence.current;
       setError("");
       try {
@@ -210,13 +218,10 @@ export default function FileWorkspace({
       if (sequence !== navigationSequence.current || !alive.current) return;
       if (location.line) setMode(location.path, "source");
       else if (location.fragment) setMode(location.path, "preview");
-      setTabs((old) =>
-        old.includes(location.path) ? old : [...old, location.path],
-      );
-      setActive((old) => {
-        if (old) setHistory((h) => [...h.slice(-99), old]);
-        return location;
-      });
+      const before = shown.current;
+      const old = before.groups[group ?? before.focus]?.active;
+      if (old) setHistory((h) => [...h.slice(-99), old]);
+      setFiles((layout) => showIn(layout, location, group ?? layout.focus));
       setForward([]);
       setPassage(null);
       navigationListener.current?.(location);
@@ -224,31 +229,32 @@ export default function FileWorkspace({
     [load, setMode],
   );
   const openReporting = useCallback(
-    (location: FileLocation) =>
-      void open(location).catch((e) => loadFailed(location.path, e)),
+    (location: FileLocation, group?: number) =>
+      void open(location, group).catch((e) => loadFailed(location.path, e)),
     [open, loadFailed],
   );
   useEffect(() => {
     if (initial) void open(initial).catch((e) => loadFailed(initial.path, e));
   }, [initial, open, loadFailed]);
+  /** The files on screen, one per pane. */
+  const onScreen = groups.map((g) => g.active?.path ?? "").join("\n");
   useEffect(() => {
     setFailed((old) => (old.size ? new Set() : old));
-    for (const path of new Set(
-      [active?.path, split].filter((p): p is string => Boolean(p)),
-    ))
+    const paths = onScreen.split("\n").filter(Boolean);
+    for (const path of new Set(paths))
       void load(path).catch((e) => loadFailed(path, e));
-    evict([active?.path, split]);
-  }, [active?.path, split, load, evict, loadFailed]);
+    evict(paths);
+  }, [onScreen, load, evict, loadFailed]);
   useEffect(() => {
     try {
       localStorage.setItem(
         `pipeline.files.layout.${adapter.id}`,
-        JSON.stringify({ tabs, active, split, browser: browserOpen }),
+        JSON.stringify({ ...files, browser: browserOpen }),
       );
     } catch {
       /* Layout is optional. */
     }
-  }, [tabs, active, split, browserOpen, adapter.id]);
+  }, [files, browserOpen, adapter.id]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
@@ -276,10 +282,11 @@ export default function FileWorkspace({
     [active?.path, adapter, open],
   );
   useEffect(() => {
-    workspaceRoot.current
-      ?.querySelector('.file-tab[data-active="true"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [active?.path]);
+    for (const tab of workspaceRoot.current?.querySelectorAll(
+      '.file-tab[data-active="true"]',
+    ) ?? [])
+      tab.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [onScreen]);
   useEffect(() => {
     if (!active?.fragment || !buffers[active.path]) return;
     const frame = requestAnimationFrame(() => {
@@ -300,7 +307,7 @@ export default function FileWorkspace({
     const next = source[source.length - 1];
     if (!next) return;
     navigationSequence.current++;
-    setTabs((old) => (old.includes(next.path) ? old : [...old, next.path]));
+    setFiles((layout) => showIn(layout, next));
     if (back) {
       setHistory(source.slice(0, -1));
       if (active) setForward((old) => [...old, active]);
@@ -308,7 +315,6 @@ export default function FileWorkspace({
       setForward(source.slice(0, -1));
       if (active) setHistory((old) => [...old, active]);
     }
-    setActive(next);
     if (next.line || next.fragment)
       setMode(next.path, next.line ? "source" : "preview");
     setPassage(null);
@@ -320,20 +326,126 @@ export default function FileWorkspace({
         .map((b) => b.draft),
     [buffers],
   );
-  const tabList = useTabList(
-    tabs,
-    active?.path ?? "",
-    (path) => {
-      openReporting({ path });
-    },
+  const firstTabs = useTabList(
+    groups[0].tabs,
+    groups[0].active?.path ?? "",
+    (path) => openReporting({ path }, 0),
     "manual",
   );
-  const closeTabs = (paths: string[]) => {
+  const secondTabs = useTabList(
+    groups[1]?.tabs ?? [],
+    groups[1]?.active?.path ?? "",
+    (path) => openReporting({ path }, 1),
+    "manual",
+  );
+  const tabLists = [firstTabs, secondTabs];
+  const tabListsRef = useRef(tabLists);
+  tabListsRef.current = tabLists;
+  const focusGroup = (group: number) =>
+    setFiles((old) =>
+      old.focus === group || !old.groups[group]
+        ? old
+        : { ...old, focus: group },
+    );
+  // Dragging a tab off its strip: onto the other pane, or to the right or
+  // bottom of the only pane to split it.
+  const dockTarget = useRef<DockTarget | null>(null);
+  const [dropHint, setDropHint] = useState<DropHint | null>(null);
+  const dockAt = (from: number, x: number, y: number): DockTarget | null => {
+    const hit = document.elementFromPoint?.(x, y);
+    const strip = hit?.closest<HTMLElement>(".file-tabs[data-group]");
+    if (strip) {
+      const group = Number(strip.dataset.group);
+      if (group === from) return null;
+      const index = [
+        ...strip.querySelectorAll<HTMLElement>(":scope > .file-tab"),
+      ].filter((tab) => {
+        const box = tab.getBoundingClientRect();
+        return box.left + box.width / 2 < x;
+      }).length;
+      return { kind: "group", group, index };
+    }
+    const body = hit?.closest<HTMLElement>(".file-group-body[data-group]");
+    if (!body) return null;
+    const group = Number(body.dataset.group);
+    if (shown.current.groups.length > 1)
+      return group === from ? null : { kind: "group", group };
+    const box = body.getBoundingClientRect();
+    const right = (box.right - x) / box.width;
+    const bottom = (box.bottom - y) / box.height;
+    if (right > 0.5 && bottom > 0.5) return null;
+    return {
+      kind: "split",
+      direction: right <= bottom ? "horizontal" : "vertical",
+    };
+  };
+  const dockFor = (from: number): TabDock | undefined =>
+    allowSplit
+      ? {
+          move: (_, x, y) => {
+            const target = dockAt(from, x, y);
+            dockTarget.current = target;
+            const hint: DropHint | null = !target
+              ? null
+              : target.kind === "split"
+                ? {
+                    group: 0,
+                    zone:
+                      target.direction === "horizontal" ? "right" : "bottom",
+                  }
+                : {
+                    group: target.group,
+                    zone: target.index === undefined ? "all" : "strip",
+                  };
+            setDropHint((old) =>
+              old?.group === hint?.group && old?.zone === hint?.zone
+                ? old
+                : hint,
+            );
+          },
+          end: (path, drop) => {
+            const target = dockTarget.current;
+            dockTarget.current = null;
+            setDropHint(null);
+            if (!drop || !target) return;
+            setFiles((old) =>
+              target.kind === "split"
+                ? splitOff(old, path, target.direction)
+                : moveTab(old, path, from, target.group, target.index),
+            );
+          },
+        }
+      : undefined;
+  const firstStrip = useRef<HTMLDivElement>(null);
+  const secondStrip = useRef<HTMLDivElement>(null);
+  const strips = [firstStrip, secondStrip];
+  const reorders = [
+    useTabReorder(
+      firstStrip,
+      groups[0].tabs,
+      (path, index) => setFiles((old) => moveTab(old, path, 0, 0, index)),
+      dockFor(0),
+    ),
+    useTabReorder(
+      secondStrip,
+      groups[1]?.tabs ?? [],
+      (path, index) => setFiles((old) => moveTab(old, path, 1, 1, index)),
+      dockFor(1),
+    ),
+  ];
+  /** Closes tabs in one pane, or everywhere, and focuses the tab that takes over. */
+  const closeTabs = (paths: string[], group?: number) => {
     navigationSequence.current++;
     retain(latest.current);
-    const next = dropTabs(paths);
+    const before = shown.current.groups.length;
+    const after = dropTabs(paths, group);
+    const index =
+      group !== undefined && after.groups.length === before
+        ? group
+        : after.focus;
+    const next = after.groups[index]?.active?.path;
     requestAnimationFrame(() => {
-      if (next) tabList.focus(next);
+      if (next) tabListsRef.current[index]?.focus(next);
       else search.current?.focus();
     });
   };
@@ -343,9 +455,7 @@ export default function FileWorkspace({
     retain(latest.current);
     const moved = remap(from, to);
     const carry = (path: string) => movedPath(path, from, to) ?? path;
-    setTabs((old) => old.map(carry));
-    setActive((old) => (old ? { ...old, path: carry(old.path) } : old));
-    setSplit((old) => (old ? carry(old) : old));
+    setFiles((old) => remapLayout(old, carry));
     setHistory((old) => old.map((l) => ({ ...l, path: carry(l.path) })));
     setForward((old) => old.map((l) => ({ ...l, path: carry(l.path) })));
     setModes((old) =>
@@ -366,7 +476,7 @@ export default function FileWorkspace({
   };
   // A file with unsaved text keeps its tab. One never read has nothing to show.
   const followTrash = (trashed: string) => {
-    const closing = [...tabs, ...(split ? [split] : [])].filter(
+    const closing = [...new Set(groups.flatMap((g) => g.tabs))].filter(
       (path) =>
         movedPath(path, trashed, "") !== null &&
         (!latest.current[path] || forget(path)),
@@ -445,182 +555,224 @@ export default function FileWorkspace({
     );
   };
   const hasBrowser = Boolean(fileListLabel || adapter.list) || paths.length > 1;
-  const files = (
-    <div className="file-workspace-main">
-      <div className="file-tabbar">
-        {hasBrowser && (
-          <IconButton
-            size="sm"
-            label={browserOpen ? "Hide file list" : "Show file list"}
-            tooltipSide="bottom"
-            onClick={() => setBrowserOpen(!browserOpen)}
-          >
-            <Icon name="sidebar" className="h-4 w-4" />
-          </IconButton>
-        )}
-        {(history.length > 0 || forward.length > 0) && (
-          <>
+  /** One pane: its tab bar, then the file it shows. */
+  const groupView = (index: number) => {
+    const group = groups[index];
+    const shownFile = group.active;
+    const tabList = tabLists[index];
+    const reorder = reorders[index];
+    const hint = dropHint?.group === index ? dropHint.zone : null;
+    return (
+      <div
+        className="file-group"
+        data-focused={split && index === focus}
+        onPointerDownCapture={() => focusGroup(index)}
+        onFocusCapture={() => focusGroup(index)}
+      >
+        <div className="file-tabbar">
+          {index === 0 && hasBrowser && (
             <IconButton
               size="sm"
-              label="Back"
+              label={browserOpen ? "Hide file list" : "Show file list"}
               tooltipSide="bottom"
-              disabled={!history.length}
-              onClick={() => moveHistory(true)}
+              onClick={() => setBrowserOpen(!browserOpen)}
             >
-              <Icon name="arrow-left" className="h-4 w-4" />
+              <Icon name="sidebar" className="h-4 w-4" />
             </IconButton>
-            <IconButton
-              size="sm"
-              label="Forward"
-              tooltipSide="bottom"
-              disabled={!forward.length}
-              onClick={() => moveHistory(false)}
-            >
-              <Icon name="arrow" className="h-4 w-4" />
-            </IconButton>
-          </>
-        )}
-        <div className="file-tabs" role="tablist" aria-label="Open files">
-          {tabs.map((path) => {
-            const props = tabList.tabProps(path);
-            const name = path.split("/").pop() ?? path;
-            return (
-              <div
-                key={path}
-                className="file-tab"
-                role="presentation"
-                data-active={active?.path === path}
+          )}
+          {index === 0 && (history.length > 0 || forward.length > 0) && (
+            <>
+              <IconButton
+                size="sm"
+                label="Back"
+                tooltipSide="bottom"
+                disabled={!history.length}
+                onClick={() => moveHistory(true)}
               >
-                <button
-                  {...props}
-                  className="file-tab-name"
-                  title={`${path} · Delete to close`}
-                  onKeyDown={(event) => {
-                    if (event.key === "Delete") {
-                      event.preventDefault();
-                      closeTabs([path]);
-                    } else props.onKeyDown(event);
-                  }}
+                <Icon name="arrow-left" className="h-4 w-4" />
+              </IconButton>
+              <IconButton
+                size="sm"
+                label="Forward"
+                tooltipSide="bottom"
+                disabled={!forward.length}
+                onClick={() => moveHistory(false)}
+              >
+                <Icon name="arrow" className="h-4 w-4" />
+              </IconButton>
+            </>
+          )}
+          <div
+            ref={strips[index]}
+            className="file-tabs"
+            role="tablist"
+            aria-label={
+              split
+                ? `Open files, ${index ? "second" : "first"} pane`
+                : "Open files"
+            }
+            data-group={index}
+            data-drop={hint === "strip" || undefined}
+          >
+            {group.tabs.map((path, position) => {
+              const props = tabList.tabProps(path);
+              const name = path.split("/").pop() ?? path;
+              return (
+                <div
+                  key={path}
+                  className="file-tab"
+                  role="presentation"
+                  data-active={shownFile?.path === path}
                 >
-                  <FileIcon name={name} />
-                  <span className="file-tab-label">
-                    {name}
-                    {buffers[path] && isDirty(buffers[path]) ? " •" : ""}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="file-tab-close"
-                  tabIndex={active?.path === path ? 0 : -1}
-                  aria-label={`Close ${path}`}
-                  onClick={() => closeTabs([path])}
-                >
-                  <Icon name="close" className="h-3 w-3" />
-                </button>
-              </div>
-            );
-          })}
+                  <button
+                    {...props}
+                    className="file-tab-name"
+                    title={`${path} · Drag to reorder or split · Delete to close`}
+                    aria-keyshortcuts="Control+Shift+PageUp Control+Shift+PageDown Delete"
+                    onPointerDown={(event) =>
+                      reorder.onPointerDown(path, event)
+                    }
+                    onKeyDown={(event) => {
+                      const step =
+                        (event.ctrlKey || event.metaKey) && event.shiftKey
+                          ? { PageUp: -1, PageDown: 1 }[event.key]
+                          : undefined;
+                      if (event.key === "Delete") {
+                        event.preventDefault();
+                        closeTabs([path], index);
+                      } else if (step) {
+                        // The same keys as moving a browser or editor tab.
+                        event.preventDefault();
+                        setFiles((old) =>
+                          moveTab(old, path, index, index, position + step),
+                        );
+                        requestAnimationFrame(() => tabList.focus(path));
+                      } else props.onKeyDown(event);
+                    }}
+                  >
+                    <FileIcon name={name} />
+                    <span className="file-tab-label">
+                      {name}
+                      {buffers[path] && isDirty(buffers[path]) ? " •" : ""}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="file-tab-close"
+                    tabIndex={shownFile?.path === path ? 0 : -1}
+                    aria-label={`Close ${path}`}
+                    onClick={() => closeTabs([path], index)}
+                  >
+                    <Icon name="close" className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="file-tabbar-end">
+            {shownFile &&
+              runControls?.({
+                path: shownFile.path,
+                dirty:
+                  !!buffers[shownFile.path] && isDirty(buffers[shownFile.path]),
+              })}
+            {passage && onAsk && index === focus && (
+              <button
+                className="file-action primary"
+                onClick={() => onAsk(passage)}
+              >
+                Ask about selection
+              </button>
+            )}
+            {allowSplit && !split && (
+              <IconButton
+                size="sm"
+                label="Split pane"
+                tooltipSide="bottom"
+                disabled={!shownFile}
+                onClick={() =>
+                  setFiles((old) =>
+                    old.groups[0].active
+                      ? splitOff(
+                          old,
+                          old.groups[0].active.path,
+                          "horizontal",
+                          true,
+                        )
+                      : old,
+                  )
+                }
+              >
+                <Icon name="columns" className="h-4 w-4" />
+              </IconButton>
+            )}
+            {split && (
+              <IconButton
+                size="sm"
+                label="Close pane"
+                tooltipSide="bottom"
+                onClick={() => setFiles((old) => closePane(old, index))}
+              >
+                <Icon name="close" className="h-4 w-4" />
+              </IconButton>
+            )}
+          </div>
         </div>
-        <div className="file-tabbar-end">
-          {active && onRunFile && scriptAdapter(active.path) && (
-            <button
-              className="file-action"
-              disabled={!!buffers[active.path] && isDirty(buffers[active.path])}
-              title="Save the script before preparing a run"
-              onClick={() => onRunFile(active.path)}
+        {error && index === focus && (
+          <p role="alert" className="file-error">
+            {error}
+            <ReportIssueLink />
+          </p>
+        )}
+        {group.tabs
+          .filter((path) => path !== shownFile?.path)
+          .map((path) => (
+            <div key={path} {...tabList.panelProps(path)} hidden />
+          ))}
+        <div className="file-group-body" data-group={index}>
+          {shownFile ? (
+            <div
+              {...tabList.panelProps(shownFile.path)}
+              className="file-tab-panel"
             >
-              Run…
-            </button>
+              {renderPane(shownFile)}
+            </div>
+          ) : (
+            <div className="file-empty">
+              <EmptyState
+                icon={<Icon name="file" className="h-8 w-8" />}
+                title="No file open"
+                description={[
+                  hasBrowser && "Choose a file from the list.",
+                  adapter.save && "Unsaved drafts stay when you switch files.",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              />
+            </div>
           )}
-          {active && onFileRuns && (
-            <button
-              className="file-action"
-              onClick={() =>
-                onFileRuns(
-                  active.path,
-                  buffers[active.path]?.file.hash ?? undefined,
-                )
-              }
-            >
-              Runs
-            </button>
-          )}
-          {passage && onAsk && (
-            <button
-              className="file-action primary"
-              onClick={() => onAsk(passage)}
-            >
-              Ask about selection
-            </button>
-          )}
-          {split && (
-            <select
-              aria-label="File in second pane"
-              value={split}
-              onChange={(e) => setSplit(e.target.value)}
-            >
-              {[...new Set([...tabs, ...paths])].map((path) => (
-                <option key={path}>{path}</option>
-              ))}
-            </select>
-          )}
-          {allowSplit && (
-            <IconButton
-              size="sm"
-              label={split ? "Close split" : "Split pane"}
-              tooltipSide="bottom"
-              aria-pressed={Boolean(split)}
-              disabled={!active}
-              onClick={() => setSplit(split ? null : (active?.path ?? null))}
-            >
-              <Icon name="columns" className="h-4 w-4" />
-            </IconButton>
+          {hint && hint !== "strip" && (
+            <div className="file-drop-hint" data-zone={hint} />
           )}
         </div>
       </div>
-      {error && (
-        <p role="alert" className="file-error">
-          {error}
-          <ReportIssueLink />
-        </p>
-      )}
-      {tabs
-        .filter((path) => path !== active?.path)
-        .map((path) => (
-          <div key={path} {...tabList.panelProps(path)} hidden />
-        ))}
-      {split && active ? (
+    );
+  };
+  const editor = (
+    <div className="file-workspace-main">
+      {split ? (
         <SplitView
+          className="file-groups"
           storageKey={`pipeline.files.split.${adapter.id}`}
-          firstLabel="Primary file"
-          secondLabel="Second file"
-          first={
-            <div
-              {...tabList.panelProps(active.path)}
-              className="file-tab-panel"
-            >
-              {renderPane(active)}
-            </div>
-          }
-          second={renderPane({ path: split })}
+          firstLabel="First pane"
+          secondLabel="Second pane"
+          direction={direction}
+          toolbar={false}
+          first={groupView(0)}
+          second={groupView(1)}
         />
-      ) : active ? (
-        <div {...tabList.panelProps(active.path)} className="file-tab-panel">
-          {renderPane(active)}
-        </div>
       ) : (
-        <div className="file-empty">
-          <EmptyState
-            icon={<Icon name="file" className="h-8 w-8" />}
-            title="No file open"
-            description={[
-              hasBrowser && "Choose a file from the list.",
-              adapter.save && "Unsaved drafts stay when you switch files.",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          />
-        </div>
+        groupView(0)
       )}
     </div>
   );
@@ -647,13 +799,14 @@ export default function FileWorkspace({
               onTrashed={followTrash}
               onAddToDocuments={onAddToDocuments}
               onAskFile={onAskFile}
+              onFileDrag={onFileDrag}
               searchRef={search}
             />
           </div>
-          {files}
+          {editor}
         </div>
       ) : (
-        files
+        editor
       )}
     </div>
   );

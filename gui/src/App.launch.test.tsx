@@ -350,6 +350,7 @@ describe("App launch", () => {
     await waitFor(() =>
       expect(enqueueBatch).toHaveBeenCalledWith({
         authorNote: null,
+        matchWriting: false,
         expectedProfileSnapshotId: "snapshot-test",
         paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
         variables: null,
@@ -379,6 +380,53 @@ describe("App launch", () => {
     await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("matches the author's writing when the workflow's editors can, unless turned off", async () => {
+    const defaultInvoke = invoke.getMockImplementation()!;
+    invoke.mockImplementation(async (command: string, args: unknown) => {
+      const result = await defaultInvoke(command, args);
+      if (command === "get_run_setup")
+        return { ...result, matchWritingAvailable: true };
+      if (command === "get_execution_plan")
+        return { ...result, matchWritingAvailable: true };
+      return result;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const box = await screen.findByRole("checkbox", {
+      name: /Match my writing/,
+    });
+    expect(box).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Choose two papers" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    expect(await screen.findByText("Editors match your writing")).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith(
+      "get_execution_plan",
+      expect.objectContaining({ matchWriting: true }),
+    );
+    await user.click(screen.getByRole("button", { name: "Queue 2 reviews" }));
+    await waitFor(() =>
+      expect(enqueueBatch).toHaveBeenCalledWith(
+        expect.objectContaining({ matchWriting: true }),
+      ),
+    );
+
+    // Turned off, the next review neither asks for nor sends it.
+    await user.click(screen.getByRole("button", { name: "New review" }));
+    const again = await screen.findByRole("checkbox", {
+      name: /Match my writing/,
+    });
+    await user.click(again);
+    expect(again).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Choose two papers" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await screen.findByText(/2 documents · document/);
+    expect(screen.queryByText("Editors match your writing")).toBeNull();
+    expect(invoke).toHaveBeenLastCalledWith(
+      "get_execution_plan",
+      expect.objectContaining({ matchWriting: false }),
+    );
   });
 
   it("defers exact DOCX readiness checks until the user reviews the report", async () => {

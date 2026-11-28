@@ -264,7 +264,10 @@ pub(super) fn read_session_row(row: &Row<'_>) -> rusqlite::Result<WorkbenchSessi
         workspace_id: row.get(1)?,
         paper_id: row.get(2)?,
         title: row.get(3)?,
-        preset_id: row.get(4)?,
+        // Conversations saved on a retired built-in profile use its successor.
+        preset_id: row
+            .get::<_, Option<String>>(4)?
+            .map(crate::workbench::research::current_preset_id),
         overrides: parse_json(overrides, 5)?,
         draft: row.get(6)?,
         revision: row.get(7)?,

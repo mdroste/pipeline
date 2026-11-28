@@ -29,6 +29,7 @@ async fn no_source_admission_preserves_validation_order_and_scope_cleanup() {
     let snapshot = RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Admission fixture".into(),

@@ -36,6 +36,7 @@ commands, stored fields, or tables to match the app.
 | Review | A run of a workflow, also called a profile or pipeline (`pipeline_config/`) |
 | Automation | A task chain (`orchestration/`); a research automation is a mission, and research discovery is self-discovery |
 | Assistant instructions | The harness: presets, modules, and tools resolved for each turn (`presets` table); **Assistant settings** calls a preset an agent profile |
+| About you | The researcher (`researcher.rs`): plain files in `researcher/` inside the research data folder |
 
 Code and comments also call the conversation subsystem Workspace and the
 review subsystem Workflows. Use the app's nouns in UI text and user guides.
@@ -123,6 +124,7 @@ Each module's header comment has the details.
 | `findings/`, `output/` | Published findings, report artifact contracts, and rendering |
 | `app_menu.rs` | The macOS menu bar and its sidebar item |
 | `settings/`, `storage.rs` | Device settings and research folder choice |
+| `researcher.rs`, `researcher/` | About you: the researcher's background note, style notes, and past writing, kept as plain files beside the stores. The conversation harness reads them at the start of each turn, and `conversation_tools` reads examples for the Your writing tools; no store owns them |
 | `updates.rs`, `updates/` | Update checks, their preference, and in-app install |
 | `agent_runtime/codex/` | Shared Codex transport, launch, and version checks |
 | `agent_runtime/codex/chatgpt/` | The shared ChatGPT account |
@@ -525,9 +527,13 @@ newer than the build.
 accept versions 1 to 11 and reject newer ones. `pipeline-cli workflow schema`
 prints the schema. See the [CLI guide](cli.md).
 
-**`.pwrx` research backup** is a zip, format version 3; readers also accept
-versions 1 and 2. It holds an online SQLite backup of the conversation store,
-blobs, conversation working files, private project edit copies, and transcripts.
+**`.pwrx` research backup** is a zip, format version 4; readers also accept
+versions 1 to 3. It holds an online SQLite backup of the conversation store,
+blobs, conversation working files, private project edit copies, transcripts,
+and About you, which is kept beside the store. About you's notes, records, and
+extracted text are staged before conversation files and its original files
+last, so a full backup leaves out originals first. Restoring About you adds
+what is missing and replaces nothing.
 Private copies include uncaptured regular files and empty directories. Missing,
 unreadable, changing, or oversized copy content stops export. Restored private
 Git worktrees become ordinary edit copies without the old host's Git link.

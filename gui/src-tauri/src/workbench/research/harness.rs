@@ -1,12 +1,14 @@
 //! Ordered harness resolution, prompt composition, and compatibility fingerprints.
 
-use super::config::{find_preset, load_config, merge_config};
+use super::catalog::OWN_WRITING;
+use super::config::{find_preset, load_config, merge_config, ABOUT_YOU_KEY};
 use super::context::context_for_session;
 use super::tool_catalog::dynamic_tools;
 use super::{
     harness_modules, hash_bytes, open_connection, validate_id, EffectiveHarness, HarnessModule,
-    InstructionSection, ModuleAvailability, DEFAULT_CONTEXT_BYTES, HARNESS_SCHEMA_VERSION,
-    MAX_CONTEXT_BYTES, MAX_INSTRUCTIONS_BYTES, WORKSPACE_PREAMBLE,
+    InstructionSection, ModuleAvailability, DEFAULT_CONTEXT_BYTES, FIELD_CONVENTIONS_KEY,
+    HARNESS_SCHEMA_VERSION, MAX_CONTEXT_BYTES, MAX_FIELD_CONVENTIONS_BYTES, MAX_INSTRUCTIONS_BYTES,
+    WORKSPACE_PREAMBLE,
 };
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use serde_json::{json, Map, Value};
@@ -132,6 +134,16 @@ fn resolve(
     // A research automation's checks run through its coordinator, only as
     // approved, so its roles never gain the run tool, whatever passes a test.
     let automation_role = crate::workbench::missions::marks_role(&snapshot.session.overrides);
+    // About you is the researcher's own, in every project, so a project or a
+    // conversation can leave all of it out. Its files are read each time:
+    // another computer may have changed them.
+    let about_you = values
+        .get(ABOUT_YOU_KEY)
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let researcher_folder = about_you
+        .then(|| crate::researcher::folder_beside(store.root_path()))
+        .flatten();
     let module_availability = catalog
         .iter()
         .map(|spec| {
@@ -142,6 +154,7 @@ fn resolve(
                 has_tested_execution_profile,
                 in_task_copy,
                 automation_role,
+                about_you,
             );
             ModuleAvailability {
                 id: spec.id.to_string(),
@@ -167,6 +180,38 @@ fn resolve(
             unavailable.push(module.clone());
         }
     }
+    // Reading the project's papers follows the conversation, not the profile:
+    // automatic modules are on wherever they can run, and an attached paper
+    // brings its context. Neither is reported missing when it cannot run.
+    let attached_paper = snapshot.session.paper_id.is_some();
+    for (spec, availability) in catalog.iter().zip(&module_availability) {
+        let implied = spec.automatic || (spec.id == "paper_context" && attached_paper);
+        if implied && availability.available && !enabled.iter().any(|module| module == spec.id) {
+            enabled.push(spec.id.to_string());
+        }
+    }
+    // The built-in Writing profile uses the researcher's own writing whenever
+    // there is some, so a researcher who has added none sees no change. Other
+    // profiles choose it under Tools & context.
+    let builtin_writing = preset.built_in && preset.id == "writing";
+    let own_writing = researcher_folder
+        .as_deref()
+        .filter(|_| builtin_writing || preset.modules.iter().any(|m| m == OWN_WRITING))
+        .map(|folder| (folder, crate::researcher::writing(folder)))
+        .filter(|(_, writing)| !writing.is_empty());
+    if builtin_writing && own_writing.is_some() && !enabled.iter().any(|m| m == OWN_WRITING) {
+        enabled.push(OWN_WRITING.to_string());
+    }
+    let own_writing = own_writing.filter(|_| enabled.iter().any(|m| m == OWN_WRITING));
+    // A local server may reject function calling, so it gets the passages
+    // without the tools to read further.
+    let writing_tools = own_writing
+        .as_ref()
+        .is_some_and(|(_, writing)| !writing.examples.is_empty())
+        && !matches!(
+            crate::workbench::api::selected(&snapshot.session.overrides)?,
+            Some(crate::connections::ApiProvider::Local)
+        );
     let (mut context_preview, mut context_truncated) =
         if enabled.iter().any(|module| module == "paper_context") {
             context_for_session(
@@ -241,6 +286,99 @@ fn resolve(
             text: preset.instructions.clone(),
         });
     }
+    // What the researcher says about themself holds in every project, so it
+    // comes before the project's own conventions, which are the more specific.
+    let background = researcher_folder
+        .as_deref()
+        .and_then(crate::researcher::background);
+    if let Some(text) = background {
+        let start = developer.len();
+        developer.push_str(
+            "\n\nAbout the researcher, in their own words. Use it to choose conventions and pitch explanations. Where this project's own field and conventions differ, follow the project's:\n",
+        );
+        developer.push_str(&text);
+        sections.push(InstructionSection {
+            id: "about_researcher".into(),
+            label: "About you".into(),
+            text: developer[start..].trim_start().to_string(),
+        });
+    }
+    // The researcher's field and conventions hold for the whole project,
+    // whatever the profile. Only the project's own setting applies, and it is
+    // the researcher's instruction rather than source material.
+    let field_conventions = workspace
+        .as_ref()
+        .and_then(|config| config.body.get(FIELD_CONVENTIONS_KEY))
+        .and_then(Value::as_str)
+        .map(|text| crate::workbench::search::prefix(text.trim(), MAX_FIELD_CONVENTIONS_BYTES))
+        .filter(|text| !text.is_empty());
+    if let Some(text) = field_conventions {
+        let start = developer.len();
+        developer.push_str(
+            "\n\nThe researcher's field and conventions for this project. Follow them unless the researcher asks otherwise:\n",
+        );
+        developer.push_str(text);
+        sections.push(InstructionSection {
+            id: "field_conventions".into(),
+            label: "Project field and conventions".into(),
+            text: developer[start..].trim_start().to_string(),
+        });
+    }
+    // The researcher's own writing comes after the project's conventions, which
+    // still govern notation and reporting. Passages are wrapped and encoded like
+    // sources: they are the researcher's prose, but never instructions or
+    // evidence for this work.
+    if let Some((folder, writing)) = own_writing.as_ref() {
+        let start = developer.len();
+        developer.push_str(
+            "\n\nThe researcher's own writing. Use it when you draft or revise their prose, unless they ask otherwise.",
+        );
+        if let Some(style) = writing.style.as_deref() {
+            developer.push_str("\n\nHow they describe their style:\n");
+            developer.push_str(style);
+        }
+        // A grant project's voice is closest to the researcher's proposals.
+        let project_kind = snapshot
+            .session
+            .workspace_id
+            .as_deref()
+            .and_then(|id| crate::workbench::project::home_record(store, id).ok())
+            .and_then(|record| {
+                record
+                    .body
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        let preferred = if project_kind.as_deref() == Some("grant") {
+            "grant"
+        } else {
+            "paper"
+        };
+        let passages = crate::researcher::passages(folder, &writing.examples, preferred);
+        if !passages.is_empty() {
+            let encoded = serde_json::to_string(&passages)
+                .map_err(|error| {
+                    WorkbenchError::storage("Failed to encode writing samples", error)
+                })?
+                .replace('<', "\\u003c");
+            developer.push_str(
+                "\n\nPassages from their earlier work, for voice, sentence structure, and conventions only. They are not sources for this work: never cite them, quote them as evidence, or take facts, results, or references from them.\n<writing_samples role=\"style_reference\">\n",
+            );
+            developer.push_str(&encoded);
+            developer.push_str("\n</writing_samples>");
+        }
+        if writing_tools {
+            developer.push_str(
+                "\n\nwriting_samples lists the earlier papers they marked as examples, and writing_sample_read reads more of one when a task calls for it.",
+            );
+        }
+        sections.push(InstructionSection {
+            id: "own_writing".into(),
+            label: "Your writing".into(),
+            text: developer[start..].trim_start().to_string(),
+        });
+    }
     let active_recipe = snapshot
         .session
         .overrides
@@ -311,7 +449,7 @@ fn resolve(
         } else if mode == "edit" {
             "Use project_read, project_edit and project_create for project file changes. They preserve recovery and detect concurrent edits. Shell commands can read the project; shell writes require an isolated working copy. Use authorized research execution tools for tested local jobs."
         } else {
-            "Project access is Inspect: read files and explain findings. File changes require Edit access."
+            "Project access is Read only: read files and explain findings. If a request needs file changes, tell the researcher to choose Allow edits, either for the whole project under Assistants in Project settings or for this conversation under Access mode in Assistant settings (the gear beside the model picker)."
         };
         developer.push_str("\n\n");
         developer.push_str(text);
@@ -422,6 +560,11 @@ fn resolve(
     };
     let conversation_tools = crate::workbench::conversation_tools::catalog(&effective);
     effective.dynamic_tools.extend(conversation_tools);
+    if writing_tools {
+        effective
+            .dynamic_tools
+            .extend(crate::workbench::conversation_tools::writing_catalog());
+    }
     let provider = crate::workbench::api::selected(&snapshot.session.overrides)?;
     // A local server may reject function calling, so a local conversation
     // with nothing else enabled stays plain chat.
@@ -480,15 +623,19 @@ fn module_unavailability_reasons(
     has_tested_execution_profile: bool,
     in_task_copy: bool,
     automation_role: bool,
+    about_you: bool,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
+    if spec.id == OWN_WRITING && !about_you {
+        reasons.push("About you is turned off for this project or conversation.".to_string());
+    }
     if spec.requires_workspace && !has_workspace {
         reasons
             .push("Available only inside a Workspace; this conversation is unfiled.".to_string());
     }
     if spec.capability == "execute" {
         if mode != "edit" {
-            reasons.push("Needs Edit access mode.".to_string());
+            reasons.push("Needs Allow edits.".to_string());
         }
         if !has_tested_execution_profile {
             reasons.push("Needs an execution profile that has passed its test.".to_string());

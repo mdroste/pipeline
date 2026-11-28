@@ -24,7 +24,7 @@ interface Props {
   availability: ModuleAvailability[] | undefined;
   busy: boolean;
   onChange: (next: string[]) => void;
-  /** Offered beside an execution module that only needs Edit access mode. */
+  /** Offered beside an execution module that only needs Allow edits. */
   onSwitchToEdit?: () => void;
   conversationMode: "inspect" | "edit";
 }
@@ -104,7 +104,7 @@ function HarnessModulesEditor({
               aria-pressed={active === bundle.id}
               disabled={readOnly || busy}
               title={bundle.description}
-              onClick={() => onChange(applyBundle(selected, bundle, catalog))}
+              onClick={() => onChange(applyBundle(bundle, catalog))}
               className={chipClass(active === bundle.id)}
             >
               {bundle.label}
@@ -112,8 +112,8 @@ function HarnessModulesEditor({
           ))}
         </div>
         <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
-          Choose a group of sources, tools, and research panels, then select
-          research instructions below.
+          Choose a group of sources, tools, and research panels, or switch them
+          individually below.
         </p>
       </div>
 
@@ -133,6 +133,7 @@ function HarnessModulesEditor({
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
             {group.modules.map((module) => {
               const enabled = selected.includes(module.id);
+              const automatic = module.automatic === true;
               const state = availabilityFor(module.id, availability);
               const needsEdit =
                 module.capability === "execute" && conversationMode !== "edit";
@@ -142,8 +143,8 @@ function HarnessModulesEditor({
                   className="flex items-start gap-3 px-3 py-2.5"
                 >
                   <Switch
-                    checked={enabled}
-                    disabled={readOnly || busy}
+                    checked={enabled || automatic}
+                    disabled={readOnly || busy || automatic}
                     label={moduleName(module)}
                     onToggle={() =>
                       onChange(toggleModule(selected, module.id, catalog))
@@ -160,6 +161,11 @@ function HarnessModulesEditor({
                       {module.requiresWorkspace && (
                         <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
                           Project
+                        </span>
+                      )}
+                      {automatic && (
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[0.625rem] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                          Always on
                         </span>
                       )}
                     </div>
@@ -179,7 +185,7 @@ function HarnessModulesEditor({
                             onClick={onSwitchToEdit}
                             className="ml-2 rounded border border-warning bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-warning hover:bg-warning-soft dark:bg-transparent"
                           >
-                            Switch this conversation to Edit
+                            Allow edits in this conversation
                           </button>
                         )}
                       </div>

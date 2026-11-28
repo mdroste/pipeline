@@ -20,11 +20,20 @@ pub fn hold_from_retention(run_id: &str) -> RetentionHold {
 
 impl Drop for RetentionHold {
     fn drop(&mut self) {
-        let mut holds = retention_holds();
-        if let Some(index) = holds.iter().position(|run_id| run_id == &self.0) {
-            holds.swap_remove(index);
+        {
+            let mut holds = retention_holds();
+            if let Some(index) = holds.iter().position(|run_id| run_id == &self.0) {
+                holds.swap_remove(index);
+            }
         }
+        // A finished run, or a re-run's parent, can now be compacted.
+        super::compaction::schedule_compaction();
     }
+}
+
+/// Whether a review in this process still needs `run_id` as it is on disk.
+pub(super) fn is_held(run_id: &str) -> bool {
+    retention_holds().iter().any(|held| held == run_id)
 }
 
 pub(super) fn apply_retention_holds(state: &mut [(String, bool, u64)]) {
@@ -61,28 +70,59 @@ pub(super) fn with_unheld_run<T>(
     action()
 }
 
-/// Count of runs on disk and total bytes they occupy (best-effort walk).
+/// Physical files already counted, so a hard link adds no bytes twice.
+pub(super) type Counted = std::collections::HashSet<super::stored::FileIdentity>;
+
+/// Runs in History and in Trash, and the bytes each occupies (best-effort
+/// walk). A file shared by several runs counts once, in History first.
 pub fn disk_usage() -> Result<RunsDiskUsage, String> {
-    let dir = runs_dir()?;
+    let mut counted = Counted::new();
+    let (count, bytes) = run_folders_usage(&runs_dir()?, "Run storage scan", &mut counted)?;
+    let (trash_count, trash_bytes) = run_folders_usage(
+        &super::trash::trash_runs_dir()?,
+        "Run Trash scan",
+        &mut counted,
+    )?;
+    Ok(RunsDiskUsage {
+        count,
+        bytes,
+        trash_count,
+        trash_bytes,
+    })
+}
+
+/// Count the run folders directly under `dir` and the bytes beneath them.
+/// Loose files beside them, such as Trash time records, are not counted.
+pub(super) fn run_folders_usage(
+    dir: &Path,
+    label: &'static str,
+    counted: &mut Counted,
+) -> Result<(u32, u64), String> {
     let mut count = 0u32;
     let mut bytes = 0u64;
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Ok(RunsDiskUsage { count: 0, bytes: 0 });
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok((0, 0));
     };
-    let mut walk = crate::safety::WalkBudget::new("Run storage scan").without_time_limit();
+    let mut listing = crate::safety::WalkBudget::new(label).without_time_limit();
     for entry in entries.flatten() {
-        walk.entry()?;
+        listing.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
             continue;
         }
         count += 1;
-        walk.directory()?;
-        bytes = bytes.saturating_add(dir_size(&entry.path(), &mut walk)?);
+        // Each run gets its own budget, as retention's scan does, so a large
+        // history cannot exhaust one shared budget.
+        let mut walk = crate::safety::WalkBudget::new(label).without_time_limit();
+        bytes = bytes.saturating_add(dir_size(&entry.path(), &mut walk, counted)?);
     }
-    Ok(RunsDiskUsage { count, bytes })
+    Ok((count, bytes))
 }
 
-fn dir_size(path: &Path, walk: &mut crate::safety::WalkBudget) -> Result<u64, String> {
+fn dir_size(
+    path: &Path,
+    walk: &mut crate::safety::WalkBudget,
+    counted: &mut Counted,
+) -> Result<u64, String> {
     let mut total = 0u64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(d) = stack.pop() {
@@ -99,6 +139,15 @@ fn dir_size(path: &Path, walk: &mut crate::safety::WalkBudget) -> Result<u64, St
                 walk.directory()?;
                 stack.push(entry.path());
             } else if let Ok(meta) = entry.metadata() {
+                // Compaction links only files this large, so smaller ones
+                // need no identity check.
+                if meta.len() >= super::compaction::MIN_LINK_BYTES {
+                    if let Some((identity, links)) = super::stored::file_identity(&entry.path()) {
+                        if links > 1 && !counted.insert(identity) {
+                            continue;
+                        }
+                    }
+                }
                 total = total.saturating_add(meta.len());
             }
         }
@@ -110,12 +159,16 @@ fn sized_runs_for_retention() -> Result<Vec<(RunSummary, u64)>, String> {
     let summaries = list_runs()?; // already newest-first
     let root = runs_dir()?;
     let mut sized = Vec::with_capacity(summaries.len());
+    // Newest first, a shared file counts toward the newest run holding it.
+    // Retention removes the oldest runs first, and removing a run frees only
+    // the files no newer run still links.
+    let mut counted = Counted::new();
     for summary in summaries {
         // Each run directory gets its own walk budget. The scan covers only
         // app-owned run data, and one budget across the whole store trips at a
         // few hundred runs — which would silently disable retention forever.
         let mut walk = crate::safety::WalkBudget::new("Run retention scan").without_time_limit();
-        let bytes = dir_size(&root.join(&summary.run_id), &mut walk)?;
+        let bytes = dir_size(&root.join(&summary.run_id), &mut walk, &mut counted)?;
         sized.push((summary, bytes));
     }
     Ok(sized)

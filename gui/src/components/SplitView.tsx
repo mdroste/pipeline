@@ -25,19 +25,29 @@ function restore(key: string) {
   }
 }
 
-/** Two persistent panes with local fit constraints and a shared splitter. */
+/**
+ * Two persistent panes with local fit constraints and a shared splitter.
+ * Without the toolbar the arrangement is fixed by `direction` and both panes
+ * always show, sharing whatever room there is.
+ */
 export default function SplitView({
   first,
   second,
   firstLabel,
   secondLabel,
   storageKey,
+  direction: fixedDirection,
+  toolbar = true,
+  className,
 }: {
   first: ReactNode;
   second: ReactNode;
   firstLabel: string;
   secondLabel: string;
   storageKey: string;
+  direction?: "horizontal" | "vertical";
+  toolbar?: boolean;
+  className?: string;
 }) {
   const [preference, setPreference] = useState(() => restore(storageKey));
   const [focus, setFocus] = useState<"first" | "second" | "both">("both");
@@ -71,17 +81,26 @@ export default function SplitView({
     observer?.observe(element);
     return () => observer?.disconnect();
   }, []);
-  const direction =
-    preference.direction === "auto"
+  const direction = fixedDirection
+    ? fixedDirection
+    : preference.direction === "auto"
       ? size.width >= 960
         ? "horizontal"
         : "vertical"
       : preference.direction;
   const vertical = direction === "vertical";
   const available = Math.max(0, (vertical ? size.height : size.width) - 12);
-  const minimum = vertical ? 240 : 320;
+  const minimum = toolbar
+    ? vertical
+      ? 240
+      : 320
+    : Math.min(vertical ? 160 : 240, available / 2);
   const fits = available >= minimum * 2;
-  const shown = focus === "both" && !fits ? lastPane : focus;
+  const shown = !toolbar
+    ? "both"
+    : focus === "both" && !fits
+      ? lastPane
+      : focus;
   const firstSize = Math.max(
     minimum,
     Math.min(available - minimum, available * preference.ratio),
@@ -95,8 +114,9 @@ export default function SplitView({
     }
   };
   return (
-    <div className="split-view">
+    <div className={className ? `split-view ${className}` : "split-view"}>
       <div
+        hidden={!toolbar}
         className="split-view-toolbar"
         role="group"
         aria-label={`${firstLabel} and ${secondLabel} layout`}

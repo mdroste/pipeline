@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { useEffect, useRef, useState } from "react";
 import {
   projectClient,
@@ -58,7 +59,9 @@ export function JobLauncher({
           <pre className="whitespace-pre-wrap break-words text-xs">
             {preview.command.join(" ")}
           </pre>
-          <p className="break-all text-xs">Working directory: {preview.cwd}</p>
+          <p className="break-all text-xs">
+            Working directory: {displayPath(preview.cwd)}
+          </p>
           <p className="text-xs">{preview.boundary}</p>
           <Inspect
             value={{

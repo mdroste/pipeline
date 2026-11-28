@@ -16,6 +16,9 @@
   font-size: var(--ui-text-label);
   flex-shrink: 0;
 }
+.split-view-toolbar[hidden] {
+  display: none;
+}
 .split-view-toolbar label {
   display: flex;
   align-items: center;

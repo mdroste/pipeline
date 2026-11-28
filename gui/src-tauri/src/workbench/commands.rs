@@ -20,6 +20,7 @@ mod project;
 mod project_integrations;
 mod research;
 mod sessions;
+mod style;
 mod tasks;
 mod titles;
 mod version_control;
@@ -52,6 +53,7 @@ use sessions::default_session_overrides;
 pub use sessions::*;
 use sessions::{conversation_turn_permit, ensure_session_idle};
 pub(crate) use tasks::deliver_task;
+pub use style::*;
 pub use titles::*;
 pub use workspaces::*;
 

@@ -1,4 +1,9 @@
-import { moduleName, harnessDiagnostic } from "./harnessCopy";
+import {
+  moduleName,
+  harnessDiagnostic,
+  systemPromptSource,
+} from "./harnessCopy";
+import { conversationProvider } from "../../lib/workspaceProviders";
 // Read-only view of what the next turn will actually use: the assembled
 // developer instructions as labelled host-owned bands, tools, and provenance.
 
@@ -27,6 +32,13 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
   };
   const facts: Array<[string, string]> = [
     ["Agent profile", effective.preset.name],
+    [
+      "Base prompt",
+      systemPromptSource(
+        effective.preset,
+        conversationProvider(snapshot.session.overrides.runtime),
+      ),
+    ],
     ["Access", compactAccessSummary(effective)],
     ["Permission profile", effective.permissionProfile],
     ["Available tools", String(effective.dynamicTools.length)],

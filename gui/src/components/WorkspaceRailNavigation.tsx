@@ -1,3 +1,4 @@
+import { displayPath } from "../lib/displayPath";
 import { useRef, useState } from "react";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
 import type {
@@ -92,7 +93,7 @@ export default function WorkspaceRailNavigation({
                 project.missingRootAt
                   ? `${project.name} · Folder not found`
                   : project.root
-                    ? `${project.name} · ${project.root}`
+                    ? `${project.name} · ${displayPath(project.root)}`
                     : project.name
               }
               disabled={disabled}

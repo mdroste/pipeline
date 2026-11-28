@@ -518,7 +518,7 @@ pub fn task_session(
             draft: Some(c.instruction),
             overrides: Some(json!({"mode":"edit","projectCheckpointId":checkpoint_id})),
             archived: None,
-            preset_id: Some("paper_revision".into()),
+            preset_id: Some("writing".into()),
             paper_id: None,
             clear_paper: None,
         })?

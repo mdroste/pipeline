@@ -29,6 +29,7 @@ export interface RerunRequirements {
 
 export interface ExecutionPlanRequest {
   authorNote?: string | null;
+  matchWriting?: boolean;
   variables: Record<string, string> | null;
   extraInputs: Record<string, string> | null;
   expectedProfileConfigSnapshotId: string | null;
@@ -42,6 +43,7 @@ export interface StartBatchRequest {
   reviewHandoffId?: string;
   expectedProfileSnapshotId?: string;
   authorNote?: string | null;
+  matchWriting?: boolean;
   paths: string[];
   variables: Record<string, string> | null;
   extraInputs: Record<string, string> | null;
@@ -52,6 +54,7 @@ export interface StartBatchRequest {
 export interface EnqueueRunRequest {
   reviewHandoffId?: string;
   authorNote?: string | null;
+  matchWriting?: boolean;
   paperPath: string;
   inputInterpretation: string | null;
   diff: boolean;

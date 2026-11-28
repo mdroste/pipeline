@@ -63,13 +63,7 @@ const custom: HarnessPreset = {
   name: "My audit",
   description: "Mine",
   instructions: "Check the estimand.",
-  modules: [
-    "research_structure",
-    "empirical_audit",
-    "paper_context",
-    "paper_tools",
-    "research_execution",
-  ],
+  modules: ["paper_context", "paper_tools", "research_execution"],
   builtIn: false,
   sourcePresetId: "empirical_audit",
   revision: 2,
@@ -88,13 +82,12 @@ function catalog(): HarnessCatalog {
       },
     ],
     presets: [
-      builtIn("plain", "Codex default", "", []),
+      builtIn("plain", "Default", "", []),
       builtIn(
         "research_assistant",
         "Research assistant",
         "State the question precisely.",
         [
-          "research_structure",
           "paper_context",
           "paper_tools",
           "research_ledger",
@@ -102,8 +95,6 @@ function catalog(): HarnessCatalog {
         ],
       ),
       builtIn("empirical_audit", "Empirical audit", "Identify the estimand.", [
-        "research_structure",
-        "empirical_audit",
         "paper_context",
         "paper_tools",
         "research_ledger",
@@ -150,7 +141,7 @@ function effective(presetId = "empirical_audit"): EffectiveHarness {
             id: module.id,
             available: false,
             reasons: [
-              "Needs Edit access mode.",
+              "Needs Allow edits.",
               "Needs an execution profile that has passed its test.",
             ],
           }
@@ -313,7 +304,7 @@ it("lists presets, opens the preset in use as read-only, and flags the successor
     screen.queryByRole("button", { name: "Use in this conversation" }),
   ).not.toBeInTheDocument();
   expect(screen.getByTestId("preset-summary")).toHaveTextContent(
-    "Adds 2 research instruction sets, paper context, 3 tools, and 2 research panels.",
+    "Adds paper context, notes, claims & evidence and local analysis, and 2 research panels.",
   );
   expect(screen.getAllByText("In use")).toHaveLength(1);
   expect(
@@ -323,7 +314,7 @@ it("lists presets, opens the preset in use as read-only, and flags the successor
   expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   expect(screen.getByRole("switch", { name: "Local analysis" })).toBeDisabled();
-  expect(screen.getByText(/Needs Edit access mode/)).toBeInTheDocument();
+  expect(screen.getByText(/Needs Allow edits/)).toBeInTheDocument();
 });
 
 it("clones a built-in through a named dialog and switches the conversation to the copy", async () => {
@@ -369,7 +360,7 @@ it("edits a custom preset as a draft, saves with the expected revision, and guar
   fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   fireEvent.click(screen.getByRole("switch", { name: "Evidence" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "Read papers & record findings" }),
+    screen.getByRole("button", { name: "Manuscript & findings" }),
   );
   expect(screen.getByText("Unsaved")).toBeInTheDocument();
   expect(
@@ -377,7 +368,7 @@ it("edits a custom preset as a draft, saves with the expected revision, and guar
   ).toBeDisabled();
 
   mocks.confirmDialog.mockResolvedValueOnce(false);
-  fireEvent.click(screen.getByRole("button", { name: /Codex default/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Default/ }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
   expect(screen.getByLabelText("Profile name")).toBeInTheDocument();
 
@@ -389,14 +380,7 @@ it("edits a custom preset as a draft, saves with the expected revision, and guar
         expectedRevision: 2,
         name: "My audit",
         instructions: "Check the estimand. <workspace_context>",
-        modules: [
-          "research_structure",
-          "empirical_audit",
-          "paper_context",
-          "paper_tools",
-          "research_ledger",
-          "evidence_inspector",
-        ],
+        modules: ["paper_context", "research_ledger", "evidence_inspector"],
       }),
     ),
   );
@@ -514,7 +498,7 @@ it("offers to switch an inspect conversation to Edit beside an execution module"
   await screen.findByRole("heading", { name: "Empirical audit" });
   fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "Switch this conversation to Edit" }),
+    screen.getByRole("button", { name: "Allow edits in this conversation" }),
   );
   await waitFor(() =>
     expect(mocks.updateSession).toHaveBeenCalledWith(
@@ -564,10 +548,13 @@ it("disables workspace-scope cells for an unfiled conversation", async () => {
   ).toBeInTheDocument();
 });
 
-it("shows the Codex default prompt layers honestly and keeps the built-in read-only", async () => {
+it("shows the Default profile's prompt layers honestly and keeps the built-in read-only", async () => {
   mocks.effectiveHarness.mockResolvedValue(effective("plain"));
   renderEditor({ snapshot: snapshot("plain") });
-  await screen.findByRole("heading", { name: "Codex default", level: 2 });
+  await screen.findByRole("heading", { name: "Default", level: 2 });
+  expect(screen.getByTestId("system-prompt-note")).toHaveTextContent(
+    "Keeps Codex’s built-in base prompt and adds Pipeline’s instructions.",
+  );
   expect(screen.getByLabelText("Base prompt mode")).toBeDisabled();
   expect(screen.getByLabelText("Base prompt mode")).toHaveValue("default");
   expect(
@@ -579,6 +566,45 @@ it("shows the Codex default prompt layers honestly and keeps the built-in read-o
   expect(
     screen.queryByRole("button", { name: "Save profile" }),
   ).not.toBeInTheDocument();
+});
+
+it("names the Default profile the same on Claude Code and names whose base prompt it keeps", async () => {
+  const claude = snapshot("plain");
+  claude.session.overrides = { runtime: "claude" };
+  mocks.effectiveHarness.mockResolvedValue(effective("plain"));
+  renderEditor({ snapshot: claude });
+  await screen.findByRole("heading", { name: "Default", level: 2 });
+  expect(screen.getByTestId("system-prompt-note")).toHaveTextContent(
+    "Keeps Claude Code’s built-in base prompt and adds Pipeline’s instructions.",
+  );
+  expect(
+    screen.getByRole("option", { name: "Use Claude Code default" }),
+  ).toBeInTheDocument();
+});
+
+it("marks profiles that replace the base prompt and says what an API connection receives", async () => {
+  const writing: HarnessPreset = {
+    ...builtIn("writing", "Writing", "", ["paper_context", "paper_tools"]),
+    baseInstructions: "You are a writing and editing partner.",
+  };
+  mocks.harnessCatalog.mockResolvedValue({
+    ...catalog(),
+    presets: [...catalog().presets, writing],
+  });
+  mocks.effectiveHarness.mockResolvedValue({ ...effective(), preset: writing });
+  const api = snapshot("writing");
+  api.session.overrides = { runtime: "openai-api" };
+  renderEditor({ snapshot: api });
+  await screen.findByRole("heading", { name: "Writing", level: 2 });
+  expect(screen.getByRole("button", { name: /^Writing/ })).toHaveTextContent(
+    "Replaces base prompt",
+  );
+  expect(
+    screen.getByRole("button", { name: /^Empirical audit/ }),
+  ).not.toHaveTextContent("Replaces base prompt");
+  expect(screen.getByTestId("system-prompt-note")).toHaveTextContent(
+    "Uses this profile’s prompt as the base prompt, followed by Pipeline’s instructions.",
+  );
 });
 
 it("creates a blank profile for all Workspaces and selects it", async () => {
@@ -619,7 +645,7 @@ it("searches profiles by name and description", async () => {
   });
   expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: /Codex default/ }),
+    screen.queryByRole("button", { name: /^Default/ }),
   ).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Search agent profiles"), {
     target: { value: "No such profile" },
@@ -635,8 +661,8 @@ it("discards a draft when navigating away and does not resurrect it on return", 
   fireEvent.change(await screen.findByLabelText("Additional instructions"), {
     target: { value: "Unsaved prompt" },
   });
-  fireEvent.click(screen.getByRole("button", { name: /Codex default/ }));
-  await screen.findByRole("heading", { name: "Codex default", level: 2 });
+  fireEvent.click(screen.getByRole("button", { name: /^Default/ }));
+  await screen.findByRole("heading", { name: "Default", level: 2 });
   fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
   await screen.findByLabelText("Profile name");
   expect(

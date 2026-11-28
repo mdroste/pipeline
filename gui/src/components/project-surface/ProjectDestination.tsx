@@ -24,8 +24,7 @@ import ObjectPane from "../research-desk/ObjectPane";
 import ProjectOverview from "./ProjectOverview";
 import ProjectSettings from "./ProjectSettings";
 import OverviewOptions from "./OverviewOptions";
-import OverviewDialog from "./OverviewDialog";
-import FileRuns from "../research-panel/FileRuns";
+import { Icon } from "../../ui/icons";
 import ProjectActionItems from "./ProjectActionItems";
 import ProjectReviews from "./ProjectReviews";
 import ProjectEdits from "./ProjectEdits";
@@ -121,10 +120,11 @@ export default function ProjectDestination({
     request: number;
   }>();
   const [executionTargetId, setExecutionTargetId] = useState<string>();
-  const [fileRuns, setFileRuns] = useState<{
-    path: string;
-    hash?: string;
-  } | null>(null);
+  /** The script whose run setup or output is open, to go back to. */
+  const [runSource, setRunSource] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab !== "execution") setRunSource(null);
+  }, [tab]);
   const askSource = async (
     passage: FilePassage & { checkpointId?: string | null },
   ) => {
@@ -438,9 +438,14 @@ export default function ProjectDestination({
             <ProjectFiles
               onRunFile={(path) => {
                 setInitialScript({ path, request: Date.now() });
+                setRunSource(path);
                 setTab("execution");
               }}
-              onFileRuns={(path, hash) => setFileRuns({ path, hash })}
+              onShowRun={(path, runId) => {
+                setExecutionTargetId(runId);
+                setRunSource(path);
+                setTab("execution");
+              }}
               workspaceId={workspaceId}
               paths={filePaths}
               initial={fileLocation}
@@ -544,6 +549,16 @@ export default function ProjectDestination({
       {(["memory", "execution", "review", "exchange"] as const).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
           <div className="project-panel">
+            {view === "execution" && runSource && (
+              <button
+                type="button"
+                className="project-run-back"
+                onClick={() => setTab("files")}
+              >
+                <Icon name="arrow-left" className="h-4 w-4" />
+                Back to {runSource.split("/").pop()}
+              </button>
+            )}
             <Suspense
               fallback={
                 <section className="workspace-panel-loading">
@@ -581,20 +596,6 @@ export default function ProjectDestination({
           </div>
         </RetainedWorkspaceView>
       ))}
-      <OverviewDialog
-        title="File runs"
-        open={!!fileRuns}
-        onClose={() => setFileRuns(null)}
-      >
-        {fileRuns && (
-          <FileRuns
-            workspaceId={workspaceId}
-            runs={data.executions}
-            root={workspace?.root ?? null}
-            {...fileRuns}
-          />
-        )}
-      </OverviewDialog>
     </fieldset>
   );
 }

@@ -25,4 +25,5 @@ pub mod reconcile;
 pub(crate) mod response_journal;
 pub(crate) mod review_budget;
 pub mod structured;
+pub(crate) mod style_examples;
 pub(crate) mod unit_files;

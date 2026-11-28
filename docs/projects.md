@@ -14,7 +14,11 @@ connection. Sample changes are discarded when you close the tutorial.
 Open **Projects** and choose **New project**. Choose a folder and enter a name.
 Every new project needs a folder; an existing local Git repository works too.
 You can also choose an initial document and its type: **Paper**, **Slides**,
-**Appendix**, **Response letter**, or **Other**. Then choose **Create project**.
+**Appendix**, **Response letter**, or **Other**. Under **Assistant access**,
+choose **Read only** to let assistants read the folder, or **Allow edits** to
+let them create and change files. Before allowing edits, make sure the folder
+is backed up, for example with Git or Dropbox, so you can undo any changes an
+assistant makes. Then choose **Create project**.
 
 Choose **Open folder** to start from an existing research folder or local Git repository. Pipeline proposes a name and inspects nearby documents. If several possible roots are found, choose one or browse the folder. Opening it does not build or execute its code. Publication details are optional.
 
@@ -180,13 +184,56 @@ receives, choose **Context** in the conversation menu.
 ### Set assistant instructions
 
 Open **Assistant settings**, the gear below the message. Choose an agent
-profile, which is a saved set of instructions and tools. Set
-**Access mode** to **Read only** or **Allow edits**.
+profile for the kind of work the conversation is for:
+
+- **Default** adds nothing to the assistant's usual behavior.
+- **Research** helps sharpen questions, design analyses, interpret results,
+  and plan next steps. It can suggest notes, claims, and evidence for you to
+  review.
+- **Writing** drafts, edits, and revises the manuscript and referee
+  responses. It follows your style notes and examples from
+  [About you](settings.md#how-assistants-use-your-writing) once you add some.
+- **Data & code** writes and checks analysis and replication code. With
+  **Allow edits**, it can also run commands you have tested.
+
+For a structured check, such as an empirical results audit, a theory audit, or
+a literature review, choose a recipe on the **Recipes** tab instead. In a
+project, every profile can read and search the project's papers and sources,
+and a paper you attach is sent with your messages.
+
+Set **Access mode** to **Read only** or **Allow edits** for this conversation.
+To change it for every conversation in the project, open **Project settings**
+and choose under **Assistants**. Conversations pick up the project's choice
+with their next message, unless they set their own **Access mode**.
+
+Field conventions, such as your field's notation and how it reports results,
+belong to the project, not to a profile. Write them under **Field and
+conventions** in **Project settings** → **Assistants**, for example
+"Economics. Use the field's notation; report standard errors clustered as in
+the paper." Then choose **Save field and conventions**. The text can be up to
+4 KiB. Every conversation in the project receives it after its profile's
+instructions, on every connection, starting with its next message. After a
+change, each conversation's next message starts a new assistant session, which
+keeps the conversation's history. An automation that continues a conversation
+in the project stops once, until you review the new context.
+
+Your background from [About you](settings.md#about-you) is sent with every
+conversation too, before the project's field and conventions, and assistants
+follow the project where the two differ. To leave it out of this project, turn
+off **Use About you in this project** under **Assistants**.
+
+An assistant's instructions start from a base prompt. ChatGPT conversations
+use Codex's built-in prompt, and Claude Code conversations use Claude Code's.
+API and local connections have no built-in prompt, so Pipeline starts them
+with one line. Every built-in profile keeps the base prompt and adds its own
+instructions. Pipeline also adds its project instructions, which tell the
+assistant to cite what it has read and never to invent sources, data, or
+checks.
 
 **Manage agent profiles…** opens the profile editor:
 
-- Built-in profiles, such as Writing and Economics research, are read-only.
-  Choose **Duplicate profile** to make your own copy.
+- Built-in profiles are read-only. Choose **Duplicate profile** to make your
+  own copy.
 - On **System prompt**, keep the provider's base prompt or choose
   **Replace base prompt**. **Additional instructions** are added either way.
 - On **Tools & context**, choose which Pipeline tools the profile can use.
@@ -429,8 +476,8 @@ Exports are copies, so export again to pass on later changes.
 | --- | --- | --- |
 | Use it to | Restore all your projects and conversations | Send selected research to a coauthor |
 | Find it in | **Settings → Data & Storage** | **Project settings → Share project** |
-| Includes | Every project and conversation, notes, documents, imported data, and agent profiles | The records you select and everything they refer to |
-| Leaves out | Project folders, reviews, automations, Trash, and sign-ins | Conversations, sign-ins, command settings, agent profiles, and raw data |
+| Includes | Every project and conversation, notes, documents, imported data, agent profiles, and [About you](settings.md#about-you) | The records you select and everything they refer to |
+| Leaves out | Project folders, reviews, automations, Trash, and sign-ins | Conversations, sign-ins, command settings, agent profiles, About you, and raw data |
 | Largest size | 2 GB | 2 GB |
 
 Commands from any import need your approval before they run. Keep separate
@@ -448,6 +495,13 @@ too large for a backup, and reports those omissions. An unreadable, changing,
 or oversized private edit copy stops the backup so its work is not lost silently.
 Private Git edit worktrees restore as ordinary edit copies; keep a separate
 backup of the source repository and its history.
+
+A backup also includes [About you](settings.md#about-you): your background,
+and each paper in **Your writing** with its text. The files you added go in
+last. If the backup runs out of room, Pipeline leaves some of those files out,
+keeps their text, and tells you how many. Restoring never replaces About you on
+the computer you restore to. A background already there is kept, and so is any
+paper already in **Your writing**; the rest comes from the backup.
 
 If a saved file is missing from your research data folder, Pipeline lists what
 it affects and asks whether to back up without it. Everything else is saved.

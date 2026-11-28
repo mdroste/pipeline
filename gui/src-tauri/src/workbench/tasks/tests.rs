@@ -16,6 +16,20 @@ pub(super) fn fixture() -> (tempfile::TempDir, Store, String) {
 #[test]
 fn custom_prompt_cannot_hide_connection_changes_from_tasks_or_schedules() {
     let (_temp, store, id) = fixture();
+    // A profile with its own base prompt drops the connection-specific
+    // preamble line, so Codex and Claude Code share one fingerprint.
+    let custom = crate::workbench::research::clone_preset(
+        &store,
+        crate::workbench::research::ClonePresetRequest {
+            workspace_id: None,
+            source_workspace_id: None,
+            source_preset_id: "writing".into(),
+            name: "Own prompt".into(),
+            operation_id: "own-prompt".into(),
+        },
+    )
+    .unwrap();
+    crate::workbench::research::update_preset(&store, serde_json::from_value(json!({"presetId":custom.id,"expectedRevision":custom.revision,"name":"Own prompt","description":"","instructions":"","modules":[],"basePrompt":{"mode":"replace","text":"You are an editor."},"operationId":"own-prompt-base"})).unwrap()).unwrap();
     for runtime in [
         "codex",
         "claude",
@@ -25,7 +39,7 @@ fn custom_prompt_cannot_hide_connection_changes_from_tasks_or_schedules() {
         "local",
     ] {
         let session = store.session_snapshot(&id).unwrap().session;
-        store.update_session(serde_json::from_value(json!({"sessionId":id,"expectedRevision":session.revision,"operationId":format!("select-{runtime}"),"presetId":"writing","overrides":{"runtime":runtime}})).unwrap()).unwrap();
+        store.update_session(serde_json::from_value(json!({"sessionId":id,"expectedRevision":session.revision,"operationId":format!("select-{runtime}"),"presetId":custom.id,"overrides":{"runtime":runtime}})).unwrap()).unwrap();
         let saved = binding(&store, &id).unwrap();
         validate_binding(&store, &saved).unwrap();
         let mut scope = crate::orchestration::store::Scope {

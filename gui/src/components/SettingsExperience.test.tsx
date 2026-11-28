@@ -69,7 +69,7 @@ const view = (props = {}) =>
       {...props}
     />,
   );
-it("opens General with seven categories and persists appearance, editor, startup, and send preferences", async () => {
+it("opens General with eight categories and persists appearance, editor, startup, and send preferences", async () => {
   const user = userEvent.setup();
   view();
   expect(await screen.findByRole("heading", { name: "General" })).toBeVisible();
@@ -77,7 +77,7 @@ it("opens General with seven categories and persists appearance, editor, startup
     within(
       screen.getByRole("navigation", { name: "Settings categories" }),
     ).getAllByRole("button"),
-  ).toHaveLength(7);
+  ).toHaveLength(8);
   await user.selectOptions(screen.getByLabelText("Interface text size"), "125");
   await user.selectOptions(screen.getByLabelText("Editor font size"), "18");
   await user.click(screen.getByRole("switch", { name: "Wrap long lines" }));

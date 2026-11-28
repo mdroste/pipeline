@@ -275,7 +275,7 @@ export default function HistoryPage({
     const label = r.title || r.input_name;
     if (
       !(await confirmDialog(
-        `Move report “${label}” and all its artifacts to Trash? You can restore it later.`,
+        `Move report “${label}” and all its artifacts to Trash? You can restore it for 30 days.`,
         {
           title: "Move report to Trash",
           confirmLabel: "Move to Trash",

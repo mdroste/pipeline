@@ -66,7 +66,7 @@ pub(crate) fn call(
         "project_edit" | "project_create" | "project_artifact" => {
             if research::resolve_harness(store, session_id)?.mode != "edit" {
                 return Err(WorkbenchError::invalid(
-                    "File editing requires Edit access in Assistant settings",
+                    "File editing needs Allow edits, under Assistants in Project settings or Access mode in Assistant settings",
                 ));
             }
             if super::super::discovery::role_policy(store, session_id)?.is_some() {

@@ -414,11 +414,14 @@ pub(super) fn restore_source(
     }
     let captured = snapshot_source(
         &ScopedSourceContext {
-            source_path: Some(parent.join(relative)),
+            source_path: Some(parent.join(&relative)),
             read_root: None,
         },
         root,
     )?;
+    // A finished parent may keep large files compressed. The copy gets them
+    // back as they were captured, which the fingerprint then confirms.
+    crate::runs::expand_compressed_copy(parent, root, &relative)?;
     if source_fingerprint(
         captured
             .source_path

@@ -1,3 +1,4 @@
+import { displayPath } from "../lib/displayPath";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ReportIssueLink from "./ReportIssueLink";
@@ -98,10 +99,12 @@ export default function WorkspaceRestoreRootsDialog({
         </p>
         {roots.map((root, index) => (
           <div key={root} className="space-y-1">
-            <p className="break-all font-mono text-xs text-gray-500">{root}</p>
+            <p className="break-all font-mono text-xs text-gray-500">
+              {displayPath(root)}
+            </p>
             <div className="flex gap-2">
               <input
-                aria-label={`Folder on this computer for ${root}`}
+                aria-label={`Folder on this computer for ${displayPath(root)}`}
                 value={paths[index]}
                 onChange={(event) => setPath(index, event.target.value)}
                 placeholder="No linked folder"
@@ -109,7 +112,7 @@ export default function WorkspaceRestoreRootsDialog({
               />
               <button
                 type="button"
-                aria-label={`Choose folder for ${root}`}
+                aria-label={`Choose folder for ${displayPath(root)}`}
                 onClick={() => void choose(index)}
                 className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700"
               >

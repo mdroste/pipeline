@@ -5,6 +5,9 @@ use crate::pipeline_config::{self, PipelineConfig};
 pub(in crate::commands) struct RunSnapshot {
     pub(in crate::commands) review_handoff_id: Option<String>,
     pub(in crate::commands) author_note: Option<String>,
+    /// Match my writing: the author's style examples for Declaude's editors,
+    /// from `pipeline::style_examples`.
+    pub(in crate::commands) style_examples: Option<String>,
     pub(in crate::commands) settings: crate::settings::Settings,
     pub(in crate::commands) config: PipelineConfig,
     pub(in crate::commands) profile_name: String,
@@ -161,6 +164,7 @@ pub(in crate::commands) fn load_run_snapshot_for_workflow(
     Ok(RunSnapshot {
         review_handoff_id: None,
         author_note: None,
+        style_examples: None,
         settings,
         config,
         profile_name,
@@ -183,6 +187,39 @@ pub(in crate::commands) fn bind_author_note(
         snapshot.fingerprint =
             stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), "author_note_v1", note))
                 .map_err(|error| format!("Could not fingerprint the author note: {error}"))?;
+    }
+    Ok(snapshot)
+}
+
+/// Binds the author's style examples from About you when the researcher asked
+/// to match their writing and the workflow has editors that use them. They
+/// join the plan fingerprint, so a change between plan and launch is caught.
+pub(in crate::commands) fn bind_style_examples(
+    snapshot: RunSnapshot,
+    match_writing: bool,
+) -> Result<RunSnapshot, String> {
+    // A data folder that can't be found has no About you to send.
+    let folder = match_writing
+        .then(crate::researcher::folder)
+        .and_then(Result::ok);
+    bind_style_examples_from(snapshot, folder.as_deref())
+}
+
+/// [`bind_style_examples`] with About you read from `folder`, or not at all.
+pub(in crate::commands) fn bind_style_examples_from(
+    mut snapshot: RunSnapshot,
+    folder: Option<&std::path::Path>,
+) -> Result<RunSnapshot, String> {
+    snapshot.style_examples = folder
+        .filter(|_| crate::pipeline::style_examples::accepts(&snapshot.config))
+        .and_then(crate::pipeline::style_examples::render);
+    if let Some(block) = &snapshot.style_examples {
+        snapshot.fingerprint = stable_snapshot_fingerprint(&(
+            snapshot.fingerprint.as_str(),
+            "style_examples_v1",
+            block,
+        ))
+        .map_err(|error| format!("Could not fingerprint the style examples: {error}"))?;
     }
     Ok(snapshot)
 }

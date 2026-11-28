@@ -1,6 +1,10 @@
 import { useProjectEnvironment } from "../lib/projectEnvironment";
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import useModalDialog from "../hooks/useModalDialog";
+import AssistantAccessChoice, {
+  isAssistantAccess,
+  type AssistantAccess,
+} from "./AssistantAccessChoice";
 import {
   documentTypes,
   documentRole,
@@ -25,9 +29,9 @@ const basename = (path: string) =>
     .pop() || path;
 
 /**
- * One-step project creation: a name and folder, plus an optional paper. Each
- * step is recorded so a retry after a partial failure does not create a
- * second project or import the paper twice.
+ * One-step project creation: a name, folder and assistant access, plus an
+ * optional paper. Each step is recorded so a retry after a partial failure
+ * does not create a second project or import the paper twice.
  */
 export default function WorkspaceProjectDialog({
   onClose,
@@ -42,6 +46,7 @@ export default function WorkspaceProjectDialog({
     workspaceClient,
     researchClient,
     projectClient,
+    harnessClient,
     choose: open,
     embeddedDialogs,
   } = useProjectEnvironment();
@@ -57,6 +62,9 @@ export default function WorkspaceProjectDialog({
   const [documentType, setDocumentType] = useState<DocumentType>("paper");
   const [kind, setKind] = useState("");
   const kindSaved = useRef(false);
+  const [access, setAccess] = useState<AssistantAccess>("inspect");
+  const accessChosen = useRef(false);
+  const accessSaved = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const created = useRef<Workspace | null>(null);
@@ -70,6 +78,21 @@ export default function WorkspaceProjectDialog({
     !embeddedDialogs,
     !embeddedDialogs,
   );
+
+  // Start from the global default; the choice made here is saved to the project.
+  useEffect(() => {
+    let stale = false;
+    void Promise.resolve()
+      .then(() => harnessClient.getWorkspaceConfig(null))
+      .then(({ body }) => {
+        if (!stale && !accessChosen.current && isAssistantAccess(body.mode))
+          setAccess(body.mode);
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [harnessClient]);
 
   const chooseFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
@@ -104,6 +127,16 @@ export default function WorkspaceProjectDialog({
           })
         ).record;
         created.current = workspace;
+      }
+      if (!accessSaved.current) {
+        const config = await harnessClient.getWorkspaceConfig(workspace.id);
+        await harnessClient.saveWorkspaceConfig({
+          workspaceId: workspace.id,
+          expectedRevision: config.revision,
+          body: { ...config.body, mode: access },
+          operationId: `project-access-${crypto.randomUUID()}`,
+        });
+        accessSaved.current = true;
       }
       if (documentType === "paper" && kind && !kindSaved.current) {
         const home = await projectClient.home(workspace.id);
@@ -266,6 +299,15 @@ export default function WorkspaceProjectDialog({
             )}
           </div>
         </div>
+        <AssistantAccessChoice
+          value={access}
+          onChange={(value) => {
+            accessChosen.current = true;
+            setAccess(value);
+          }}
+          disabled={busy || accessSaved.current}
+          hint="Change it later in Project settings. A single conversation can also choose in its Assistant settings."
+        />
         <div className="text-xs">
           <span className="block">
             Document <span className="text-gray-500">(optional)</span>

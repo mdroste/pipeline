@@ -413,17 +413,6 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         {languageError && <p role="status">{languageError}</p>}
         <div className="file-editor-host" ref={host} />
         <div className="file-statusbar">
-          <select
-            aria-label="Source language"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-          >
-            {FILE_LANGUAGES.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.label}
-              </option>
-            ))}
-          </select>
           <label>
             <input
               type="checkbox"
@@ -447,6 +436,19 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
                 if (e.key === "Enter") goToLine(Number(e.currentTarget.value));
               }}
             />
+            <select
+              aria-label="Source language"
+              title="Source language"
+              className="file-language"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+            >
+              {FILE_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>

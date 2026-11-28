@@ -1,6 +1,8 @@
 //! Portable research archive format, limits, and command DTOs.
 //!
-//! Version 3 adds private project edit copies. Version 2 adds conversation working
+//! Version 4 adds About you, the researcher's notes and past writing, which is
+//! kept beside the store; see `about_you`. Version 3 adds private project edit
+//! copies. Version 2 adds conversation working
 //! files; version 1 archives stay readable and must list none. Version 2 and later
 //! manifests may also list references the
 //! researcher chose to leave out because their files were gone; see `omissions`.
@@ -12,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub(super) const ARCHIVE_FORMAT_VERSION: u32 = 3;
+pub(super) const ARCHIVE_FORMAT_VERSION: u32 = 4;
 pub(super) const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub(super) const MAX_ARCHIVE_ENTRIES: usize = 20_000;
 pub(super) const MAX_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
@@ -42,6 +44,8 @@ pub(super) struct ArchiveManifest {
     pub(super) conversation_files: Vec<BlobManifest>,
     #[serde(default)]
     pub(super) project_copies: Vec<super::project_copies::CopyManifest>,
+    #[serde(default)]
+    pub(super) about_you: Vec<BlobManifest>,
     #[serde(default)]
     pub(super) omitted_references: Vec<String>,
     pub(super) portability_note: String,

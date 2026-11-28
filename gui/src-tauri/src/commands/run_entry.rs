@@ -110,6 +110,7 @@ pub(super) async fn prepare_foreground_launch(
     expected_profile_snapshot_id: Option<&str>,
     run_parallel_overrides: Option<&RunModelOverrides>,
     author_note: Option<&str>,
+    match_writing: bool,
 ) -> Result<RunSnapshot, String> {
     let _ = crate::runs::recover_resumable_runs();
     crate::safety::validate_runtime_context(variables, "Run variables")?;
@@ -120,6 +121,7 @@ pub(super) async fn prepare_foreground_launch(
     validate_named_input_paths(&snapshot.config, extra_inputs, true)?;
     let snapshot = bind_runtime_snapshot(snapshot, variables, extra_inputs)?;
     let snapshot = bind_author_note(snapshot, author_note)?;
+    let snapshot = bind_style_examples(snapshot, match_writing)?;
     let snapshot = bind_foreground_launch(snapshot, paper_path, input_interpretation, diff)?;
     let expected_profile_snapshot_id = expected_profile_snapshot_id
         .filter(|expected| !expected.is_empty())

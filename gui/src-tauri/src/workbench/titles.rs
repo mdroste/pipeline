@@ -84,8 +84,12 @@ fn normalize_identifier(value: Option<String>, label: &str) -> WorkbenchResult<O
     Ok(Some(value))
 }
 
+/// Earlier versions opened conversations from a file or selection under this
+/// placeholder, which then never received a real title.
+const LEGACY_PLACEHOLDER_TITLE: &str = "Selected passage";
+
 pub fn is_default_title(title: &str) -> bool {
-    title.trim() == DEFAULT_TITLE
+    matches!(title.trim(), DEFAULT_TITLE | LEGACY_PLACEHOLDER_TITLE)
 }
 
 /// The first user message and the first final assistant reply, bounded.
@@ -432,5 +436,7 @@ mod tests {
         )
         .is_err());
         assert!(is_default_title(" New conversation "));
+        assert!(is_default_title("Selected passage"));
+        assert!(!is_default_title("Selected passages in chapter 2"));
     }
 }

@@ -12,6 +12,7 @@ pub(super) struct BatchLaunch {
 
 /// Capture and validate the complete run definition once for every document.
 /// Later profile, provider, or prompt edits apply only to a subsequent batch.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_batch_launch(
     paths: Vec<String>,
     variables: Option<std::collections::HashMap<String, String>>,
@@ -19,6 +20,7 @@ pub(super) async fn prepare_batch_launch(
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
+    match_writing: bool,
     expected_profile_snapshot_id: Option<String>,
 ) -> Result<BatchLaunch, String> {
     let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
@@ -72,6 +74,7 @@ pub(super) async fn prepare_batch_launch(
     require_snapshot_dependencies(&dependencies)?;
     let snapshot = bind_runtime_snapshot(snapshot, &vars, &inputs)?;
     let snapshot = bind_author_note(snapshot, author_note.as_deref())?;
+    let snapshot = bind_style_examples(snapshot, match_writing)?;
     if let Some(expected) = expected_profile_snapshot_id {
         let planned = bind_foreground_launch(snapshot.clone(), &paths[0], Some("document"), false)?;
         if expected != planned.fingerprint {
@@ -100,6 +103,7 @@ pub async fn start_batch(
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
+    match_writing: Option<bool>,
     expected_profile_snapshot_id: Option<String>,
 ) -> Result<(), String> {
     let BatchLaunch {
@@ -114,6 +118,7 @@ pub async fn start_batch(
         expected_profile_config_snapshot_id,
         run_parallel_overrides,
         author_note,
+        match_writing.unwrap_or(false),
         expected_profile_snapshot_id,
     )
     .await?;

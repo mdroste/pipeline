@@ -6,9 +6,9 @@ import { conversationClient } from "../src/lib/workbench/conversationClient";
 import { harnessClient } from "../src/lib/workbench/harnessClient";
 import type { ConversationSnapshot } from "../src/lib/workbench/sessionTypes";
 import type { HarnessCatalog, HarnessPreset, BasePromptUpdate } from "../src/lib/workbench/harnessTypes";
+import research from "../src-tauri/prompts/agent_profiles/research.md?raw";
 import writing from "../src-tauri/prompts/agent_profiles/writing.md?raw";
-import review from "../src-tauri/prompts/agent_profiles/code_review.md?raw";
-import econ from "../src-tauri/prompts/agent_profiles/econ_research.md?raw";
+import dataCode from "../src-tauri/prompts/agent_profiles/data_code.md?raw";
 import "../src/App.css";
 
 const profile = (
@@ -19,8 +19,8 @@ const profile = (
 ): HarnessPreset => ({
   id,
   name,
-  instructions: "",
-  baseInstructions: id === "plain" ? null : instructions,
+  instructions: instructions.trim(),
+  baseInstructions: null,
   modules,
   description: `A starting point for ${name.toLowerCase()}.`,
   builtIn: true,
@@ -40,6 +40,7 @@ const catalog: HarnessCatalog = {
       description: "Read and search project papers.",
       requiresWorkspace: true,
       capability: "read",
+      automatic: true,
     },
     {
       id: "paper_context",
@@ -52,13 +53,10 @@ const catalog: HarnessCatalog = {
     },
   ],
   presets: [
-    profile("plain", "Codex default", "", []),
-    profile("writing", "Writing", writing, ["paper_tools", "paper_context"]),
-    profile("code_review", "Code review", review, []),
-    profile("econ_research", "Economics research", econ, [
-      "paper_tools",
-      "paper_context",
-    ]),
+    profile("plain", "Default", "", []),
+    profile("research", "Research", research, ["paper_context"]),
+    profile("writing", "Writing", writing, ["paper_context"]),
+    profile("data_code", "Data & code", dataCode, ["paper_context"]),
   ],
   promptLayers: [
     {

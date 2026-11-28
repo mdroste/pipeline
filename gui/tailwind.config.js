@@ -60,6 +60,11 @@ export default {
       backgroundColor: {
         white: "rgb(var(--color-white) / <alpha-value>)",
       },
+      // Borders, dividers and rules without a color class follow the theme.
+      // Tailwind's own default (gray-200) stays light in dark mode.
+      borderColor: {
+        DEFAULT: "var(--ui-border)",
+      },
       borderRadius: {
         "ui-sm": "var(--ui-radius-sm)",
         "ui-md": "var(--ui-radius-md)",

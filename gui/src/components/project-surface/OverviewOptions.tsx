@@ -5,6 +5,7 @@ import ProjectSettings, {
 
 const sections: Array<[ProjectSettingsSection | "tools", string]> = [
   ["publication", "Project"],
+  ["assistants", "Assistants"],
   ["documents", "Documents"],
   ["folder", "Folder"],
   ["exclusions", "Exclusions"],

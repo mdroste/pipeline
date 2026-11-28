@@ -135,6 +135,27 @@ export function settingsSearchEntries(
     "Set up Pipeline",
   );
   add(
+    "about",
+    "about-you-background",
+    "Background",
+    "About me, bio, profile, field, discipline, methods, audience, preferences, memory, what assistants know about you",
+    "",
+  );
+  add(
+    "about",
+    "about-you-writing",
+    "Your writing",
+    "Past papers, writing samples, publications, voice, style, examples",
+    "",
+  );
+  add(
+    "about",
+    "about-you-style",
+    "Style notes",
+    "Writing style, voice, tone, prose, house style, how I write",
+    "",
+  );
+  add(
     "conversations",
     "send-shortcut",
     "Send message with",

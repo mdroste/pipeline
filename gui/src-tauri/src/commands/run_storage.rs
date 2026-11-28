@@ -315,7 +315,9 @@ pub(super) fn finalize_run(
 }
 
 /// Purge old runs beyond the retention cap (0 = keep all), logging how many.
+/// Runs that have expired in Trash are deleted whatever the cap.
 pub(super) fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_bytes: u64) {
+    empty_expired_trash(app);
     if keep == 0 && max_bytes == 0 {
         return;
     }
@@ -333,6 +335,28 @@ pub(super) fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_by
             // A swallowed failure here means the retention caps silently stop
             // being enforced. Surface it everywhere reachable.
             let line = format!("WARNING: run-history retention could not be enforced: {error}");
+            eprintln!("{line}");
+            crate::pipeline::logging::emit(app, line);
+        }
+    }
+}
+
+fn empty_expired_trash(app: &crate::emit::EventBus) {
+    match crate::runs::empty_expired_trash() {
+        Ok(n) if n > 0 => {
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({
+                    "line": format!(
+                        "Permanently deleted {n} report(s) that were in Trash for {} days",
+                        crate::runs::TRASH_RETENTION_DAYS
+                    )
+                }),
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            let line = format!("WARNING: {error}");
             eprintln!("{line}");
             crate::pipeline::logging::emit(app, line);
         }

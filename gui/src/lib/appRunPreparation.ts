@@ -17,10 +17,14 @@ export interface RunProfileSnapshot {
   inputMode: string;
   variables: VarSpec[];
   inputSlots: InputSlot[];
+  /** The workflow's editors use style examples and About you has some. */
+  matchWritingAvailable?: boolean;
 }
 
 export interface PendingRun extends RunProfileSnapshot {
   authorNote?: string | null;
+  /** Send the author's style examples from About you to the editors. */
+  matchWriting?: boolean;
   paperPath: string;
   inputSelection: PrimaryInputSelection | null;
 }
@@ -49,6 +53,7 @@ export interface ExecutionPlanEnvelope {
   hostChecks?: HostCheck[];
   /** Files in the selected folders that won’t fit in the Review’s copy. */
   inputNotices?: string[];
+  matchWritingAvailable?: boolean;
 }
 
 export interface PreparedLaunch {

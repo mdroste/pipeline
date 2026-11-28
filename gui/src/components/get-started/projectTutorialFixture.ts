@@ -9,6 +9,7 @@ import type {
 } from "../../lib/workbench/sessionTypes";
 import type { ProjectSignals } from "../../lib/project-overview/types";
 import type { ProjectEnvironmentValue } from "../../lib/projectEnvironment";
+import type { WorkspaceConfig } from "../../lib/workbench/harnessTypes";
 import { EXAMPLE_PAPER } from "./exampleReviewPaper";
 import { EXAMPLE_SUMMARY } from "./exampleReviewData";
 import { EXAMPLE_FINDINGS } from "./exampleReviewFindings";
@@ -230,9 +231,28 @@ export function createProjectTutorialEnvironment(
     changed();
     return result as ProjectRecord<T>;
   };
+  const harnessConfigs = new Map<string, WorkspaceConfig>();
+  const harnessConfig = (workspaceId: string | null): WorkspaceConfig =>
+    harnessConfigs.get(workspaceId ?? "global") ?? {
+      scopeKey: workspaceId ?? "global",
+      workspaceId,
+      schemaVersion: 1,
+      body: {},
+      revision: 0,
+      updatedAt: AT,
+    };
   return {
     embeddedDialogs: true,
     signals: PROJECT_SIGNALS,
+    harnessClient: {
+      getWorkspaceConfig: async (workspaceId) => harnessConfig(workspaceId),
+      saveWorkspaceConfig: async ({ workspaceId, body }) => {
+        const current = harnessConfig(workspaceId);
+        const saved = { ...current, body, revision: current.revision + 1 };
+        harnessConfigs.set(current.scopeKey, saved);
+        return saved;
+      },
+    },
     recordVisit: () => ({ since: null, baseline: null }),
     choose: (async (options) =>
       options?.directory

@@ -37,22 +37,8 @@ const module = (
 });
 
 export const CATALOG: HarnessModule[] = [
-  module(
-    "research_structure",
-    "instruction_pack",
-    "Research structure",
-    "instructions",
-    false,
-  ),
-  module(
-    "empirical_audit",
-    "instruction_pack",
-    "Empirical audit",
-    "instructions",
-    false,
-  ),
   module("paper_context", "context_provider", "Paper context"),
-  module("paper_tools", "tool", "Paper tools"),
+  { ...module("paper_tools", "tool", "Paper tools"), automatic: true },
   module("research_ledger", "tool", "Research ledger", "propose"),
   module("research_execution", "tool", "Research execution", "execute"),
   module("results_inspector", "inspector", "Results inspector", "inspect"),
@@ -97,30 +83,26 @@ const effective = (overrides: Partial<EffectiveHarness>): EffectiveHarness => ({
 describe("module grouping and bundles", () => {
   it("groups by kind in a fixed order and drops empty kinds", () => {
     expect(groupModules(CATALOG).map((group) => group.kind)).toEqual([
-      "instruction_pack",
       "context_provider",
       "tool",
       "inspector",
     ]);
   });
 
-  it("applies a bundle while keeping instruction packs, in catalog order", () => {
+  it("applies a bundle in catalog order and ignores automatic modules when matching", () => {
     const bundles = moduleBundles(CATALOG);
     const ledger = bundles.find((bundle) => bundle.id === "ledger")!;
-    const next = applyBundle(
-      ["research_execution", "empirical_audit", "research_structure"],
-      ledger,
-      CATALOG,
-    );
+    const next = applyBundle(ledger, CATALOG);
     expect(next).toEqual([
-      "research_structure",
-      "empirical_audit",
       "paper_context",
-      "paper_tools",
       "research_ledger",
       "evidence_inspector",
     ]);
     expect(activeBundle(next, bundles, CATALOG)).toBe("ledger");
+    // A saved profile may still list an automatic module.
+    expect(activeBundle([...next, "paper_tools"], bundles, CATALOG)).toBe(
+      "ledger",
+    );
     expect(
       activeBundle([...next, "results_inspector"], bundles, CATALOG),
     ).toBeNull();
@@ -140,42 +122,39 @@ describe("module grouping and bundles", () => {
 describe("summaries", () => {
   it("describes module sets in one sentence", () => {
     expect(describeModules([], CATALOG, "")).toBe(
-      "No research instructions or automatic context; an ordinary conversation.",
+      "No added instructions, sources, or research tools.",
     );
     expect(describeModules([], CATALOG, "Be concise.")).toBe(
-      "Use the profile’s instructions without adding project sources or research tools.",
+      "Uses the profile’s instructions with no added sources or research tools.",
+    );
+    // Automatic modules are on everywhere, so a profile listing one adds nothing.
+    expect(describeModules(["paper_tools"], CATALOG, "")).toBe(
+      "No added instructions, sources, or research tools.",
     );
     expect(
       describePreset(
         preset({
-          modules: [
-            "research_structure",
-            "paper_context",
-            "paper_tools",
-            "research_ledger",
-            "evidence_inspector",
-          ],
+          modules: ["paper_context", "research_ledger", "evidence_inspector"],
           instructions: "x",
         }),
         CATALOG,
       ),
     ).toBe(
-      "Adds 1 research instruction set, paper context, paper tools and notes, claims & evidence, and 1 research panel.",
+      "Adds paper context, notes, claims & evidence, and 1 research panel.",
     );
     expect(
       describeModules(
         [
-          "research_structure",
-          "empirical_audit",
           "paper_tools",
           "research_ledger",
           "research_execution",
+          "results_inspector",
         ],
         CATALOG,
         "",
       ),
     ).toBe(
-      "Adds 2 research instruction sets and 3 tools. No preset instructions.",
+      "Adds notes, claims & evidence and local analysis and 1 research panel. No preset instructions.",
     );
   });
 
@@ -186,7 +165,7 @@ describe("summaries", () => {
       contextBudgetBytes: 262144,
     });
     expect(compactAccessSummary(value)).toBe(
-      "Edit · command network · 256 KiB",
+      "Allow edits · command network · 256 KiB",
     );
     expect(compactModuleSummary(value)).toBe(
       "1 of 2 modules active · workbench-inspect",

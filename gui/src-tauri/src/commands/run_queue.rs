@@ -538,6 +538,7 @@ pub async fn enqueue_run(
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
     review_handoff_id: Option<String>,
+    match_writing: Option<bool>,
 ) -> Result<QueuedRun, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -550,6 +551,7 @@ pub async fn enqueue_run(
         expected_profile_snapshot_id.as_deref(),
         run_parallel_overrides.as_ref(),
         author_note.as_deref(),
+        match_writing.unwrap_or(false),
     )
     .await?;
     snapshot.review_handoff_id =
@@ -601,6 +603,7 @@ pub async fn enqueue_batch(
     author_note: Option<String>,
     review_handoff_id: Option<String>,
     expected_profile_snapshot_id: Option<String>,
+    match_writing: Option<bool>,
 ) -> Result<Vec<QueuedRun>, String> {
     let mut launch = prepare_batch_launch(
         paths,
@@ -609,6 +612,7 @@ pub async fn enqueue_batch(
         expected_profile_config_snapshot_id,
         run_parallel_overrides,
         author_note,
+        match_writing.unwrap_or(false),
         expected_profile_snapshot_id,
     )
     .await?;

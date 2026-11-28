@@ -25,6 +25,9 @@ import { workbenchErrorMessage } from "../../lib/workbenchError";
 export function useReviewSetup() {
   const [authorNote, setAuthorNote] = useState("");
   const [authorNoteFocusKey, setAuthorNoteFocusKey] = useState(0);
+  // On whenever it applies; the researcher can turn it off for one review.
+  const [matchWriting, setMatchWriting] = useState(true);
+  const [matchWritingAvailable, setMatchWritingAvailable] = useState(false);
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [inputSelection, setInputSelection] =
     useState<PrimaryInputSelection | null>(null);
@@ -67,6 +70,7 @@ export function useReviewSetup() {
       };
       setInputMode(snapshot.inputMode);
       setRunProfileConfigSnapshotId(snapshot.profileConfigSnapshotId);
+      setMatchWritingAvailable(snapshot.matchWritingAvailable === true);
       return snapshot;
     },
     [],
@@ -174,6 +178,9 @@ export function useReviewSetup() {
   return {
     authorNote,
     setAuthorNote,
+    matchWriting,
+    setMatchWriting,
+    matchWritingAvailable,
     authorNoteFocusKey,
     setAuthorNoteFocusKey,
     paperPath,

@@ -137,6 +137,88 @@ pub fn render_pdf_page_preview(
     })
 }
 
+/// The pdftoppm settings of a run's page images. A page rendered again with
+/// them matches the stored image byte for byte, which is what lets a finished
+/// run drop its page images and rebuild them from the retained PDF.
+const PAGE_IMAGE_PROFILE: [&str; 5] = ["-jpeg", "-r", "120", "-jpegopt", "quality=85"];
+
+/// Render a PDF that a run keeps with the page-image settings. Run-owned copies
+/// need no private staging.
+pub fn render_retained_pdf_pages(
+    pdf: &Path,
+    out_dir: &Path,
+    max_pages: u32,
+) -> Result<RenderedPdfPages, String> {
+    render_pdf_pages_with_profile(pdf, out_dir, max_pages)
+}
+
+/// One page of a PDF that a run keeps, rendered as
+/// [`render_retained_pdf_pages`] would render it.
+pub fn render_retained_pdf_page(
+    pdf: &Path,
+    out_dir: &Path,
+    page: u32,
+) -> Result<std::path::PathBuf, String> {
+    if page == 0 || page > MAX_RENDERED_PDF_PAGES {
+        return Err(format!(
+            "Page images cover pages 1 to {MAX_RENDERED_PDF_PAGES}"
+        ));
+    }
+    let bin = find_command("pdftoppm").ok_or("pdftoppm not found on PATH")?;
+    let pdf_str = pdf
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", pdf.display()))?;
+    fs::create_dir_all(out_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", out_dir.display()))?;
+    let prefix = out_dir.join("page");
+    let prefix_str = prefix
+        .to_str()
+        .ok_or_else(|| format!("Path contains invalid UTF-8: {}", prefix.display()))?;
+    let number = page.to_string();
+    let mut args: Vec<String> = PAGE_IMAGE_PROFILE
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+    args.extend([
+        "-f".into(),
+        number.clone(),
+        "-l".into(),
+        number,
+        pdf_str.into(),
+        prefix_str.into(),
+    ]);
+    let mut command = bin.command(args);
+    command.env("PATH", env::full_path());
+    let output = run_bounded_output(
+        command,
+        "pdftoppm",
+        std::time::Duration::from_secs(60),
+        1_000_000,
+        Some(out_dir),
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "pdftoppm failed to render page {page}: {}",
+            stderr.trim()
+        ));
+    }
+    // pdftoppm pads the number to the document's page count.
+    fs::read_dir(out_dir)
+        .map_err(|e| format!("Failed to list {}: {e}", out_dir.display()))?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_prefix("page-"))
+                .and_then(|name| name.strip_suffix(".jpg"))
+                .and_then(|digits| digits.parse::<u32>().ok())
+                == Some(page)
+        })
+        .ok_or_else(|| format!("PDF page {page} is not available"))
+}
+
 pub(super) fn render_pdf_pages_with_profile(
     pdf: &Path,
     out_dir: &Path,
@@ -156,17 +238,11 @@ pub(super) fn render_pdf_pages_with_profile(
     let probe_pages = max_pages.saturating_add(1);
     let probe_pages = probe_pages.to_string();
     let extension = ".jpg";
-    let args = vec![
-        "-jpeg".into(),
-        "-r".into(),
-        "120".into(),
-        "-jpegopt".into(),
-        "quality=85".into(),
-        "-l".into(),
-        probe_pages,
-        pdf_str.into(),
-        prefix_str.into(),
-    ];
+    let mut args: Vec<String> = PAGE_IMAGE_PROFILE
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+    args.extend(["-l".into(), probe_pages, pdf_str.into(), prefix_str.into()]);
     let mut command = bin.command(args);
     command.env("PATH", env::full_path());
     let output = match run_bounded_output(

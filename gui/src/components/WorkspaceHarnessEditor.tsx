@@ -1,4 +1,4 @@
-import { conversationProvider, providerName } from "../lib/workspaceProviders";
+import { conversationProvider } from "../lib/workspaceProviders";
 import { presetDescription } from "./harness-editor/harnessCopy";
 import useContainerWidth from "../hooks/useContainerWidth";
 // Lazy two-pane harness editor for one Workspace conversation. The left
@@ -87,10 +87,6 @@ export default function WorkspaceHarnessEditor({
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const compact = width !== null && width < 760;
   const runtime = conversationProvider(snapshot.session.overrides.runtime);
-  const presetName = (preset: HarnessPreset) =>
-    runtime !== "codex" && preset.id === "plain"
-      ? `${providerName(runtime)} default`
-      : preset.name;
   const sessionId = snapshot.session.id;
   const workspaceId = snapshot.session.workspaceId;
   const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
@@ -355,7 +351,7 @@ export default function WorkspaceHarnessEditor({
   );
   const filtered =
     catalog?.presets.filter((preset) =>
-      `${presetName(preset)} ${presetDescription(preset)}`
+      `${preset.name} ${presetDescription(preset)}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
     ) ?? [];
@@ -376,12 +372,17 @@ export default function WorkspaceHarnessEditor({
         <span className="flex items-center justify-between gap-2">
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
-              {presetName(preset)}
+              {preset.name}
             </span>
             <span className="block truncate text-[0.6875rem] text-gray-500 dark:text-gray-400">
               {presetDescription(preset) ||
                 describePreset(preset, catalog?.modules ?? [])}
             </span>
+            {preset.baseInstructions != null && (
+              <span className="block text-[0.625rem] font-medium text-gray-600 dark:text-gray-300">
+                Replaces base prompt
+              </span>
+            )}
           </span>
           {inUse && (
             <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[0.625rem] font-medium text-gray-800 dark:bg-neutral-700 dark:text-neutral-100">
@@ -459,7 +460,7 @@ export default function WorkspaceHarnessEditor({
             {!selection && <option value="">Loading…</option>}
             {catalog?.presets.map((preset) => (
               <option key={preset.id} value={preset.id}>
-                {presetName(preset)}
+                {preset.name}
               </option>
             ))}
             <option value="access">Access & inheritance</option>

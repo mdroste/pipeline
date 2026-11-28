@@ -1,13 +1,14 @@
-//! Automatic titles from one tool-free Claude Code process. It shares no
-//! process, history, tools, or turn slot with the conversation it names.
+//! One tool-free Claude Code process for a request outside any conversation:
+//! automatic titles, and drafts of the researcher's style notes. It shares no
+//! process, history, tools, or turn slot with any conversation.
 use super::*;
 use std::time::Duration;
 
 /// Cheapest first, as documented `--model` aliases; then the account default.
 const TITLE_MODELS: [Option<&str>; 3] = [Some("haiku"), Some("sonnet"), None];
-const MAX_TITLE_REPLY_BYTES: usize = 16 * 1024;
+const MAX_REPLY_BYTES: usize = 16 * 1024;
 
-fn arguments(model: Option<&str>) -> Vec<String> {
+fn arguments(system_prompt: &str, model: Option<&str>) -> Vec<String> {
     let mut args = [
         "-p",
         "--input-format",
@@ -24,7 +25,7 @@ fn arguments(model: Option<&str>) -> Vec<String> {
         "--permission-mode",
         "dontAsk",
         "--system-prompt",
-        super::super::titles::TITLE_INSTRUCTIONS,
+        system_prompt,
     ]
     .map(str::to_owned)
     .to_vec();
@@ -40,21 +41,41 @@ pub(crate) async fn generate(
     prompt: String,
     limit: Duration,
 ) -> Result<String, String> {
+    side_call(
+        auth_mode,
+        super::super::titles::TITLE_INSTRUCTIONS,
+        &TITLE_MODELS,
+        &prompt,
+        limit,
+    )
+    .await
+}
+
+/// Tries each of `models` in turn, `None` being the account default, and
+/// returns the first one's raw reply.
+pub(crate) async fn side_call(
+    auth_mode: crate::agent_runtime::claude::AuthMode,
+    system_prompt: &str,
+    models: &[Option<&str>],
+    prompt: &str,
+    limit: Duration,
+) -> Result<String, String> {
     // Dropping a timed-out process kills it.
     tokio::time::timeout(limit, async {
-        for model in TITLE_MODELS {
+        for model in models {
             let mut process =
-                transport::Process::start(auth_mode, &arguments(model), None, None).await?;
-            let result = reply(&mut process, model, &prompt).await;
+                transport::Process::start(auth_mode, &arguments(system_prompt, *model), None, None)
+                    .await?;
+            let result = reply(&mut process, *model, prompt).await;
             process.stop().await;
             if let Some(text) = result? {
                 return Ok(text);
             }
         }
-        Err("Claude Code offered no model for the title".to_string())
+        Err("Claude Code offered none of the models to try".to_string())
     })
     .await
-    .map_err(|_| "Claude did not return a title in time".to_string())?
+    .map_err(|_| "Claude did not reply in time".to_string())?
 }
 
 /// `Ok(None)` when this account does not offer `model`.
@@ -81,8 +102,8 @@ async fn reply(
                         text.push_str(part);
                     }
                 }
-                if text.len() > MAX_TITLE_REPLY_BYTES {
-                    return Err("Claude's title reply exceeded its limit".into());
+                if text.len() > MAX_REPLY_BYTES {
+                    return Err("Claude's reply exceeded its limit".into());
                 }
             }
             Some("result") => {
@@ -90,7 +111,7 @@ async fn reply(
                     return Err(frame["result"]
                         .as_str()
                         .map(str::to_owned)
-                        .unwrap_or_else(|| "Claude could not write a title".into()));
+                        .unwrap_or_else(|| "Claude could not reply".into()));
                 }
                 if text.trim().is_empty() {
                     text = frame["result"].as_str().unwrap_or_default().to_owned();
@@ -100,7 +121,7 @@ async fn reply(
             _ => {}
         }
     }
-    Err("Claude's title reply exceeded its message limit".into())
+    Err("Claude's reply exceeded its message limit".into())
 }
 
 #[cfg(test)]
@@ -109,7 +130,7 @@ mod tests {
 
     #[test]
     fn title_process_has_no_tools_history_or_project_context() {
-        let args = arguments(Some("haiku"));
+        let args = arguments("Name it.", Some("haiku"));
         let tools = args.iter().position(|a| a == "--tools").unwrap();
         assert_eq!(args[tools + 1], "");
         for flag in [
@@ -121,7 +142,11 @@ mod tests {
             assert!(args.iter().any(|a| a == flag), "{flag}");
         }
         assert!(!args.iter().any(|a| a == "--mcp-config"));
+        let prompt = args.iter().position(|a| a == "--system-prompt").unwrap();
+        assert_eq!(args[prompt + 1], "Name it.");
         assert_eq!(args.last().unwrap(), "--model=haiku");
-        assert!(!arguments(None).iter().any(|a| a.starts_with("--model")));
+        assert!(!arguments("Name it.", None)
+            .iter()
+            .any(|a| a.starts_with("--model")));
     }
 }

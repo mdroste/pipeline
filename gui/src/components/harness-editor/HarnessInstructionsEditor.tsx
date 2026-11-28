@@ -1,8 +1,8 @@
 import {
-  providerName,
   isApiProvider,
   type ConversationProvider,
 } from "../../lib/workspaceProviders";
+import { basePromptOwner } from "./harnessCopy";
 // Preset instruction editor: insertable built-in blocks, advisory lint, and a
 // collapsed preview of the assembled developer instructions when the preset
 // is the one in use. Mirrors PromptEditor's chip + lint layout.
@@ -47,7 +47,8 @@ function HarnessInstructionsEditor({
   effective,
   inUse,
 }: Props) {
-  const provider = runtime === "codex" ? "Codex" : providerName(runtime);
+  const owner = basePromptOwner(runtime);
+  const provider = owner ?? "Pipeline";
   const [viewNative, setViewNative] = useState(
     readOnly && baseInstructions === null,
   );
@@ -95,9 +96,12 @@ function HarnessInstructionsEditor({
       {baseInstructions !== null && (
         <>
           <p className="text-xs text-gray-500">
-            This text replaces {provider}’s built-in base prompt. Pipeline’s
-            supplemental instructions and the runtime’s tools and permissions
-            still apply.
+            This text replaces{" "}
+            {owner
+              ? `${owner}’s built-in base prompt`
+              : "Pipeline’s one-line base prompt"}
+            . Pipeline’s supplemental instructions and the runtime’s tools and
+            permissions still apply.
           </p>
           {readOnly ? (
             <pre
@@ -143,8 +147,9 @@ function HarnessInstructionsEditor({
           <div className="border-t border-gray-200 p-3 dark:border-gray-700">
             {isApiProvider(runtime) ? (
               <p>
-                Pipeline supplies the base instructions for this API
-                conversation. Edit the base prompt above to customize them.
+                API connections have no built-in base prompt. Unless a profile
+                replaces it, Pipeline starts with one line: “You are a research
+                assistant.”
               </p>
             ) : runtime === "claude" || runtime === "claude-code-api" ? (
               <p>

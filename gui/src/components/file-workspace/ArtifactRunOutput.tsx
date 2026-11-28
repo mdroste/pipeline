@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 // Only an eligible conversation file mounts a run target. The native runner
 // keeps the latest output while the researcher switches files or closes the pane.
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -78,7 +79,7 @@ export function useArtifactRun(
     setError("");
     try {
       const approved = await confirmDialog(
-        `Run ${target.path} in ${target.scopeRoot}? The script runs with your local account's file access.`,
+        `Run ${target.path} in ${displayPath(target.scopeRoot)}? The script runs with your local account's file access.`,
         { title: `Run ${kind}`, confirmLabel: "Run" },
       );
       if (approved && mounted.current)

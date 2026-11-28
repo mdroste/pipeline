@@ -108,6 +108,22 @@ Review the suggestions before applying them; this assessment is an AI judgment.
 Declaude assesses writing style, not whether AI wrote the document. Your source
 stays unchanged.
 
+#### Match my writing
+
+When you have style notes or papers marked as style examples in
+[About you](settings.md#about-you), **New review** shows **Match my writing**
+below **Additional instructions** for Declaude. It's on unless you turn it off
+for that review. The topic reviewers, the editor, and the final reviewer then
+receive your style notes and up to three passages from your marked papers, and
+suggest replacement text in your voice. Your Additional instructions come first.
+They don't receive your background, and they're told never to edit, quote, or
+cite your papers.
+
+The launch preview says when editors will match your writing. Each run keeps a
+copy of what it sent under **Sources → Context**, and Resume and Regenerate
+use that copy even if you change About you later. The CLI and automations don't
+send your writing. Other review designs don't use it.
+
 Use the supported document inputs above. Export website pages to PDF; the CLI
 also accepts text and Markdown snapshots.
 
@@ -338,7 +354,22 @@ by default:
 
 Each reviewer's response is saved in the run too. Open it from the report.
 
-Deleting a run moves it to Trash. You can restore it until you empty Trash.
+After a review finishes, Pipeline makes its saved files smaller. Reports and
+their contents look the same in Pipeline and in exports:
+
+- Large text and data files, such as `context/document_bundle.json` or a CSV
+  from a project folder, are compressed. On disk they end in `.gz`.
+- Page images are removed when the run's PDF recreates each one exactly.
+  Pipeline renders them again when you open them, so `artifacts/pages/` can be
+  empty.
+- A file identical to one in another saved run is stored once and shared by
+  both runs.
+
+Pipeline also does this for older runs when it starts.
+
+Deleting a run moves it to Trash. Choose **Trash** in **History** to restore it
+or delete it permanently. After 30 days in Trash, Pipeline deletes it
+permanently.
 
 ### Share the results with coauthors
 

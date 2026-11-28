@@ -80,7 +80,7 @@ fn walk(
 }
 /// Copies one file into staging, or removes the partial copy and returns None
 /// when it can't be read or has grown past `limit` since the walk measured it.
-fn copy_within(source: &Path, target: &Path, limit: u64) -> Option<u64> {
+pub(super) fn copy_within(source: &Path, target: &Path, limit: u64) -> Option<u64> {
     let copied = (|| -> WorkbenchResult<u64> {
         fs::create_dir_all(target.parent().unwrap()).map_err(io)?;
         std::io::copy(
@@ -100,7 +100,7 @@ fn copy_within(source: &Path, target: &Path, limit: u64) -> Option<u64> {
     }
 }
 /// Bytes one entry adds to the pretty-printed manifest, with its indentation.
-fn manifest_cost(entry: &BlobManifest) -> u64 {
+pub(super) fn manifest_cost(entry: &BlobManifest) -> u64 {
     serde_json::to_string_pretty(entry).map_or(u64::MAX, |text| text.len() as u64 + 32)
 }
 pub(super) fn stage(

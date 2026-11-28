@@ -58,7 +58,7 @@ export default function ProviderLimitBanner({
       <button
         type="button"
         onClick={onOpenSettings}
-        className="shrink-0 rounded border border-current/30 px-2 py-1 font-medium hover:bg-white/50 dark:hover:bg-black/20"
+        className="shrink-0 rounded border border-[color:color-mix(in_srgb,currentColor_30%,transparent)] px-2 py-1 font-medium hover:bg-white/50 dark:hover:bg-black/20"
       >
         Fallback settings
       </button>

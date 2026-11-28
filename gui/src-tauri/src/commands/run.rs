@@ -39,6 +39,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     let RunSnapshot {
         review_handoff_id,
         author_note,
+        style_examples,
         settings,
         mut config,
         profile_name,
@@ -275,6 +276,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             visuals::retain_slide_render(w, rendered)?;
         }
         crate::pipeline::author_note::save(w, author_note.as_deref())?;
+        crate::pipeline::style_examples::save(w, style_examples.as_deref())?;
         w.add_text(
             "context/workflow.json",
             "Workflow snapshot",
@@ -478,6 +480,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     // small concrete workflow before any step scheduling or budget checks.
     let mut execution_config = crate::auto_review::materialize_config(&config, &orientation)?;
     pipeline_config::apply_agent_defaults(&mut execution_config, &settings);
+    crate::pipeline::style_examples::apply(&mut execution_config, style_examples.as_deref());
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 

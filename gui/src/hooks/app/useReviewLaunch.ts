@@ -54,6 +54,7 @@ export function useReviewLaunch(
   const {
     authorNote,
     setAuthorNote,
+    matchWriting,
     setAuthorNoteFocusKey,
     paperPath,
     setPaperPath,
@@ -118,6 +119,7 @@ export function useReviewLaunch(
       paperPath: snapshot.paperPath,
       inputSelection: snapshot.inputSelection,
       authorNote: snapshot.authorNote,
+      matchWriting: snapshot.matchWriting,
     };
     const reopen =
       latest.inputMode === snapshot.inputMode &&
@@ -188,6 +190,7 @@ export function useReviewLaunch(
         const representativePath = paths[0];
         const plan = await appClient.executionPlan({
           authorNote: snapshot.authorNote ?? null,
+          matchWriting: snapshot.matchWriting === true,
           variables: variables ?? null,
           extraInputs: extraInputs ?? null,
           expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
@@ -221,6 +224,7 @@ export function useReviewLaunch(
       }
       const plan = await appClient.executionPlan({
         authorNote: snapshot.authorNote ?? null,
+        matchWriting: snapshot.matchWriting === true,
         variables: variables ?? null,
         extraInputs: extraInputs ?? null,
         expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
@@ -279,6 +283,7 @@ export function useReviewLaunch(
       const queued = prepared.batchPaths
         ? await enqueueBatch({
             authorNote: prepared.snapshot.authorNote ?? null,
+            matchWriting: prepared.snapshot.matchWriting === true,
             paths: prepared.batchPaths,
             expectedProfileSnapshotId: prepared.plan.profileSnapshotId,
             variables: prepared.variables ?? null,
@@ -291,6 +296,7 @@ export function useReviewLaunch(
         : [
             await enqueue({
               authorNote: prepared.snapshot.authorNote ?? null,
+              matchWriting: prepared.snapshot.matchWriting === true,
               paperPath: prepared.snapshot.paperPath,
               inputInterpretation:
                 prepared.snapshot.inputSelection?.interpretation ?? null,
@@ -365,6 +371,7 @@ export function useReviewLaunch(
         paperPath: selectedPath,
         inputSelection,
         authorNote: capturedAuthorNote,
+        matchWriting: matchWriting && snapshot.matchWritingAvailable === true,
       };
       const edited = noteEditPreview.current;
       if (

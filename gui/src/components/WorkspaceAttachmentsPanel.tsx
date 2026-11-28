@@ -164,18 +164,13 @@ export default function WorkspaceAttachmentsPanel({
       const latest = await conversationClient.sessionSnapshot(
         snapshot.session.id,
       );
-      const effective = await harnessClient.effectiveHarness(
-        snapshot.session.id,
-      );
-      const enableResearch =
-        paperId !== null && !effective.enabledModules.includes("paper_context");
+      // An attached paper brings its own context, whatever the profile.
       const updated = await conversationClient.updateSession({
         sessionId: latest.session.id,
         expectedRevision: latest.session.revision,
         operationId: `composer-document-${crypto.randomUUID()}`,
         paperId: paperId ?? undefined,
         clearPaper: paperId === null,
-        ...(enableResearch ? { presetId: "research_assistant" } : {}),
       });
       onSnapshot({
         ...latest,

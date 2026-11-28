@@ -214,11 +214,14 @@ pub struct RunSummary {
     pub tags: Vec<String>,
 }
 
-/// Total number of runs on disk and the bytes they occupy.
+/// Runs in History and in Trash, and the bytes each set occupies. Trashed
+/// runs use disk space until Trash deletes them.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunsDiskUsage {
     pub count: u32,
     pub bytes: u64,
+    pub trash_count: u32,
+    pub trash_bytes: u64,
 }
 
 /// Exact retention effect shown before the user confirms a manual purge.

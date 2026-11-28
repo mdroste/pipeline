@@ -8,7 +8,9 @@ use super::omissions::{
     archived_references, make_references_portable, missing_files, missing_files_error, FILE_COLUMNS,
 };
 use super::transcripts::stage_transcripts;
-use super::{conversation_files, hash_reader, now, project_copies, validate_absolute_file};
+use super::{
+    about_you, conversation_files, hash_reader, now, project_copies, validate_absolute_file,
+};
 use crate::workbench::research::without_page_images;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult, CURRENT_SCHEMA_VERSION};
 use rusqlite::{backup::Backup, params, Connection};
@@ -366,6 +368,7 @@ pub fn export_archive_without(
         blobs,
         conversation_files: Vec::new(),
         project_copies,
+        about_you: Vec::new(),
         omitted_references,
         portability_note: note.clone(),
     };
@@ -374,25 +377,49 @@ pub fn export_archive_without(
             WorkbenchError::invalid(format!("Failed to encode archive manifest: {error}"))
         })?
         .len() as u64;
+    // Everything optional shares what the rest of the archive leaves. About
+    // you goes first, then conversation files, and last the original files of
+    // the researcher's papers, which they still have.
+    let mut budget = conversation_files::Budget {
+        entries: MAX_ARCHIVE_ENTRIES.saturating_sub(reserved),
+        bytes: conversation_byte_budget(
+            blob_bytes.saturating_add(copy_bytes),
+            database_bytes,
+            transcript_bytes,
+        ),
+        manifest_bytes: MAX_MANIFEST_BYTES.saturating_sub(manifest_base),
+    };
+    let mut profile = about_you::stage(store, temporary.path(), &mut budget)?;
     let staged = conversation_files::stage(
         store,
         &snapshot,
         temporary.path(),
         conversation_files::Budget {
-            entries: MAX_ARCHIVE_ENTRIES.saturating_sub(reserved),
-            bytes: conversation_byte_budget(
-                blob_bytes.saturating_add(copy_bytes),
-                database_bytes,
-                transcript_bytes,
-            ),
-            manifest_bytes: MAX_MANIFEST_BYTES.saturating_sub(manifest_base),
+            entries: budget.entries,
+            bytes: budget.bytes,
+            manifest_bytes: budget.manifest_bytes,
         },
     )?;
+    budget.entries = budget.entries.saturating_sub(staged.files.len());
+    budget.bytes = budget
+        .bytes
+        .saturating_sub(staged.files.iter().map(|file| file.size_bytes).sum());
+    budget.manifest_bytes = budget.manifest_bytes.saturating_sub(
+        staged
+            .files
+            .iter()
+            .map(conversation_files::manifest_cost)
+            .sum(),
+    );
+    about_you::stage_originals(&mut profile, temporary.path(), &mut budget)?;
+    let about_you_note = profile.note();
     let omitted = staged.omitted;
     manifest.conversation_files = staged.files;
+    manifest.about_you = profile.files;
     if 2 + session_count * 2
         + manifest.blobs.len()
         + manifest.conversation_files.len()
+        + manifest.about_you.len()
         + copy_entries
         > MAX_ARCHIVE_ENTRIES
     {
@@ -408,7 +435,12 @@ pub fn export_archive_without(
             names.insert(&format!("transcripts/{}.{extension}", transcript.id))?;
         }
     }
-    for file in manifest.blobs.iter().chain(&manifest.conversation_files) {
+    for file in manifest
+        .blobs
+        .iter()
+        .chain(&manifest.conversation_files)
+        .chain(&manifest.about_you)
+    {
         names.insert(&file.archive_path)?;
     }
     for copy in &manifest.project_copies {
@@ -471,6 +503,13 @@ pub fn export_archive_without(
             .map(|f| f.size_bytes)
             .sum::<u64>(),
     );
+    expanded_bytes = expanded_bytes.saturating_add(
+        manifest
+            .about_you
+            .iter()
+            .map(|file| file.size_bytes)
+            .sum::<u64>(),
+    );
     expanded_bytes = expanded_bytes.saturating_add(copy_bytes);
     if expanded_bytes > MAX_ARCHIVE_BYTES {
         return Err(WorkbenchError::invalid("Expanded archive exceeds 2 GiB"));
@@ -511,6 +550,16 @@ pub fn export_archive_without(
         )
         .map_err(|e| WorkbenchError::storage("Write conversation file", e))?;
     }
+    for file in &manifest.about_you {
+        zip.start_file(&file.archive_path, options)
+            .map_err(|e| WorkbenchError::storage("Add About you file", e))?;
+        std::io::copy(
+            &mut File::open(temporary.path().join(&file.archive_path))
+                .map_err(|e| WorkbenchError::storage("Open staged About you file", e))?,
+            &mut zip,
+        )
+        .map_err(|e| WorkbenchError::storage("Write About you file", e))?;
+    }
     for copy in &manifest.project_copies {
         for file in &copy.files {
             let name = copy.archive_path(file);
@@ -544,6 +593,15 @@ pub fn export_archive_without(
     let bytes = fs::metadata(&target)
         .map_err(|error| WorkbenchError::storage("Failed to inspect research archive", error))?
         .len();
+    let mut portability_note = if omitted > 0 {
+        format!("{note}\n\nSome conversation working files were left out: links, special files, unreadable files, and files too large for a backup.")
+    } else {
+        note
+    };
+    if let Some(about_you) = about_you_note {
+        portability_note.push_str("\n\n");
+        portability_note.push_str(&about_you);
+    }
     Ok(ArchiveReport {
         path: target.to_string_lossy().into_owned(),
         workspace_count,
@@ -551,11 +609,7 @@ pub fn export_archive_without(
         blob_count: manifest.blobs.len(),
         bytes,
         native_bindings_retired: 0,
-        portability_note: if omitted > 0 {
-            format!("{note}\n\nSome conversation working files were left out: links, special files, unreadable files, and files too large for a backup.")
-        } else {
-            note
-        },
+        portability_note,
         omitted_files,
     })
 }

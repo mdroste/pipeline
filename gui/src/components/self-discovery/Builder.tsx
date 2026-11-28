@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import { Icon } from "../../ui/icons";
 import { open } from "@tauri-apps/plugin-dialog";
 import IconButton from "../../ui/IconButton";
@@ -191,7 +192,7 @@ export default function Builder({
                 Choose project folder…
               </button>
               {projectRoot && (
-                <span className="break-words">{projectRoot}</span>
+                <span className="break-words">{displayPath(projectRoot)}</span>
               )}
             </div>
           )}

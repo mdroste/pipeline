@@ -86,6 +86,37 @@ describe("RunSetupPanel", () => {
     expect(screen.getByRole("button", { name: /Preview/ })).toBeEnabled();
   });
 
+  it("offers Match my writing only when it applies", async () => {
+    const { rerender } = renderPanel();
+    expect(
+      screen.queryByRole("checkbox", { name: /Match my writing/ }),
+    ).toBeNull();
+    const onMatchWritingChange = vi.fn();
+    rerender(
+      panel({
+        matchWritingAvailable: true,
+        matchWriting: true,
+        onMatchWritingChange,
+      }),
+    );
+    const box = screen.getByRole("checkbox", { name: /Match my writing/ });
+    expect(box).toBeChecked();
+    expect(box).toHaveAccessibleDescription(/papers you marked in About you/);
+    box.click();
+    expect(onMatchWritingChange).toHaveBeenCalledWith(false);
+    rerender(
+      panel({
+        matchWritingAvailable: true,
+        matchWriting: true,
+        onMatchWritingChange,
+        preparingRun: true,
+      }),
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /Match my writing/ }),
+    ).toBeDisabled();
+  });
+
   it("still blocks Preview when the workflow setup failed to load", () => {
     renderPanel({ configError: "profile unreadable" });
     expect(

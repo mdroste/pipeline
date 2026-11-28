@@ -1,3 +1,4 @@
+import { displayPath } from "../../lib/displayPath";
 import SourceDiff from "../file-workspace/SourceDiff";
 import HighlightedCode from "../file-workspace/HighlightedCode";
 import { fileLanguage } from "../../lib/fileLanguages";
@@ -499,7 +500,7 @@ export default function ProjectEdits(props: Props) {
                 {selected.body.instruction.split("\n")[0]}
               </p>
               <p className={`mt-2 break-all font-mono ${muted}`}>
-                {selected.body.taskRoot}
+                {displayPath(selected.body.taskRoot)}
               </p>
               <p className={`mt-2 ${muted}`}>
                 {selected.body.backend === "git"

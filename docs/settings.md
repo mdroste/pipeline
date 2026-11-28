@@ -10,6 +10,7 @@ your previous sidebar preference.
 | Section | What you can change |
 | --- | --- |
 | General | Theme, text size, spacing, editor font and wrapping, startup page, and guided setup |
+| About you | Your background, which assistants receive in every project, your past writing, and style notes |
 | Models | Your default model, review-stage models, backup provider, ChatGPT sign-in, Claude, API keys, and local model servers. See [Models](connections.md) |
 | Conversations | Send shortcut, model settings in one menu or separate selectors, and automatic conversation titles |
 | Reviews | Parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
@@ -20,7 +21,8 @@ your previous sidebar preference.
 ## Save changes
 
 Most settings save as soon as you change them. API keys need **Save**,
-**Cancel** discards an unsaved key, and **Remove** deletes a saved one. A status
+**Cancel** discards an unsaved key, and **Remove** deletes a saved one. Your
+background in **About you** needs **Save background**. A status
 note appears beside each setting you change. If you leave a section with unsaved
 edits, Pipeline asks first.
 
@@ -32,6 +34,83 @@ Choose each conversation’s provider, model, and thinking level with the
 selectors below its message box. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
 file access, including command setup. See
 [Conversation access](connections.md#conversation-access).
+
+## About you
+
+**Settings → About you** holds what assistants know about you in every project.
+
+**Background** is a short note in your own words: your field, the kind of work
+you do, who you write for, and standing preferences such as spelling or
+software. It can be up to 4 KiB, about 4,000 characters. Choose
+**Save background** to keep it.
+
+Pipeline sends your background with every conversation, in or outside a
+project, on every connection and with every agent profile, starting with the
+conversation's next message. Reviews don't receive it. After a change, each
+conversation's next message starts a new assistant session, which keeps the
+conversation's history. An automation that continues a conversation stops
+once, until you review the new context.
+
+A project's [Field and conventions](projects.md#set-assistant-instructions)
+adds to your background, and assistants follow the project where the two
+differ. To leave your background out of one project, open **Project settings**
+and turn off **Use About you in this project** under **Assistants**. To see what
+an assistant receives, choose **Context** in the conversation menu.
+
+**Your writing** keeps finished papers, grant proposals, and referee responses
+as examples of how you write. Choose **Add paper…** and select PDF, Word, TeX,
+Markdown, or text files. Pipeline copies each file and reads its text, and
+holds up to 20. Set an item's title, kind, and year in its row. **Remove**
+deletes Pipeline's copy and leaves your own file alone.
+
+**Use as style example** marks a paper for assistants to learn your voice from.
+New papers are marked when Pipeline can read their text. A paper without
+readable text, such as a scanned PDF, can't be an example. Papers that aren't
+marked stay on your computer.
+
+**Style notes** describe how you write, in instructions an assistant can
+follow: sentence length, person and tense, how you state results, how you
+hedge, and words to avoid. They can be up to 4 KiB. Choose **Save style notes**
+to keep them.
+
+**Draft from my papers** asks your default model to describe your style from
+the papers marked as style examples. It sends the opening of up to four of
+them, about 12,000 characters each, and nothing else: no titles, background,
+or project material. The draft appears below your notes and replaces nothing.
+Choose **Use draft** to put it in the field, edit it if you like, and then
+choose **Save style notes**, or choose **Discard**. Drafting takes one model
+call on the connection new conversations use, or ChatGPT if you haven't chosen
+a default model.
+
+### How assistants use your writing
+
+The **Writing** agent profile uses your style notes and examples whenever you
+have added some. Other profiles use them only if you turn on **Your writing**
+under **Assistant settings → Manage agent profiles… → Tools & context**. A copy
+of the Writing profile has it turned on. With such a profile, **Assistant
+settings** says what it's using from About you, or suggests adding some. Choose
+**×** to hide the suggestion on this computer.
+
+With Your writing, each message carries your style notes and up to three
+passages of about 3,000 characters from your examples. A passage starts at a
+paper's introduction when Pipeline finds one. A grant project, set under
+**Project settings → Publication details**, leads with your grant proposals;
+other projects lead with your papers, newest first. The assistant can also list
+your examples and read more of one when a task calls for it. A local or custom
+server receives the passages but not that reading tool.
+
+Assistants are told to use your writing for voice, structure, and conventions
+only, and never to cite it or take facts or results from it. Turning off
+**Use About you in this project** leaves out your writing as well as your
+background. Reviews receive your writing only with Declaude and
+[Match my writing](reviews.md#match-my-writing), and never your background.
+
+About you is saved as plain files in the `researcher` folder inside your
+[research data folder](#research-data-folder): `about.md` holds your
+background, `style.md` your style notes, and `writing` your papers.
+**Open folder** shows it. The folder
+moves with your research data folder, and a
+[research backup](projects.md#research-backup) includes it.
 
 ## Default model
 
@@ -174,6 +253,10 @@ no limit. Press Escape to restore the saved value.
 **Preview cleanup…** shows which reports will move to Trash. Confirm to apply
 it. You can restore items from Trash, or delete them permanently once you no
 longer need them.
+
+Reports in Trash still use disk space. The figure beside **Saved report
+limits** shows how much, after the space reports in History use. Pipeline
+deletes a report permanently once it has been in Trash for 30 days.
 
 ## Notifications
 

@@ -220,6 +220,7 @@ export default function WorkspacePage({
     targetRef: assistantPane,
     workspaceId:
       snapshot?.session.id === sessionId ? snapshot?.session.workspaceId : null,
+    projectId: workspaceId,
     sessionId,
     blocked: submitting || Boolean(active) || contextBusy || harnessEditor,
     onBusy: setComposerBusy,

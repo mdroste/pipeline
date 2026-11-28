@@ -108,6 +108,8 @@ impl RunWriter {
     ) -> Result<(), String> {
         let mut remaining = MAX_VISUALS;
         let mut missing = HashSet::new();
+        // Rendered on the first removed page, then reused for the rest.
+        let mut rebuilt: Option<Option<super::RebuiltPages>> = None;
         for asset in &bundle.assets {
             let entry = manifest
                 .artifacts
@@ -115,21 +117,44 @@ impl RunWriter {
                 .find(|e| e.rel_path == asset.rel_path);
             let data = (|| {
                 let parts = visual_parts(&asset.rel_path)?;
-                let file = open_visual(parent, &parts).map_err(|e| e.to_string())?;
-                let meta = file.metadata().map_err(|e| e.to_string())?;
                 let limit = MAX_IMAGE.min(remaining);
-                if !meta.is_file() || meta.len() > limit {
-                    return Err("not a regular image within the restore limit".into());
-                }
                 let mut bytes = Vec::new();
-                file.take(limit + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|e| e.to_string())?;
+                let stored_len = match open_visual(parent, &parts) {
+                    Ok(file) => {
+                        let meta = file.metadata().map_err(|e| e.to_string())?;
+                        if !meta.is_file() || meta.len() > limit {
+                            return Err("not a regular image within the restore limit".into());
+                        }
+                        file.take(limit + 1)
+                            .read_to_end(&mut bytes)
+                            .map_err(|e| e.to_string())?;
+                        meta.len()
+                    }
+                    // A finished run drops page images that its PDF renders
+                    // again exactly; the checks below still apply to them.
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::NotFound && asset.kind == "page" =>
+                    {
+                        let pages = rebuilt.get_or_insert_with(|| {
+                            super::RebuiltPages::render(parent).ok().flatten()
+                        });
+                        let path = pages
+                            .as_ref()
+                            .and_then(|pages| pages.path(&asset.rel_path))
+                            .ok_or("the page image is missing and its PDF cannot rebuild it")?;
+                        crate::safety::open_regular_file(path)?
+                            .take(limit + 1)
+                            .read_to_end(&mut bytes)
+                            .map_err(|e| e.to_string())?;
+                        bytes.len() as u64
+                    }
+                    Err(error) => return Err(error.to_string()),
+                };
                 let len = bytes.len() as u64;
                 remaining = remaining.saturating_sub(len);
                 let digest = short_sha256(&bytes);
                 if len > limit
-                    || len != meta.len()
+                    || len != stored_len
                     || asset
                         .identity
                         .as_ref()

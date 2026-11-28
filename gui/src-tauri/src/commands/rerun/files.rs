@@ -22,16 +22,6 @@ pub(in crate::commands) fn read_run_file_in(
     let run_dir = run_dir
         .canonicalize()
         .map_err(|_| "Run not found".to_string())?;
-    let path = run_dir
-        .join(rel)
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {rel} from run: {e}"))?;
-    if !path.starts_with(&run_dir) {
-        return Err("Run-relative path resolves outside the run directory".to_string());
-    }
-    let file = crate::safety::open_regular_file(&path)
-        .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
-    let mut bytes = Vec::with_capacity(64 * 1024);
     let limit = if rel == "report.json" {
         crate::runs::MAX_REPORT_BYTES as u64
     } else {
@@ -43,6 +33,31 @@ pub(in crate::commands) fn read_run_file_in(
             limit >> 20
         )
     };
+    // A finished run may keep this file compressed.
+    if let Some(stored @ crate::runs::StoredFile::Gzip(_)) =
+        crate::runs::locate_run_file(&run_dir, rel)
+    {
+        if stored.logical_len()?.is_some_and(|len| len > limit) {
+            return Err(oversized());
+        }
+        let (bytes, more) = stored
+            .read_at_most(limit as usize)
+            .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
+        if more {
+            return Err(oversized());
+        }
+        return String::from_utf8(bytes).map_err(|e| format!("{rel} is not valid UTF-8: {e}"));
+    }
+    let path = run_dir
+        .join(rel)
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve {rel} from run: {e}"))?;
+    if !path.starts_with(&run_dir) {
+        return Err("Run-relative path resolves outside the run directory".to_string());
+    }
+    let file = crate::safety::open_regular_file(&path)
+        .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
     if file
         .metadata()
         .map_err(|error| format!("Cannot inspect {rel}: {error}"))?

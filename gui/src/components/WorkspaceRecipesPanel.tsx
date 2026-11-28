@@ -325,8 +325,8 @@ export default function WorkspaceRecipesPanel({
               defaultValue={selected.suggestedPermissionMode}
               className="w-full rounded border bg-white p-2 text-xs dark:bg-neutral-950"
             >
-              <option value="inspect">Inspect</option>
-              <option value="edit">Edit</option>
+              <option value="inspect">Read only</option>
+              <option value="edit">Allow edits</option>
             </select>
             <button type="submit" className="rounded border px-3 py-2 text-xs">
               Save recipe version

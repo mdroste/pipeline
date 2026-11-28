@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { confirmDialog } from "../DialogService";
 
 import type { Settings } from "../../lib/settingsTypes";
+import type { RunsDiskUsage } from "../../lib/reviewTypes";
 
 import ValidatedNumber from "./ValidatedNumber";
 import ReportIssueLink from "../ReportIssueLink";
@@ -15,9 +16,7 @@ export function RunRetention({
   settings: Settings;
   setSettings: (s: Settings) => void;
 }) {
-  const [usage, setUsage] = useState<{ count: number; bytes: number } | null>(
-    null,
-  );
+  const [usage, setUsage] = useState<RunsDiskUsage | null>(null);
   const [purging, setPurging] = useState(false);
   const [purgeError, setPurgeError] = useState<string | null>(null);
   const [purgeResult, setPurgeResult] = useState<string | null>(null);
@@ -62,7 +61,7 @@ export function RunRetention({
           } (${fmtBytes(preview.delete_bytes)}). ` +
           `${preview.remaining_count} report${preview.remaining_count === 1 ? "" : "s"} ` +
           `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
-          "You can restore reports from Trash until you delete them permanently.",
+          "You can restore reports from Trash for 30 days. After that, Pipeline deletes them permanently.",
         {
           title: "Move old reports to Trash",
           confirmLabel: "Move to Trash",
@@ -105,6 +104,8 @@ export function RunRetention({
           <span className="ml-auto text-xs font-normal text-gray-500 dark:text-neutral-400">
             {usage.count} report{usage.count === 1 ? "" : "s"} ·{" "}
             {fmtBytes(usage.bytes)}
+            {usage.trash_count > 0 &&
+              ` · ${fmtBytes(usage.trash_bytes)} in Trash`}
           </span>
         )}
       </div>
@@ -152,7 +153,9 @@ export function RunRetention({
       </div>
       <p className="settings-row-description mt-3">
         After each review, Pipeline moves the oldest reports to Trash to stay
-        within these limits. Enter 0 for no limit.
+        within these limits. Reports in Trash still use disk space until
+        Pipeline deletes them permanently, 30 days after they were moved. Enter
+        0 for no limit.
       </p>
       {purgeError && (
         <p role="alert" className="mt-2 text-sm text-danger">

@@ -444,7 +444,8 @@ export function useWorkspacePageController({
         session = (
           await conversationClient.createSession({
             workspaceId,
-            title: "Selected passage",
+            // The default title, so the first reply names the conversation.
+            title: "New conversation",
             operationId: newOperation("selection-chat"),
           })
         ).record;
@@ -454,7 +455,6 @@ export function useWorkspacePageController({
             expectedRevision: session.revision,
             operationId: newOperation("selection-context"),
             draft: text,
-            presetId: "research_assistant",
           })
         ).record;
       }

@@ -7,6 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+mod about_you;
 mod conversation_files;
 mod export;
 mod format;

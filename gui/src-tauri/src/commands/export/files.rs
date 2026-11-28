@@ -26,10 +26,29 @@ pub(in crate::commands) fn copy_export_file(
     use sha2::{Digest, Sha256};
     use std::io::{Read, Write};
     let relative = safe_export_relative_path(relative)?;
-    let mut input = source_root
-        .open_regular(&relative)
-        .map_err(|error| format!("Could not export '{}': {error}", relative.display()))?;
-    let size = input.metadata().map_err(|error| error.to_string())?.len();
+    let (mut input, size): (Box<dyn Read>, u64) = match source_root.open_regular(&relative) {
+        Ok(file) => {
+            let size = file.metadata().map_err(|error| error.to_string())?.len();
+            (Box::new(file), size)
+        }
+        // A finished run may keep a listed file compressed; its manifest
+        // entry gives the original size, which the copy is checked against.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && expected.is_some() => {
+            let mut compressed = relative.clone().into_os_string();
+            compressed.push(crate::runs::GZIP_SUFFIX);
+            let file = source_root
+                .open_regular(std::path::Path::new(&compressed))
+                .map_err(|_| format!("Could not export '{}': {error}", relative.display()))?;
+            let size = expected.map_or(0, |entry| entry.bytes);
+            (Box::new(flate2::read::GzDecoder::new(file)), size)
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not export '{}': {error}",
+                relative.display()
+            ))
+        }
+    };
     if size > *remaining || expected.is_some_and(|entry| entry.bytes != size) {
         return Err("Artifact size changed or exceeds the export limit".into());
     }
@@ -267,6 +286,12 @@ pub(in crate::commands) fn copy_export_tree(
             total_bytes = total_bytes.saturating_add(copied);
         }
     }
+    // The copy shows a finished run as it was saved: compressed files and
+    // removed page images come back, and compaction's own files stay behind.
+    crate::runs::expand_compressed_copy(source, destination, "")?;
+    crate::runs::restore_pages_in_copy(source, destination)?;
+    let _ = std::fs::remove_file(destination.join(crate::runs::COMPACTION_RECORD_PATH));
+    let _ = std::fs::remove_dir_all(destination.join(".compaction"));
     Ok((file_count, total_bytes))
 }
 

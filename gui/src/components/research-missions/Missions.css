@@ -52,7 +52,7 @@
 }
 .mission-fields details {
   padding: 0.75rem;
-  border: 1px solid var(--border-color, #8884);
+  border: 1px solid var(--ui-border);
   border-radius: 0.5rem;
 }
 .mission-fields details fieldset {
@@ -87,7 +87,7 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.625rem;
   padding: 0.875rem 0;
-  border-block: 1px solid var(--border-color, #8883);
+  border-block: 1px solid var(--ui-border);
 }
 .mission-metrics span {
   display: flex;
@@ -101,7 +101,7 @@
 }
 .mission-reason {
   padding: 0.75rem;
-  background: var(--bg-secondary, #8881);
+  background: var(--ui-sunken);
   border-radius: 0.5rem;
 }
 .mission-tabs {
@@ -134,7 +134,7 @@
 .mission-round,
 .mission-question {
   padding: 1rem 0;
-  border-bottom: 1px solid var(--border-color, #8883);
+  border-bottom: 1px solid var(--ui-border);
 }
 .mission-goal p,
 .mission-round p {
@@ -156,7 +156,7 @@
 }
 .mission-next {
   padding: 0 1rem 0.75rem;
-  border-left: 3px solid var(--accent-color, #547574);
+  border-left: 3px solid var(--ui-accent);
   margin-top: 1.25rem;
 }
 .mission-evidence-link {
@@ -168,7 +168,7 @@
   margin: 0.5rem 0;
 }
 .mission-evidence {
-  border: 1px solid var(--border-color, #8885);
+  border: 1px solid var(--ui-border);
   border-radius: 0.5rem;
   padding: 0.875rem;
   margin-top: 1.25rem;
@@ -192,10 +192,10 @@
   overflow-wrap: anywhere;
 }
 .task-status--completed {
-  color: #3b8166;
+  color: var(--ui-success);
 }
 .task-status--exhausted {
-  color: #987231;
+  color: var(--ui-warning);
 }
 @media (max-width: 850px) {
   .mission-header {

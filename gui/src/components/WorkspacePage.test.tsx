@@ -631,12 +631,15 @@ it("imports several files, reports failed extraction, and explicitly selects rea
   fireEvent.click(buttons[1]);
   await waitFor(() =>
     expect(mocks.updateSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        paperId: "paper.md",
-        presetId: "research_assistant",
-      }),
+      expect.objectContaining({ paperId: "paper.md" }),
     ),
   );
+  // Attaching a paper brings its context without changing the profile.
+  expect(
+    mocks.updateSession.mock.calls.some(
+      (call) => (call[0] as { presetId?: string }).presetId !== undefined,
+    ),
+  ).toBe(false);
   expect(screen.getByLabelText("Message")).toHaveValue("My unsaved question");
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });

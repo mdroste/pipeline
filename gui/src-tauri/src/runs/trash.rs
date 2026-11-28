@@ -1,7 +1,9 @@
-//! Recoverable run trash and explicit permanent deletion.
+//! Recoverable run trash, its expiry, and explicit permanent deletion.
 use super::{
-    load_manifest, read_utf8_at_most, runs_dir, validate_run_id, RunManifest, MAX_MANIFEST_BYTES,
+    load_manifest, read_utf8_at_most, runs_dir, validate_run_id, write_text_atomic, RunManifest,
+    MAX_MANIFEST_BYTES,
 };
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +16,48 @@ pub struct TrashedRun {
     pub input_name: String,
 }
 
-fn trash_runs_dir() -> Result<PathBuf, String> {
+/// How long a run stays recoverable in Trash. After that, the next app start
+/// or finished review deletes it permanently.
+pub const TRASH_RETENTION_DAYS: i64 = 30;
+
+/// Suffix of the file beside a trashed run's folder that records when the run
+/// entered Trash. The folder's own modification time cannot say: a rename
+/// leaves it unchanged on Windows, so it dates the run's last write instead.
+const TRASHED_AT_SUFFIX: &str = ".trashed-at";
+
+fn trashed_at_name(run_id: &str) -> String {
+    format!("{run_id}{TRASHED_AT_SUFFIX}")
+}
+
+pub(super) fn record_trashed_at(
+    trash: &Path,
+    run_id: &str,
+    at: DateTime<Utc>,
+) -> Result<(), String> {
+    write_text_atomic(trash, &trashed_at_name(run_id), at.to_rfc3339().as_bytes())
+}
+
+/// When `run_id` entered Trash. A run trashed before times were recorded is
+/// dated `now`, so its time in Trash starts when it is first seen and an
+/// upgrade never deletes it early.
+fn trashed_at(trash: &Path, run_id: &str, now: DateTime<Utc>) -> DateTime<Utc> {
+    let recorded = read_utf8_at_most(&trash.join(trashed_at_name(run_id)), 64, "Trash time")
+        .ok()
+        .and_then(|text| DateTime::parse_from_rfc3339(text.trim()).ok());
+    match recorded {
+        Some(at) => at.with_timezone(&Utc),
+        None => {
+            let _ = record_trashed_at(trash, run_id, now);
+            now
+        }
+    }
+}
+
+fn forget_trashed_at(trash: &Path, run_id: &str) {
+    let _ = fs::remove_file(trash.join(trashed_at_name(run_id)));
+}
+
+pub(super) fn trash_runs_dir() -> Result<PathBuf, String> {
     let runs = runs_dir()?;
     let pipeline = runs
         .parent()
@@ -59,6 +102,9 @@ pub(super) fn move_to_trash(run_id: &str) -> Result<(), String> {
     }
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to move run to Trash: {error}"))?;
+    // If this fails, the run is dated when Trash is next read, which only
+    // lengthens its stay.
+    let _ = record_trashed_at(&trash, run_id, Utc::now());
     super::history_reads::changed();
     sync_directory(&base)?;
     sync_directory(&trash)?;
@@ -66,9 +112,15 @@ pub(super) fn move_to_trash(run_id: &str) -> Result<(), String> {
 }
 
 pub fn list_trashed_runs() -> Result<Vec<TrashedRun>, String> {
-    let trash = trash_runs_dir()?;
+    list_trashed_runs_in(&trash_runs_dir()?, Utc::now())
+}
+
+pub(super) fn list_trashed_runs_in(
+    trash: &Path,
+    now: DateTime<Utc>,
+) -> Result<Vec<TrashedRun>, String> {
     let mut entries = Vec::new();
-    for entry in fs::read_dir(&trash)
+    for entry in fs::read_dir(trash)
         .map_err(|error| format!("Cannot list run Trash: {error}"))?
         .flatten()
     {
@@ -81,12 +133,9 @@ pub fn list_trashed_runs() -> Result<Vec<TrashedRun>, String> {
         if validate_run_id(&run_id).is_err() {
             continue;
         }
-        let deleted_at = entry
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .map(chrono::DateTime::<chrono::Local>::from)
-            .map(|time| time.to_rfc3339())
-            .unwrap_or_default();
+        let deleted_at = trashed_at(trash, &run_id, now)
+            .with_timezone(&chrono::Local)
+            .to_rfc3339();
         let manifest = read_utf8_at_most(
             &entry.path().join("manifest.json"),
             MAX_MANIFEST_BYTES,
@@ -146,6 +195,7 @@ pub(super) fn restore_trashed_run_at(
         .map_err(|_| "Trashed run has no valid manifest".to_string())?;
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to restore run from Trash: {error}"))?;
+    forget_trashed_at(&trash, run_id);
     super::history_reads::changed();
     sync_directory(root)?;
     sync_directory(&trash)
@@ -153,8 +203,14 @@ pub(super) fn restore_trashed_run_at(
 
 /// Deliberate, irreversible deletion of a run that is already in Trash.
 pub fn permanently_delete_trashed_run(run_id: &str) -> Result<(), String> {
+    permanently_delete_trashed_run_at(&trash_runs_dir()?, run_id)?;
+    super::history_reads::changed();
+    Ok(())
+}
+
+fn permanently_delete_trashed_run_at(trash: &Path, run_id: &str) -> Result<(), String> {
     validate_run_id(run_id)?;
-    let trash = trash_runs_dir()?
+    let trash = trash
         .canonicalize()
         .map_err(|error| format!("Cannot resolve run Trash: {error}"))?;
     let source = trash.join(run_id);
@@ -166,7 +222,70 @@ pub fn permanently_delete_trashed_run(run_id: &str) -> Result<(), String> {
     }
     fs::remove_dir_all(&canonical)
         .map_err(|error| format!("Failed to permanently delete trashed run: {error}"))?;
+    forget_trashed_at(&trash, run_id);
     sync_directory(&trash)
+}
+
+/// Permanently delete runs that have been in Trash for
+/// [`TRASH_RETENTION_DAYS`]. Returns how many were deleted.
+pub fn empty_expired_trash() -> Result<usize, String> {
+    let (removed, failures) = empty_expired_trash_at(
+        &trash_runs_dir()?,
+        Utc::now(),
+        chrono::Duration::days(TRASH_RETENTION_DAYS),
+    )?;
+    if removed > 0 {
+        super::history_reads::changed();
+    }
+    match failures.first() {
+        None => Ok(removed),
+        Some(first) => Err(format!(
+            "Could not permanently delete {} expired report(s) from Trash: {first}",
+            failures.len()
+        )),
+    }
+}
+
+/// Delete each run in `trash` held for at least `keep_for`, and the time
+/// records of runs that are no longer there. A run that cannot be deleted is
+/// reported and tried again next time. Returns the number deleted and the
+/// failures.
+pub(super) fn empty_expired_trash_at(
+    trash: &Path,
+    now: DateTime<Utc>,
+    keep_for: chrono::Duration,
+) -> Result<(usize, Vec<String>), String> {
+    let trash = trash
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve run Trash: {error}"))?;
+    let mut removed = 0;
+    let mut failures = Vec::new();
+    for entry in fs::read_dir(&trash)
+        .map_err(|error| format!("Cannot list run Trash: {error}"))?
+        .flatten()
+    {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if kind.is_dir() {
+            if validate_run_id(&name).is_err() || now - trashed_at(&trash, &name, now) < keep_for {
+                continue;
+            }
+            match permanently_delete_trashed_run_at(&trash, &name) {
+                Ok(()) => removed += 1,
+                Err(error) => failures.push(format!("{name}: {error}")),
+            }
+        } else if let Some(run_id) = name.strip_suffix(TRASHED_AT_SUFFIX) {
+            // Left behind when a restore or deletion could not remove it.
+            if validate_run_id(run_id).is_ok() && !trash.join(run_id).exists() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    Ok((removed, failures))
 }
 
 fn sync_directory(_path: &Path) -> Result<(), String> {

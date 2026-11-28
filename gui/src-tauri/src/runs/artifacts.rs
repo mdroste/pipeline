@@ -82,13 +82,67 @@ pub fn open_artifact_stream(run_id: &str, rel_path: &str) -> Result<String, Stri
     )
 }
 
+/// Where a run file keeps its bytes: itself, a compressed copy, or the PDF a
+/// removed page image is rendered from.
+fn locate_artifact(run_id: &str, rel_path: &str) -> Result<super::stored::StoredFile, String> {
+    validate_run_id(run_id)?;
+    if rel_path.is_empty()
+        || Path::new(rel_path).is_absolute()
+        || rel_path.split(['/', '\\']).any(|part| part == "..")
+    {
+        return Err("Invalid artifact path".into());
+    }
+    let run_dir = runs_dir()?
+        .join(run_id)
+        .canonicalize()
+        .map_err(|_| "Run not found".to_string())?;
+    super::stored::locate(&run_dir, rel_path).ok_or_else(|| "Artifact not found".to_string())
+}
+
+/// The file on disk behind an artifact, for revealing it in the file manager.
+/// A compressed file is its `.gz`, and a removed page image is its PDF.
+pub fn stored_artifact_path(run_id: &str, rel_path: &str) -> Result<PathBuf, String> {
+    locate_artifact(run_id, rel_path).map(|stored| stored.path().to_path_buf())
+}
+
+/// A file another app may open for an artifact. A compressed file, a removed
+/// page image, or a file hard-linked into other runs is opened as a private
+/// copy, so an app that saves in place cannot change any run.
+pub fn openable_artifact_path(run_id: &str, rel_path: &str) -> Result<PathBuf, String> {
+    use super::stored::StoredFile;
+    let stored = locate_artifact(run_id, rel_path)?;
+    if let StoredFile::Plain(path) = &stored {
+        if super::stored::file_identity(path).is_none_or(|(_, links)| links <= 1) {
+            return Ok(path.clone());
+        }
+    }
+    let name = Path::new(rel_path)
+        .file_name()
+        .ok_or("Artifact has no file name")?;
+    let directory = tempfile::Builder::new()
+        .prefix("pipeline-opened-")
+        .tempdir()
+        .map_err(|error| format!("Cannot prepare a copy to open: {error}"))?
+        .keep();
+    let copy = directory.join(name);
+    super::stored::write_original(&stored, &copy)?;
+    if let Ok(metadata) = fs::metadata(&copy) {
+        let mut permissions = metadata.permissions();
+        permissions.set_readonly(true);
+        let _ = fs::set_permissions(&copy, permissions);
+    }
+    Ok(copy)
+}
+
 /// Read an artifact for display. The single choke point for file bytes
 /// reaching the webview: validates the path stays inside the run dir,
 /// applies size caps, and never returns raw binary.
 pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, String> {
-    let path = resolve_artifact_path(run_id, rel_path)?;
-
-    let abs_path = crate::file_viewer::normalize_external_path(&path.to_string_lossy());
+    let stored = locate_artifact(run_id, rel_path)?;
+    let abs_path = crate::file_viewer::normalize_external_path(&stored.path().to_string_lossy());
+    let super::stored::StoredFile::Plain(path) = stored else {
+        return read_stored_artifact(rel_path, &stored, abs_path);
+    };
 
     // Sniff a small head for kind detection of extensionless files.
     let (head, size) = {
@@ -156,6 +210,61 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
                 MAX_TEXT_BYTES
             };
             let (bytes, truncated) = read_at_most(&path, limit)?;
+            Ok(ArtifactContent {
+                kind: kind.into(),
+                bytes: size,
+                text: Some(String::from_utf8_lossy(&bytes).into_owned()),
+                base64: None,
+                truncated,
+                abs_path,
+            })
+        }
+    }
+}
+
+/// [`read_artifact`] for a compressed file or a removed page image. These are
+/// always named by type, so the name alone picks the viewer.
+fn read_stored_artifact(
+    rel_path: &str,
+    stored: &super::stored::StoredFile,
+    abs_path: String,
+) -> Result<ArtifactContent, String> {
+    let kind = detect_kind(rel_path, &[]);
+    let metadata_only = |bytes: u64| ArtifactContent {
+        kind: kind.into(),
+        bytes,
+        text: None,
+        base64: None,
+        truncated: false,
+        abs_path: abs_path.clone(),
+    };
+    match kind {
+        "image" => {
+            let (bytes, too_large) = stored.read_at_most(MAX_IMAGE_BYTES as usize)?;
+            if too_large {
+                return Ok(metadata_only(
+                    stored.logical_len()?.unwrap_or(MAX_IMAGE_BYTES),
+                ));
+            }
+            use base64::Engine as _;
+            Ok(ArtifactContent {
+                kind: kind.into(),
+                bytes: bytes.len() as u64,
+                text: None,
+                base64: Some(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+                truncated: false,
+                abs_path,
+            })
+        }
+        "binary" | "executable" | "pdf" => Ok(metadata_only(stored.logical_len()?.unwrap_or(0))),
+        _ => {
+            let limit = if rel_path == "context/document_bundle.json" {
+                MAX_DOCUMENT_BUNDLE_BYTES
+            } else {
+                MAX_TEXT_BYTES
+            };
+            let (bytes, truncated) = stored.read_at_most(limit)?;
+            let size = stored.logical_len()?.unwrap_or(bytes.len() as u64);
             Ok(ArtifactContent {
                 kind: kind.into(),
                 bytes: size,

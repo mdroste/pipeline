@@ -160,7 +160,7 @@ fn context_is_exact_scoped_and_changes_harness_fingerprint() {
             draft: None,
             overrides: None,
             archived: None,
-            preset_id: Some("research_assistant".into()),
+            preset_id: Some("research".into()),
             paper_id: None,
             clear_paper: None,
         })

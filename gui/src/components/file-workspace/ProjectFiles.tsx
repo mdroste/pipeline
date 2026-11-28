@@ -4,6 +4,8 @@ import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 import ImportDocumentDialog from "../project-surface/ImportDocumentDialog";
 import type { FileLocation } from "../../lib/fileLinks";
 import { notify } from "../DialogService";
+import { appEvents } from "../../lib/appEvents";
+import ScriptRunControls from "../project-surface/ScriptRunControls";
 export default function ProjectFiles({
   workspaceId,
   paths,
@@ -13,7 +15,7 @@ export default function ProjectFiles({
   onSaved,
   onNavigate,
   onRunFile,
-  onFileRuns,
+  onShowRun,
 }: {
   workspaceId: string;
   paths: string[];
@@ -22,8 +24,10 @@ export default function ProjectFiles({
   onAskFile?: (path: string) => void;
   onSaved?: () => void;
   onNavigate?: (location: FileLocation) => void;
+  /** Opens the run setup for a script. */
   onRunFile?: (path: string) => void;
-  onFileRuns?: (path: string, hash?: string) => void;
+  /** Opens the output of a script's run. */
+  onShowRun?: (path: string, runId: string) => void;
 }) {
   const [importPath, setImportPath] = useState<string | null>(null);
   const adapter = useMemo(
@@ -51,10 +55,25 @@ export default function ProjectFiles({
         initial={initial}
         onAsk={onAsk}
         onAskFile={onAskFile}
-        onRunFile={onRunFile}
-        onFileRuns={onFileRuns}
+        runControls={
+          onRunFile && onShowRun
+            ? ({ path, dirty }) => (
+                <ScriptRunControls
+                  key={path}
+                  workspaceId={workspaceId}
+                  path={path}
+                  dirty={dirty}
+                  onSetup={onRunFile}
+                  onShowRun={onShowRun}
+                />
+              )
+            : undefined
+        }
         onSaved={onSaved}
         onNavigate={onNavigate}
+        onFileDrag={(drag) =>
+          appEvents.emit("project-file-drag", { ...drag, workspaceId })
+        }
         onAddToDocuments={async (path) => {
           const file = await adapter.read(path);
           if (file.streamToken) adapter.release?.(file.streamToken);

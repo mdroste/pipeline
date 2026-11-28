@@ -31,12 +31,12 @@ vi.mock("../lib/projectClient", () => ({ projectClient: projectMocks }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 const preset = {
-  id: "research_assistant",
+  id: "research",
   workspaceId: null,
-  name: "Research assistant",
+  name: "Research",
   description: "General",
   instructions: "Be precise.",
-  modules: ["research_structure", "paper_context", "paper_tools"],
+  modules: ["paper_context", "research_ledger"],
   builtIn: true,
   sourcePresetId: null,
   revision: 1,
@@ -54,7 +54,7 @@ function snapshot(): ConversationSnapshot {
       workspaceId: null,
       paperId: null,
       title: "Question",
-      presetId: "research_assistant",
+      presetId: "research",
       overrides: {},
       draft: "",
       revision: 1,
@@ -87,8 +87,8 @@ beforeEach(() => {
     commandNetwork: false,
     permissionProfile: "workbench-inspect",
     contextBudgetBytes: 65536,
-    enabledModules: ["research_structure"],
-    unavailableModules: ["paper_context", "paper_tools"],
+    enabledModules: [],
+    unavailableModules: ["paper_context", "research_ledger"],
     diagnostics: ["Put this conversation in a Workspace to read papers."],
     developerInstructions: "x",
     contextPreview: "",
@@ -115,11 +115,14 @@ it("shows a read-only harness summary and hands editing to the harness editor", 
     />,
   );
   expect(await screen.findByTestId("harness-summary")).toHaveTextContent(
-    "Adds 1 research instruction set, paper context, and paper tools.",
+    "Adds paper context and notes, claims & evidence.",
+  );
+  expect(screen.getByTestId("system-prompt-note")).toHaveTextContent(
+    "Keeps Codex’s built-in base prompt and adds Pipeline’s instructions and this profile’s instructions.",
   );
   expect(
     screen.getByText(
-      "Inspect · no command network · 64 KiB · 1 of 3 modules active · workbench-inspect",
+      "Read only · no command network · 64 KiB · 0 of 2 modules active · workbench-inspect",
     ),
   ).toBeInTheDocument();
   expect(

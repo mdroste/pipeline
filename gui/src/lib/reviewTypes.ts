@@ -256,10 +256,12 @@ export interface InputIdentity {
   lineage_id: string;
 }
 
-/** Mirrors runs::RunsDiskUsage. */
+/** Mirrors runs::RunsDiskUsage. Trashed runs use disk space until deleted. */
 export interface RunsDiskUsage {
   count: number;
   bytes: number;
+  trash_count: number;
+  trash_bytes: number;
 }
 
 /** A recoverable run currently held outside History. */
