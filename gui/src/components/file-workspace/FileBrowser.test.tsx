@@ -395,9 +395,7 @@ it("drags a file row out with its name following the pointer", async () => {
   const row = await screen.findByRole("treeitem", { name: /a\.txt/ });
   fireEvent.pointerDown(row, { clientX: 10, clientY: 10 });
   fireEvent.pointerMove(document, { clientX: 400, clientY: 200 });
-  expect(document.querySelector(".file-drag-label")).toHaveTextContent(
-    "a.txt",
-  );
+  expect(document.querySelector(".file-drag-label")).toHaveTextContent("a.txt");
   fireEvent.pointerUp(document, { clientX: 400, clientY: 200 });
   fireEvent.click(row);
   expect(onFileDrag.mock.calls.map(([drag]) => drag)).toEqual([

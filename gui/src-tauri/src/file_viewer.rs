@@ -473,6 +473,8 @@ mod tests {
             // `reveal` shows a file in its folder. `launch_with` passes a copy
             // to the application chosen in a native picker, never the default.
             ("file_viewer.rs", 7),
+            // The About you folder, resolved here and never passed in.
+            ("researcher/commands.rs", 1),
             // `external_target`, `snapshot_conversation_file`, and
             // `editor_external_path`.
             ("workbench/commands/project.rs", 3),

@@ -7,8 +7,8 @@ pub(crate) mod codex;
 pub(crate) mod contracts;
 pub(crate) mod session_state;
 pub(crate) mod storage;
-pub(crate) mod submission;
 pub(crate) mod style_draft;
+pub(crate) mod submission;
 pub(crate) mod titles;
 pub(crate) use admission::{
     accept_local_turn, active_turn_state, announce_active_turn, begin_turn_setup,

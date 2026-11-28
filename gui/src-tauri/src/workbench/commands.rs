@@ -52,8 +52,8 @@ pub use version_control::*;
 use sessions::default_session_overrides;
 pub use sessions::*;
 use sessions::{conversation_turn_permit, ensure_session_idle};
-pub(crate) use tasks::deliver_task;
 pub use style::*;
+pub(crate) use tasks::deliver_task;
 pub use titles::*;
 pub use workspaces::*;
 
